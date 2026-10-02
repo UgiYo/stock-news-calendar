@@ -32,6 +32,7 @@ jobs:
           cache-dependency-path: scripts/requirements.txt
       - run: pip install -r scripts/requirements.txt
       - name: Sync official company catalog
+        if: env.RUN_MODE == 'daily'
         run: python scripts/sync_catalog.py
       - name: Collect news and process queued summaries
         run: python scripts/collect.py
