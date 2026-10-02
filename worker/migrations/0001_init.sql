@@ -1,0 +1,11 @@
+PRAGMA foreign_keys=ON;
+CREATE TABLE users(id TEXT PRIMARY KEY,email TEXT NOT NULL);
+CREATE TABLE sessions(token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),expires_at INTEGER NOT NULL);
+CREATE TABLE oauth_states(state TEXT PRIMARY KEY,verifier TEXT NOT NULL,expires_at INTEGER NOT NULL);
+CREATE TABLE companies(code TEXT PRIMARY KEY,name TEXT NOT NULL,full_name TEXT NOT NULL,market TEXT NOT NULL,last_collected_at TEXT,last_error TEXT);
+CREATE TABLE watchlists(user_id TEXT NOT NULL REFERENCES users(id),company_code TEXT NOT NULL REFERENCES companies(code),created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(user_id,company_code));
+CREATE TABLE news(id INTEGER PRIMARY KEY AUTOINCREMENT,company_code TEXT NOT NULL REFERENCES companies(code),title TEXT NOT NULL,url TEXT NOT NULL,source TEXT NOT NULL,published_at TEXT NOT NULL,news_date TEXT NOT NULL,article_summary TEXT,summary_status TEXT,summary_method TEXT,summary_error TEXT,summary_updated_at TEXT,article_url TEXT,UNIQUE(company_code,url));
+CREATE INDEX news_date_company ON news(company_code,news_date);
+CREATE TABLE jobs(id TEXT PRIMARY KEY,type TEXT NOT NULL,company_code TEXT,news_id INTEGER,status TEXT NOT NULL DEFAULT 'pending',error TEXT,created_at INTEGER NOT NULL,claimed_at INTEGER);
+CREATE INDEX jobs_status ON jobs(status,created_at);
+CREATE UNIQUE INDEX jobs_active_unique ON jobs(type,company_code,COALESCE(news_id,0)) WHERE status IN ('pending','running');

@@ -5,3 +5,5 @@ dist/
 !.env.example
 __pycache__/
 *.py[cod]
+worker/.dev.vars
+.wrangler/

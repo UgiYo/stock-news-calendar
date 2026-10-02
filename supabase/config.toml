@@ -1,5 +1,0 @@
-[functions.collect]
-verify_jwt = false
-
-[functions.summarize]
-verify_jwt = false

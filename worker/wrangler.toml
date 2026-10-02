@@ -1,0 +1,14 @@
+name = "stock-news-calendar-api"
+main = "index.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+APP_URL = "https://ugiyo.github.io/stock-news-calendar/"
+GOOGLE_CLIENT_ID = "REPLACE_WITH_GOOGLE_CLIENT_ID"
+GITHUB_REPO = "UgiYo/stock-news-calendar"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "stock-news-calendar"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"

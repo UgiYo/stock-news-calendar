@@ -1,133 +1,113 @@
-# 股聞日曆 — 台灣上市櫃公司新聞追蹤
+# 股聞日曆 — GitHub Pages＋Cloudflare Workers／D1＋GitHub Actions
 
-手機與電腦可用的新聞月曆，前端部署 GitHub Pages，後端使用 Supabase，GitHub Actions 每日自動蒐集。
+台灣上市櫃公司新聞月曆。Google 登入後保存個人追蹤清單，支援股號／公司名稱搜尋、近一個月回補、每日更新、獨立全文摘要視窗及依日期列點新聞。
 
-## 功能
+## 架構
 
-- 股號、公司簡稱、完整名稱搜尋；使用證交所及櫃買中心官方公司名錄。
-- 新增追蹤即回補近一個曆月新聞；同名候選由使用者選擇，已追蹤公司直接篩選。
-- 月曆依新聞發布時間（Asia/Taipei）歸檔，點日期查看標題、媒體、原始 RSS 連結。
-- 當日總結：統計來源與新聞數，整理最多四則不重複標題；另有獨立全文摘要視窗與依日期分組的新聞列點。
-- Google 帳號登入（Gmail 帳號可用），跨裝置保留公司清單與新聞；不申請 Gmail 郵件權限。
-- 每天台灣 06:17 更新所有使用者追蹤公司的聯集；同一公司共享蒐集结果，但私人追蹤清單受 RLS 保護。
-- RSS URL 去重、失敗重試、公司蒐集鎖、15 分鐘更新節流；取消追蹤不刪除其他人的新聞。
+- GitHub Pages：靜態前端。
+- Cloudflare Workers：Google OAuth、30 天登入 session、公司搜尋、追蹤清單、新聞 API、工作排隊。
+- D1：公司、使用者、session、追蹤清單、新聞、摘要與工作狀態。
+- GitHub Actions：官方名錄同步、Google News RSS 蒐集、全文擷取及選用 AI 摘要。HTML 處理不在 Workers 執行，降低免費 CPU 額度壓力。
+- 不使用 Supabase；AI API 仍為選用、另行計費。
 
-## 1. 建立 Supabase
+## 1. 建立 Cloudflare D1 與 Worker
 
-1. 建立 Supabase 專案，至 SQL Editor 執行 `supabase/schema.sql`（新專案執行一次）。
-2. 記錄 Project URL、**anon 公開 key**、**service_role 私密 key**。前端只能使用 anon key，絕對不可放 service_role。
-3. Authentication → Providers → Google 啟用，填入 Google OAuth Client ID / Secret。
-4. 在 Google Cloud 建立 Web application OAuth Client。Authorized redirect URI 填入 Supabase 提供的 callback：`https://PROJECT.supabase.co/auth/v1/callback`。如 OAuth consent screen 仍在測試模式，先加入測試帳號。
-5. Supabase Authentication → URL Configuration：Site URL 與 Redirect URLs 加入 `https://帳號.github.io/儲存庫名稱/`（包含結尾 `/`）。本機測試另外加入 `http://localhost:5173/`。
-
-官方說明：https://supabase.com/docs/guides/auth/social-login/auth-google
-
-## 2. 部署新聞後端
-
-安裝 Supabase CLI，登入並連結專案：
+使用 Node.js 24，在專案根目錄執行（Wrangler 透過 npx 安裝）：
 
 ```bash
-supabase login
-supabase link --project-ref YOUR_PROJECT_REF
-supabase secrets set APP_ORIGIN=https://YOUR_ACCOUNT.github.io
-supabase secrets set COLLECTOR_SECRET=YOUR_RANDOM_LONG_SECRET
-supabase functions deploy collect --no-verify-jwt
+npx wrangler login
+npx wrangler d1 create stock-news-calendar
 ```
 
-APP_ORIGIN 為網站 origin，不含儲存庫路徑。COLLECTOR_SECRET 請產生至少 32 bytes 隨機字串，與 GitHub Secret 一致。Supabase 預設提供 SUPABASE_URL / SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY 給函數。函數雖關閉 gateway JWT 檢查，**內部會用 Auth API 驗證使用者 JWT**，並確認該公司在其追蹤清單；排程以另一個私密 secret 驗證。
+將回傳 database_id 填入 `worker/wrangler.toml`，並設定 GOOGLE_CLIENT_ID。APP_URL 預設為 `https://ugiyo.github.io/stock-news-calendar/`，需包含結尾斜線。Google 登入回到這個網址，CORS 僅接受這個網址的 origin。
 
-## 3. 上傳 GitHub 與設定 Pages
+```bash
+npx wrangler d1 migrations apply stock-news-calendar --remote --config worker/wrangler.toml
+npx wrangler secret put GOOGLE_CLIENT_SECRET --config worker/wrangler.toml
+npx wrangler secret put COLLECTOR_SECRET --config worker/wrangler.toml
+npx wrangler secret put GITHUB_DISPATCH_TOKEN --config worker/wrangler.toml
+npx wrangler deploy --config worker/wrangler.toml
+```
 
-1. 解壓縮，將 `stock-news-calendar/` 裡的所有檔案（包含 `.github/`）放在新 repository 根目錄。
-2. 預設分支使用 `main`；若名稱不同，修改 `.github/workflows/pages.yml`。
-3. Repository Settings → Secrets and variables → Actions，新增：
+COLLECTOR_SECRET 為至少 32 bytes 隨機密鑰，稍後同值放 GitHub Actions。GITHUB_DISPATCH_TOKEN 使用 fine-grained PAT，僅選此 repository，授予 **Actions: Read and write**；Worker 用它觸發已存在的 news.yml 工作流程。請設定期限並到期輪替。此 token 不需要寫入原始碼，前端也不會取得它。
+
+若不設定 dispatch token，要求仍保存於 D1，但需手動 Run workflow 或等待每日排程，無法即時執行。Actions 預設每日台灣 06:17 執行；排程可能延遲或因 repository 久未活動停用。
+
+## 2. Google 登入
+
+Google Cloud／Google Auth Platform 建立 Web application OAuth client：
+
+- Authorized redirect URI：`https://stock-news-calendar-api.YOUR_SUBDOMAIN.workers.dev/auth/callback`（精確匹配實際 Worker 網址）。
+- OAuth branding／audience 若仍為 Testing，加入你的 Google 帳號為測試使用者。
+- Scope：openid、email、profile。不存取 Gmail 郵件。
+- Client ID 填 Worker vars；Client Secret 使用上面的 Worker secret。
+
+登入使用 state Cookie＋單次 D1 state＋PKCE；Worker 驗證 Google ID token 的簽章、issuer、audience、到期時間與已驗證 email，以 Google sub 識別使用者。session 私密 token 僅回傳登入使用者，D1 保存 SHA-256 雜湊。前端接收 URL fragment 後立即移除並存 localStorage，30 天後需重登；登出刪除 server session。請勿在前端加入不可信第三方腳本，以避免 session 被讀取。
+
+## 3. GitHub 設定
+
+Repository Settings → Secrets and variables → Actions：
 
 | 類型 | 名稱 | 內容 |
 | --- | --- | --- |
-| Variable | SUPABASE_URL | 專案 URL |
-| Variable | SUPABASE_ANON_KEY | anon 公開 key |
-| Secret | SUPABASE_SERVICE_ROLE_KEY | service_role 私密 key |
-| Secret | COLLECTOR_SECRET | 與 Edge Function 相同的排程密鑰 |
+| Variable | WORKER_API_URL | Worker 網址，不含尾端斜線 |
+| Secret | COLLECTOR_SECRET | 與 Worker 同值 |
+| Secret，選用 | OPENAI_API_KEY | 啟用 AI 全文摘要；只供 Actions 使用 |
+| Variable，選用 | SUMMARY_MODEL | 預設 gpt-4.1-mini |
 
-4. Settings → Pages → Source 選 **GitHub Actions**。
-5. Actions → **Update company news** → Run workflow，首次下載完整公司名錄。
-6. Actions → **Deploy GitHub Pages** → Run workflow（或 push main），完成後開啟 Pages 網址。
-7. 用 Google 登入，搜尋 `2330`，選擇台積電，等待首次回補。重新登入確認清單保留。
+Settings → Pages → Source 選 GitHub Actions。
 
-GitHub Pages 是靜態網站，無法自己執行伺服器排程，因此資料庫、登入與 RSS 請求都在 Supabase；私密金鑰只有後端與 Actions 能使用。
+1. Actions → Update company news → Run workflow，選 **daily**，先同步公司名錄並更新所有追蹤公司。
+2. Actions → Deploy GitHub Pages → Run workflow。
+3. 開啟 Pages 網址、Google 登入、搜尋股號、選公司追蹤。
+4. 新增公司及立即更新會排入工作；Worker 觸發 Actions，回補近一個月。前端最多等待兩分鐘；尚未完成時會提示稍後重新整理，工作不取消。
+5. 開啟全文摘要視窗，逐篇或批次排入摘要工作。結果保存到 D1，下次登入仍能查看。
 
-## 4. 本機開發
+Actions 使用 concurrency 序列化工作，排程會依序處理 D1 待辦工作；多次快速触發可能由 GitHub 合併／取消尚未啟動的 pending workflow，但已保存的 D1 工作仍保留。单次最多處理 500 個工作，剩餘工作由下一次 workflow 處理。running 工作超過 20 分鐘可回到 pending 重試。相同要求有 15 分鐘節流；D1 session 權限由 API 每次查詢追蹤清單實施。
+
+## 4. 本機與驗證
 
 ```bash
 npm ci
 cp .env.example .env
-# 填入公開 Supabase URL 與 anon key
+# VITE_WORKER_API_URL 填已部署 Worker URL
 npm run dev
 npm test
 npm run build
+python3 -m py_compile scripts/collect.py scripts/sync_catalog.py
 ```
 
-使用 Node.js 24（測試直接載入 TypeScript 純邏輯）。未設定環境變數時，畫面會顯示設定提示，不會假裝登入或生成新聞。
+本機前端需將 Worker APP_URL 暫改為 `http://localhost:5173/`，Google 仍回呼 Worker、再導向本機。不應把測試與正式環境混用，建議另建測試 Worker／D1。
 
-## 每日更新、資料來源與限制
-
-- GitHub cron 使用 UTC：`17 22 * * *` = 台灣次日 06:17。排程只在預設分支執行，可能延遲；公開儲存庫長期未活動也可能自動停用，請定期確認 Actions。官方說明：https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule
-- 每次回補一個月，補回漏跑資料；較舊的新聞不會刪除。請注意資料庫容量。
-- Google News RSS 是聚合搜尋，不是具有涵蓋率 SLA 的付費新聞 API。只收錄標題、來源與 RSS 連結，連結可能先跳轉 Google News；全文摘要功能會按需讀取公開文章內文，但不保存或展示完整內文。
-- 每家公司約 28–31 日視窗、四路並行查詢；RSS 查詢邊界多抓前後一天，再按實際發布時間過濾。熱門公司單日仍可能受 RSS 結果上限影響；**不能保證蒐集所有新聞**。
-- 標題須含公司簡稱、完整名稱或獨立股號。避免無關數字，但簡稱含糊時仍可能誤收，名稱未出現在標題時也可能漏收。
-- 預設範圍為台灣上市、上櫃公司；不含興櫃、ETF、海外股票。
-- 來源暫時失敗會顯示錯誤，不宣稱更新成功；追蹤清單保留，可稍後重試。函數保留部分已完成的新聞。
-- 每家公司有 3 分鐘鎖與 15 分鐘節流。前端與排程皆逐家公司呼叫，避免一次函數執行更新大量公司而逾時。
-- 資料量大時應分批排程或改長時間 worker。Supabase Edge Function 有執行時間及用量限制，GitHub Actions 也可能收費，請依帳號方案調整；預設 job 上限 300 分鐘。
-- 公司名錄只新增/更新，不自動刪除下市公司，避免破壞歷史資料。
-
-官方公司來源：
-- https://openapi.twse.com.tw/v1/opendata/t187ap03_L
-- https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O
-
-## 驗證與上線檢查
-
-已在產出環境驗證 6 個日期/摘要/過濾測試、前端正式建置及 Python 語法。已實作手機響應式排版；因測試瀏覽器下載失敗，本次未完成瀏覽器視覺驗證。未連接你的 Supabase/Google/GitHub 帳號，因此實際 OAuth、RLS、Edge Function、官方來源可用性與排程需要部署後驗收。
-
-1. A 帳號新增公司，登出再登入確認保留；B 帳號不得讀取 A 的 watchlists。
-2. 未登入呼叫 collect 須回 401；未追蹤公司回 403。
-3. 台灣午夜附近新聞歸正確日期，同一 RSS URL 重跑不增加重複資料。
-4. 手動執行 Update company news，確認來源同步及新聞蒐集 steps 成功；故意錯誤密鑰須失败。
-5. 確認正式前端沒有 service_role 或 COLLECTOR_SECRET；檢查 GitHub Actions 排程運作。
-
-## 專案結構
-
-- `src/`：月曆、Google 登入、篩選、新聞與標題總結。
-- `supabase/schema.sql`：資料表、RLS、搜尋與蒐集鎖。
-- `supabase/functions/collect/`：JWT 驗證、RSS 蒐集、日期篩選、去重與保存。
-- `scripts/`：官方名錄同步、排程新聞更新。
-- `.github/workflows/`：Pages 部署與每日更新。
-- `tests/`：日期與新聞純邏輯測試。
-
-## 全文摘要版本升級
-
-既有部署在 SQL Editor 執行 `supabase/migrations/20261002_article_summaries.sql`；新專案使用已更新的 schema.sql。部署新函數：
+Wrangler 本機資料庫：
 
 ```bash
-supabase functions deploy summarize --no-verify-jwt
-# 選用：啟用 AI 摘要（私密 key 僅存後端）
-supabase secrets set OPENAI_API_KEY=YOUR_KEY SUMMARY_MODEL=gpt-4.1-mini
+npx wrangler d1 migrations apply stock-news-calendar --local --config worker/wrangler.toml
+npx wrangler dev --config worker/wrangler.toml
 ```
 
-按「全文摘要・日期新聞」開啟獨立視窗，沿用目前公司篩選，依日期由新到舊列出當月新聞（不含月曆相鄰月份的邊界日期）。可逐篇摘要或依序處理視窗中所有未完成項目。摘要結果存在 news，下次登入仍保留；新新聞在使用者按下摘要時產生，每日排程先收錄新聞。
+私密設定可放 `worker/.dev.vars`（已忽略），請勿 commit。
 
-- 有 API key 時將擷取的內文傳送 OpenAI，產生繁體中文列點摘要，會產生 API 費用；請在部署前確認來源使用權及服務用量。
-- 未設定 key 或 AI 暫時失敗時提供「全文重點摘錄（非 AI）」，從文章前、中、後段挑選原句，與 AI 摘要分別標示。
-- Google News RSS 聚合網址會先嘗試解析原文（舊版內嵌網址及新版頁面參數/RPC）。新版方式依賴非公開介面，可能變更或受限，不保證成功。若未跳轉原文、付費牆、反爬限制、JavaScript 頁面或內文不足，明確標示無法取得全文，不以標題冒充全文摘要。擷取不保證能辨識所有截斷內容。超過 40,000 字文章不送出不完整摘要。
-- 成功摘要使用快取；失敗後 15 分鐘才能重試。批次依序執行，關閉視窗仍會繼續處理目前工作；單次新聞摘要的來源讀取與 AI 有逾時限制。
-- 摘要端點驗證登入及追蹤權限；網址僅使用資料庫新聞網址，拒絕內網/IP 網址並驗證每次轉址及 DNS。正式環境建議另加出口防火牆阻擋私有網段以防 DNS rebinding。
+## 摘要、來源與限制
 
-部署後驗收：單篇可讀取公開文章須顯示摘要及方法；無法讀取原文須顯示原因；未登入 401、未追蹤公司 403；重新登入摘要仍存在。全文擷取及 AI 需要你的雲端環境實測，本次未連接帳號驗證。
+- RSS 為 Google News 搜尋，不保證涵蓋所有媒體。使用文章發布時間按台灣日期歸檔，近一曆月逐日查詢，URL 去重；熱門公司仍可能受搜尋結果上限影響。
+- Google News 原文解析依賴 googlenewsdecoder 的非公開介面，可能變更、受限或遇到 CAPTCHA，失敗會標示原因，不冒充全文摘要。
+- trafilatura 擷取公開文章；不繞過付費牆。不保存或展示完整文章，僅保存來源連結與摘要。無法保證辨識所有截斷內文。
+- 有 OPENAI_API_KEY 時，內文傳送 OpenAI 產生繁體中文列點摘要並产生 API 費用。未設定或 AI 失敗時提供「全文重點摘錄（非 AI）」。超過 40,000 字不做截斷摘要。
+- 擷取檢查 DNS 私有網段與每次轉址，限制頁面大小及逾時；DNS rebinding 仍需部署出口網路策略进一步限制。僅由 Actions 使用新聞資料庫內的網址，不接受任意使用者網址。
+- 免費服務有請求、D1 讀寫／容量、Actions 等限制；大量公司需分批、監控與清理歷史資料。本版本按追蹤公司聯集蒐集，非自動蒐集所有上市櫃公司。
+- 尚未連接你的 Cloudflare／Google 帳號完成 OAuth、實際 RSS／原文及 AI 驗收，未實際部署 Worker。浏览器執行檔缺失，仍需實機檢查手機版畫面。
+- 從舊 Supabase 版本升級時，不會自動搬移資料；若已有真實資料請先匯出，再依 Google sub 對應使用者重新匯入。本次專案先前未設定 Supabase，通常可直接以空 D1 啟動。
 
-### 後續驗證與修正
+## 上線驗收
 
-- AI 連線逾時或服務錯誤，仍保留可取得內文的重點摘錄，避免誤顯示成全文擷取失敗。
-- 摘要視窗嚴格限於選定月份；批次更新保留視窗捲動位置，使用者登出或切換帳號時停止後續摘要請求。
-- Google News 原文解析使用非公開 RPC，僅盡力解析，不繞過 CAPTCHA、付費牆或來源限制。參考實作：https://github.com/dbernheisel/google_news_decoder （另見 GoogleNewsDecoder README）。
-- 目前執行環境缺少瀏覽器執行檔，未完成真實瀏覽器視覺驗收；未連線執行 Google News RPC 或 AI API，這些仍須部署驗收。
+- A、B 帳號：各自追蹤清單隔離；B 無法讀取 A 未共同追蹤公司的新聞、工作。
+- 未登入 API 回 401；admin 密鑰錯誤回 403；未追蹤公司不能蒐集／摘要。
+- 新增追蹤後 Actions 啟動、新聞按正確日期保存，重跑不增加重複資料。
+- 可讀取全文產生摘要，付費牆／來源拒絕顯示錯誤；重新登入摘要保留。
+- Worker／Actions／Google 配置完成後，確認 Pages 網址及 Google callback 精確匹配。
+
+官方文件：
+- https://developers.cloudflare.com/d1/get-started/
+- https://developers.cloudflare.com/d1/reference/migrations/
+- https://developers.google.com/identity/gsi/web/guides/verify-google-id-token

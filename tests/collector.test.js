@@ -1,4 +1,4 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {parseItem,previousMonth,relevant} from '../supabase/functions/collect/logic.ts';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {parseItem,previousMonth,relevant} from '../shared/news.ts';
 const c={code:'2330',name:'台積電',full_name:'台灣積體電路製造股份有限公司'};
 test('month lookback clamps end of month',()=>assert.equal(previousMonth(new Date('2026-03-31T12:00:00Z')).toISOString(),'2026-02-28T12:00:00.000Z'));
 test('avoid matching embedded stock code',()=>{assert.equal(relevant('營收123304元',c),false);assert.equal(relevant('2330法說會',c),true);});
