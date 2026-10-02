@@ -41,6 +41,17 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(self.status(request), 401)
         request.add_header('X-Local-AI-Token', bridge.TOKEN)
         self.assertEqual(self.status(request), 400)
+    def test_health_and_authenticated_pairing(self):
+        with urllib.request.urlopen(self.url + '/health') as response:
+            data = json.load(response)
+            self.assertEqual(data['service'], 'stock-news-local-ai')
+            self.assertNotIn(bridge.TOKEN, json.dumps(data))
+        request = urllib.request.Request(self.url + '/pair', data=b'', method='POST')
+        self.assertEqual(self.status(request), 401)
+        request.add_header('X-Local-AI-Token', bridge.TOKEN)
+        with urllib.request.urlopen(request) as response:
+            self.assertTrue(json.load(response)['paired'])
+
     def test_target_validation_and_secret_location(self):
         c = {'provider': 'litellm', 'endpoint': 'https://company.example/v1', 'model': 'model', 'key': 'secret-value'}
         request = bridge.target_request(c, 'news')
