@@ -1,3 +1,8 @@
+export function trustedSource(source){const key=String(source||'').normalize('NFKC').replace(/\s/g,'').toLowerCase();return ({'中央社':'中央社','中央社cna':'中央社','cna':'中央社','moneydj':'MoneyDJ','moneydj理財網':'MoneyDJ','鉅亨網':'鉅亨網','鉅亨':'鉅亨網','anue鉅亨':'鉅亨網','anue鉅亨網':'鉅亨網'})[key]||null;}
+export function sourceDomain(value){try{const h=new URL(value).hostname.toLowerCase();return ({'www.cna.com.tw':'中央社','cna.com.tw':'中央社','www.moneydj.com':'MoneyDJ','moneydj.com':'MoneyDJ','news.cnyes.com':'鉅亨網'})[h]||null;}catch{return null;}}
+const normalizedTitle=n=>String(n.title||'').replace(/\s*[-–—|]\s*(中央社(?: CNA)?|MoneyDJ(?:理財網)?|(?:Anue)?鉅亨(?:網)?)\s*$/i,'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
+export function duplicateNews(a,b){if(a.company_code!==b.company_code)return false;if(a.url===b.url)return true;if(Math.abs(Date.parse(a.published_at)-Date.parse(b.published_at))>48*3600000)return false;const x=normalizedTitle(a),y=normalizedTitle(b);if(!x||!y)return false;const nums=n=>(String(n.title||'').normalize('NFKC').match(/\d+(?:[.,]\d+)*/g)||[]).sort().join('|');if(nums(a)!==nums(b))return false;if(x===y)return true;if(Math.min(x.length,y.length)<12)return false;const grams=s=>new Set(Array.from({length:s.length-1},(_,i)=>s.slice(i,i+2)));const gx=grams(x),gy=grams(y);const common=[...gx].filter(g=>gy.has(g)).length;return 2*common/(gx.size+gy.size)>=0.9;}
+export function curateNews(rows){const rank={'中央社':0,'MoneyDJ':1,'鉅亨網':2};const candidates=rows.filter(n=>trustedSource(n.source)).map(n=>({...n,source:trustedSource(n.source)})).sort((a,b)=>Number(!!b.article_summary)-Number(!!a.article_summary)||rank[a.source]-rank[b.source]||String(b.published_at).localeCompare(String(a.published_at)));const kept=[];for(const n of candidates)if(!kept.some(k=>duplicateNews(k,n)))kept.push(n);return kept.sort((a,b)=>String(b.published_at).localeCompare(String(a.published_at)));}
 
 function xmlText(value){return String(value||'').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1').replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi,(_,entity)=>{const named={amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"};if(named[entity])return named[entity];const n=entity.startsWith('#x')?parseInt(entity.slice(2),16):Number(entity.slice(1));return n>0&&n<=0x10ffff?String.fromCodePoint(n):'';});}
 export function parsePreview(xml,company,now=new Date()){
@@ -5,12 +10,12 @@ export function parsePreview(xml,company,now=new Date()){
  const start=new Date(now);const day=start.getUTCDate();start.setUTCDate(1);start.setUTCMonth(start.getUTCMonth()-1);start.setUTCDate(Math.min(day,new Date(Date.UTC(start.getUTCFullYear(),start.getUTCMonth()+1,0)).getUTCDate()));
  const rows=new Map();for(const match of xml.matchAll(/<item[\s>]([\s\S]*?)<\/item>/g)){
  const tag=name=>xmlText(match[1].match(new RegExp('<'+name+'(?:\\s[^>]*)?>([\\s\\S]*?)<\\/'+name+'>'))?.[1]);
- const title=tag('title'),link=tag('link'),published=new Date(tag('pubDate'));
+ const title=tag('title'),link=tag('link'),published=new Date(tag('pubDate'));const sourceURL=xmlText(match[1].match(/<source\b[^>]*\burl=["']([^"']+)["']/)?.[1]);const source=sourceDomain(sourceURL);if(!source)continue;
  if(!title.includes(company.name)&&!(company.full_name&&title.includes(company.full_name))&&!new RegExp('(?<!\\d)'+company.code+'(?!\\d)').test(title))continue;
  if(!Number.isFinite(published.getTime())||published<start||published>now)continue;
  try{if(new URL(link).protocol!=='https:')continue;}catch{continue;}
- rows.set(link,{company_code:company.code,title,url:link,source:tag('source')||'未知來源',published_at:published.toISOString(),news_date:new Date(published.getTime()+8*3600000).toISOString().slice(0,10),preview:true});
- }return [...rows.values()].sort((a,b)=>b.published_at.localeCompare(a.published_at));
+ rows.set(link,{company_code:company.code,title,url:link,source,published_at:published.toISOString(),news_date:new Date(published.getTime()+8*3600000).toISOString().slice(0,10),preview:true});
+ }return curateNews([...rows.values()]);
 }
 const encoder=new TextEncoder();
 export const randomToken=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');
@@ -65,7 +70,7 @@ export default {async fetch(req,env){
  await sql("UPDATE jobs SET status='pending' WHERE status='running' AND claimed_at<?",Date.now()-20*60000).run();
  const jobs=(await sql("UPDATE jobs SET status='running',claimed_at=? WHERE id IN (SELECT id FROM jobs WHERE status='pending' ORDER BY created_at LIMIT 1) RETURNING *",Date.now()).all()).results;return reply({jobs});}
  if(path==='/admin/job'&&req.method==='POST'){const b=await req.json();await sql('UPDATE jobs SET status=?,error=? WHERE id=?',b.error?'failed':'done',b.error||null,b.id).run();return reply({ok:true});}
- if(path==='/admin/news'&&req.method==='POST'){const b=await req.json();if(!Array.isArray(b.news)||b.news.length>50)return reply({error:'Invalid batch'},400);await env.DB.batch(b.news.map(n=>{if(!/^\d{4,6}$/.test(n.company_code)||!/^https:\/\//.test(n.url)||!/^\d{4}-\d{2}-\d{2}$/.test(n.news_date))throw Error('Invalid news');return sql('INSERT INTO news(company_code,title,url,source,published_at,news_date) VALUES(?,?,?,?,?,?) ON CONFLICT(company_code,url) DO UPDATE SET title=excluded.title,source=excluded.source,published_at=excluded.published_at,news_date=excluded.news_date',n.company_code,n.title,n.url,n.source,n.published_at,n.news_date);}));return reply({ok:true});}
+ if(path==='/admin/news'&&req.method==='POST'){const b=await req.json();if(!Array.isArray(b.news)||b.news.length>50)return reply({error:'Invalid batch'},400);const accepted=[];for(const n of curateNews(b.news)){const stored=(await sql('SELECT * FROM news WHERE company_code=? AND published_at BETWEEN ? AND ?',n.company_code,new Date(Date.parse(n.published_at)-48*3600000).toISOString(),new Date(Date.parse(n.published_at)+48*3600000).toISOString()).all()).results;if(!stored.some(k=>k.url!==n.url&&duplicateNews(k,n)))accepted.push(n);}if(accepted.length)await env.DB.batch(accepted.map(n=>{if(!/^\d{4,6}$/.test(n.company_code)||!/^https:\/\//.test(n.url)||!/^\d{4}-\d{2}-\d{2}$/.test(n.news_date))throw Error('Invalid news');return sql('INSERT INTO news(company_code,title,url,source,published_at,news_date) VALUES(?,?,?,?,?,?) ON CONFLICT(company_code,url) DO UPDATE SET title=excluded.title,source=excluded.source,published_at=excluded.published_at,news_date=excluded.news_date',n.company_code,n.title,n.url,n.source,n.published_at,n.news_date);}));return reply({ok:true});}
  if(path==='/admin/company'&&req.method==='POST'){const b=await req.json();await sql('UPDATE companies SET last_collected_at=COALESCE(?,last_collected_at),last_error=? WHERE code=?',b.updated_at||null,b.error||null,b.code).run();return reply({ok:true});}
  if(path==='/admin/article')return reply({news:await sql('SELECT * FROM news WHERE id=?',url.searchParams.get('id')).first()});
  if(path==='/admin/summary'&&req.method==='POST'){const b=await req.json();await sql('UPDATE news SET article_summary=?,summary_status=?,summary_method=?,summary_error=?,summary_updated_at=?,article_url=? WHERE id=?',b.article_summary||null,b.article_summary?'ready':'unavailable',b.summary_method||null,b.summary_error||null,new Date().toISOString(),b.article_url||null,b.id).run();return reply({ok:true});}
@@ -79,7 +84,7 @@ export default {async fetch(req,env){
  if(path==='/preview'&&req.method==='GET'){
  const code=url.searchParams.get('code');if(!/^\d{4,6}$/.test(code||''))return reply({error:'股號格式錯誤'},400);
  const company=await sql('SELECT * FROM companies WHERE code=?',code).first();if(!company)return reply({error:'公司不存在'},404);
- const feed=new URL('https://news.google.com/rss/search');feed.search=new URLSearchParams({q:`("${company.name}" OR "${company.full_name}" OR "${code}") when:1m`,hl:'zh-TW',gl:'TW',ceid:'TW:zh-Hant'}).toString();
+ const feed=new URL('https://news.google.com/rss/search');feed.search=new URLSearchParams({q:`("${company.name}" OR "${company.full_name}" OR "${code}") (site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com) when:1m`,hl:'zh-TW',gl:'TW',ceid:'TW:zh-Hant'}).toString();
  const response=await fetch(feed,{headers:{'User-Agent':'StockNewsCalendar/2.0'},signal:AbortSignal.timeout(20000)});if(!response.ok)return reply({error:'新聞來源暫時無法讀取，請稍後重試'},502);
  return reply({company,news:parsePreview(await response.text(),company)});
  }
