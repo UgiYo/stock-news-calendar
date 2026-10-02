@@ -7,7 +7,7 @@ SECRET=os.environ['COLLECTOR_SECRET']
 UTC=datetime.timezone.utc
 TW=datetime.timezone(datetime.timedelta(hours=8))
 def api(path,body=None):
- r=requests.request('GET' if body is None else 'POST',BASE+path,json=body,headers={'Authorization':'Bearer '+SECRET},timeout=60)
+ r=requests.request('GET' if body is None else 'POST',BASE+path,json=body,headers={'Authorization':'Bearer '+SECRET,'User-Agent':'StockNewsCalendar/2.0','Accept':'application/json'},timeout=60)
  r.raise_for_status();return r.json()
 def previous_month(now):
  y,m=now.year,now.month-1
