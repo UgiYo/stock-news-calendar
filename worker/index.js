@@ -13,14 +13,18 @@ export async function verifyGoogle(token,clientID){
 }
 async function dispatch(env){if(!env.GITHUB_DISPATCH_TOKEN)return false;const r=await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/news.yml/dispatches`,{method:'POST',headers:{Authorization:`Bearer ${env.GITHUB_DISPATCH_TOKEN}`,'User-Agent':'stock-news-calendar','Accept':'application/vnd.github+json','Content-Type':'application/json'},body:JSON.stringify({ref:'main',inputs:{mode:'queued'}}),signal:AbortSignal.timeout(10000)});return r.ok;}
 export default {async fetch(req,env){
- const url=new URL(req.url),path=url.pathname,origin=new URL(env.APP_URL).origin;
+ const url=new URL(req.url),path=url.pathname;
+ let appURL;
+ try{appURL=new URL(String(env.APP_URL||'').trim());if(!['https:','http:'].includes(appURL.protocol)||appURL.username||appURL.password||appURL.search||appURL.hash)throw Error('Invalid APP_URL');if(!appURL.pathname.endsWith('/'))appURL.pathname+='/';}
+ catch{return Response.json({error:'APP_URL 尚未設定或格式錯誤。請在 Worker Settings → Variables and Secrets 新增 Text 變數 APP_URL，值為 https://ugiyo.github.io/stock-news-calendar/，儲存並重新部署。'},{status:503,headers:{'Cache-Control':'no-store'}});}
+ const origin=appURL.origin;
  const headers={'Content-Type':'application/json','Access-Control-Allow-Origin':origin,'Access-Control-Allow-Headers':'authorization,content-type','Access-Control-Allow-Methods':'GET,POST,DELETE,OPTIONS','Cache-Control':'no-store','Vary':'Origin'};
  const reply=(data,status=200)=>Response.json(data,{status,headers});
  const sql=(q,...args)=>env.DB.prepare(q).bind(...args);
  try{
  if(req.method==='OPTIONS')return new Response(null,{headers});
  if(req.headers.get('Origin')&&req.headers.get('Origin')!==origin)return reply({error:'Origin not allowed'},403);
- if(path==='/health')return reply({ok:true});
+ if(path==='/health'){const missing=['DB','GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET','COLLECTOR_SECRET'].filter(k=>!env[k]);return reply({ok:missing.length===0,missing},missing.length?503:200);}
  if(path==='/auth/start'){
  const state=randomToken(),verifier=randomToken();await sql('DELETE FROM oauth_states WHERE expires_at<?',Date.now()).run();
  await sql('INSERT INTO oauth_states VALUES(?,?,?)',state,verifier,Date.now()+600000).run();
@@ -32,12 +36,12 @@ export default {async fetch(req,env){
  const state=url.searchParams.get('state'),cookie=req.headers.get('Cookie')||'';
  if(!state||!cookie.split(';').some(x=>x.trim()==='oauth_state='+state))return reply({error:'Invalid OAuth state'},400);
  const row=await sql('DELETE FROM oauth_states WHERE state=? AND expires_at>? RETURNING *',state,Date.now()).first();if(!row)return reply({error:'OAuth request expired'},400);
- if(!url.searchParams.get('code'))return new Response(null,{status:302,headers:{Location:env.APP_URL+'#login_error=cancelled'}});
+ if(!url.searchParams.get('code'))return new Response(null,{status:302,headers:{Location:appURL.href+'#login_error=cancelled'}});
  const response=await fetch('https://oauth2.googleapis.com/token',{method:'POST',body:new URLSearchParams({code:url.searchParams.get('code'),client_id:env.GOOGLE_CLIENT_ID,client_secret:env.GOOGLE_CLIENT_SECRET,redirect_uri:url.origin+'/auth/callback',grant_type:'authorization_code',code_verifier:row.verifier}),signal:AbortSignal.timeout(15000)});
  if(!response.ok)throw Error('Google login failed');const identity=await verifyGoogle((await response.json()).id_token,env.GOOGLE_CLIENT_ID);
  await sql('INSERT INTO users VALUES(?,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email',identity.sub,identity.email).run();
  const token=randomToken();await sql('DELETE FROM sessions WHERE expires_at<?',Date.now()).run();await sql('INSERT INTO sessions VALUES(?,?,?)',await hash(token),identity.sub,Date.now()+30*86400000).run();
- return new Response(null,{status:302,headers:{Location:env.APP_URL+'#session='+token,'Set-Cookie':'oauth_state=; Secure; HttpOnly; SameSite=Lax; Max-Age=0; Path=/auth','Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
+ return new Response(null,{status:302,headers:{Location:appURL.href+'#session='+token,'Set-Cookie':'oauth_state=; Secure; HttpOnly; SameSite=Lax; Max-Age=0; Path=/auth','Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
  }
  if(path.startsWith('/admin/')){
  const provided=req.headers.get('Authorization')||'';if(!env.COLLECTOR_SECRET||await hash(provided)!==await hash('Bearer '+env.COLLECTOR_SECRET))return reply({error:'Forbidden'},403);
