@@ -9,7 +9,7 @@ export async function logout(){try{await api('/logout',{body:{}});}finally{local
 export async function restore(){const params=new URLSearchParams(location.hash.slice(1));if(params.get('session')){localStorage.setItem(key,params.get('session'));history.replaceState(null,'',location.pathname+location.search);}if(!localStorage.getItem(key))return null;try{return (await api('/me')).user;}catch(e){localStorage.removeItem(key);throw e;}}
 export async function jobRequest(path,body,onQueued){
  const first=await api(path,{body});if(first.news?.article_summary)return first;
- if(!first.job)return first;onQueued?.(first);if(first.dispatched===false)throw Error('任務已保存，但 GitHub Actions 未啟動。請手動執行 Update company news（queued），並檢查 Worker 的 GITHUB_DISPATCH_TOKEN 與 GITHUB_REPO。');
+ if(!first.job)return first;onQueued?.(first);if(first.dispatched===false)throw Error('任務已保存，但 GitHub Actions 未啟動：'+(first.dispatchError||'請確認 Pages Production 的 GITHUB_DISPATCH_TOKEN 與 GITHUB_REPO，並重新部署。')+' 可先手動執行 Update company news（queued）。');
  for(let i=0;i<24;i++){await new Promise(r=>setTimeout(r,5000));const result=await api('/jobs?id='+first.job.id);if(result.job.status==='failed')throw Error(result.job.error||'工作失敗');if(result.job.status==='done')return result;}
  throw Error('工作仍在排隊或處理中，稍後重新整理即可查看結果。');
 }
