@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "vite build",
+    "build": "python3 scripts/prepare_ai_download.py && vite build",
     "test": "node --test tests/*.test.js"
   },
   "dependencies": {
