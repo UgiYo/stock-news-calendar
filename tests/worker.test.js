@@ -18,3 +18,10 @@ test('missing or invalid APP_URL returns actionable configuration error',async()
  for(const value of [undefined,'','example.com','javascript:bad']){const r=await call({APP_URL:value},'/');assert.equal(r.status,503);assert.match((await r.json()).error,/APP_URL/);}
  const r=await call({APP_URL:' https://example.com/ '},'/health');assert.equal(r.status,503);assert.ok((await r.json()).missing.includes('DB'));
 });
+test('cached extracts can explicitly retry AI while cached AI remains reusable',async()=>{
+ const {db,env}=setup();db.prepare('INSERT INTO users VALUES(?,?)').run('alice','a@example.com');db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(await hash('alice'),'alice',Date.now()+60000);
+ db.exec("INSERT INTO companies(code,name,full_name,market) VALUES('2330','台積電','台積電','上市');INSERT INTO watchlists VALUES('alice','2330','now');INSERT INTO news(company_code,title,url,source,published_at,news_date,article_summary,summary_method) VALUES('2330','台積電新聞','https://example.com/story','中央社','2026-10-02T01:00:00Z','2026-10-02','摘錄','extractive');");
+ assert.equal((await (await call(env,'/summarize','alice',{id:1})).json()).job,undefined);
+ assert.ok((await (await call(env,'/summarize','alice',{id:1,retry_ai:true})).json()).job);
+ db.exec("UPDATE news SET summary_method='ai';");assert.equal((await (await call(env,'/summarize','alice',{id:1,retry_ai:true})).json()).job,undefined);db.close();
+});
