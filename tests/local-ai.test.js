@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {aiRequest,requestAI,saveAISettings,readAISettings} from '../src/local-ai.js';
+import {aiRequest,requestAI,saveAISettings,readAISettings,pairLocalBridge} from '../src/local-ai.js';
 const config={provider:'litellm',endpoint:'https://ai.example.internal/v1',model:'company-model',key:'private-token'};
 test('personal key is only in direct provider auth header, never URL or prompt; redirects and cookies blocked',async()=>{
  let calls=0;
@@ -26,4 +26,9 @@ test('Python transport sends key only to loopback and pairing code is never reme
  await requestAI(c,'news',{fetcher:async(url,options)=>{assert.equal(url,'http://127.0.0.1:8765/relay');assert.equal(options.headers['X-Local-AI-Token'],c.bridgeToken);assert.equal(options.headers.Authorization,undefined);assert.equal(JSON.parse(options.body).config.key,c.key);return {ok:true,json:async()=>({choices:[{message:{content:'ok'}}]})};}});
  let value;saveAISettings(c,true,{setItem:(_,v)=>value=v});assert.ok(!value.includes('random-pairing'));
  await assert.rejects(requestAI({...c,bridge:'http://outside.example'},'news'));
+});
+
+test('guided pairing verifies tool identity and sends pairing token without provider credentials',async()=>{
+ const calls=[];await pairLocalBridge({bridge:'http://127.0.0.1:8765',bridgeToken:'pair-code',key:'private-key'},{fetcher:async(url,options)=>{calls.push(url);assert.ok(!JSON.stringify(options).includes('private-key'));if(url.endsWith('/health'))return {ok:true,json:async()=>({service:'stock-news-local-ai'})};assert.equal(options.headers['X-Local-AI-Token'],'pair-code');return {ok:true,json:async()=>({paired:true})};}});assert.deepEqual(calls,['http://127.0.0.1:8765/health','http://127.0.0.1:8765/pair']);
+ await assert.rejects(pairLocalBridge({bridge:'http://127.0.0.1:8765',bridgeToken:'x'},{fetcher:async()=>({ok:true,json:async()=>({service:'wrong-tool'})})}));
 });
