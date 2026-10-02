@@ -1,0 +1,5 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {parseItem,previousMonth,relevant} from '../supabase/functions/collect/logic.ts';
+const c={code:'2330',name:'台積電',full_name:'台灣積體電路製造股份有限公司'};
+test('month lookback clamps end of month',()=>assert.equal(previousMonth(new Date('2026-03-31T12:00:00Z')).toISOString(),'2026-02-28T12:00:00.000Z'));
+test('avoid matching embedded stock code',()=>{assert.equal(relevant('營收123304元',c),false);assert.equal(relevant('2330法說會',c),true);});
+test('RSS news use publication day; invalid and unrelated excluded',()=>{const from=new Date('2026-09-01'),to=new Date('2026-10-02');const item={title:'台積電營收',link:'https://news.google.com/rss/articles/abc',pubDate:'2026-09-30T18:00:00Z',source:{'#text':'中央社'}};assert.equal(parseItem(item,c,from,to).news_date,'2026-10-01');assert.equal(parseItem({...item,pubDate:'bad'},c,from,to),null);assert.equal(parseItem({...item,title:'別家公司新聞'},c,from,to),null);assert.equal(parseItem({...item,pubDate:'2026-08-01'},c,from,to),null);});

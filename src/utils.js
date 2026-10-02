@@ -1,0 +1,4 @@
+export const dayKey = value => new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
+export function monthCells(year,month){const first=new Date(year,month,1);const start=new Date(year,month,1-first.getDay());return Array.from({length:42},(_,i)=>{const d=new Date(start);d.setDate(start.getDate()+i);return {key:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`,number:d.getDate(),current:d.getMonth()===month};});}
+export function summarize(rows){if(!rows.length)return '當日尚無收錄新聞。';const unique=[...new Set(rows.map(r=>r.title))];return `共收錄 ${rows.length} 則新聞、${new Set(rows.map(r=>r.source)).size} 個來源。標題重點：`+unique.slice(0,4).join('；')+(unique.length>4?'。其餘請見下方連結。':'。');}
+export function safeURL(s){try{const u=new URL(s);return ['https:','http:'].includes(u.protocol)?u.href:'#';}catch{return '#';}}
