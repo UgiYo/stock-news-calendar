@@ -25,3 +25,9 @@ test('cached extracts can explicitly retry AI while cached AI remains reusable',
  assert.ok((await (await call(env,'/summarize','alice',{id:1,retry_ai:true})).json()).job);
  db.exec("UPDATE news SET summary_method='ai';");assert.equal((await (await call(env,'/summarize','alice',{id:1,retry_ai:true})).json()).job,undefined);db.close();
 });
+test('repeated news upload does not rewrite identical rows',async()=>{
+ const {db,env}=setup();db.exec("INSERT INTO companies(code,name,full_name,market) VALUES('2303','聯電','聯華電子','上市');");
+ const body={news:[{company_code:'2303',title:'聯電營收新聞',url:'https://example.com/umc',source:'中央社',published_at:'2026-10-02T01:00:00Z',news_date:'2026-10-02'}]};
+ assert.equal((await call(env,'/admin/news','secret',body)).status,200);const before=db.prepare('SELECT total_changes() AS n').get().n;
+ assert.equal((await call(env,'/admin/news','secret',body)).status,200);assert.equal(db.prepare('SELECT total_changes() AS n').get().n,before);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM news').get().n,1);db.close();
+});
