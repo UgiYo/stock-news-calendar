@@ -26,10 +26,10 @@ app.querySelector('#today').onclick=()=>run(async()=>{const d=new Date();state.y
 }
 async function run(fn){if(state.busy)return;state.busy=true;state.message='';render();try{await fn();}catch(e){state.message=e.message||'操作失敗，請稍後重試。';}finally{state.busy=false;render();}}
 async function load(){if(!state.user)return;state.companies=(await api('/watchlists')).companies;state.news=[];const cells=monthCells(state.year,state.month);let offset=0;while(true){const result=await api(`/news?from=${cells[0].key}&to=${cells.at(-1).key}&offset=${offset}`);state.news.push(...result.news);if(result.news.length<500)break;offset+=500;}}
-async function search(){if(!state.user)throw Error('請先使用 Google 登入。');const existing=state.companies.find(c=>c.code===state.query||c.name===state.query||c.full_name===state.query);if(existing){state.selected=existing.code;state.matches=[];return;}state.matches=(await api('/companies?q='+encodeURIComponent(state.query))).companies;state.message=state.matches.length?'請選擇要追蹤的公司。':'找不到公司，請先確認已同步公司名錄。';}
-async function add(code){await api('/watchlists',{body:{code}});state.selected=code;state.matches=[];await load();await collect(code);await load();}
-async function collect(code){for(const stock of code?[code]:state.companies.map(c=>c.code)){state.message=`${stock} 新聞更新工作已排入，等待 GitHub Actions…`;render();await jobRequest('/collect',{code:stock});}state.message='更新已處理；若工作仍排隊，請稍後重新整理。';}
-render();if(configured)run(async()=>{state.user=await restore();if(state.user)await load();});
+async function search(){if(!state.user)throw Error('請先使用 Google 登入。');const existing=state.companies.find(c=>c.code===state.query||c.name===state.query||c.full_name===state.query);if(existing){state.selected=existing.code;state.matches=[];return;}state.matches=(await api('/companies?q='+encodeURIComponent(state.query))).companies;const exact=state.matches.find(c=>c.code===state.query);if(exact){await add(exact.code);return;}state.message=state.matches.length?'請選擇要追蹤的公司。':'找不到公司，請先確認已同步公司名錄。';}
+async function add(code){await api('/watchlists',{body:{code}});state.selected=code;state.matches=[];await load();render();await collect(code);}
+async function collect(code){for(const stock of code?[code]:state.companies.map(c=>c.code)){state.message=`${stock} 新聞更新工作已排入，等待 GitHub Actions…`;render();try{await jobRequest('/collect',{code:stock},first=>{state.message=first.dispatched===false?`${stock} 已排入任務，但 GitHub Actions 未啟動；請手動執行 Update company news，mode 選 queued，並檢查 Worker 的 GITHUB_DISPATCH_TOKEN。`:`${stock} 收集任務已建立，等待處理…`;render();});}finally{await load();render();}}state.message='更新已處理；若工作仍排隊，請稍後重新整理。';}
+render();if(configured)run(async()=>{state.user=await restore();render();if(state.user)await load();});
 
 function summaryWindow(rows){
  const groups=Object.groupBy(rows,n=>n.news_date);
