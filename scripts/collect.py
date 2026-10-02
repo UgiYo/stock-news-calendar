@@ -89,7 +89,7 @@ def main():
     failed.append(c['code']);api('/admin/company',{'code':c['code'],'error':'新聞更新失敗，請重試'});print('Collection failed',c['code'],type(e).__name__)
  processed=0
  while processed<500:
-  jobs=api('/admin/claim')['jobs']
+  jobs=api('/admin/claim',{})['jobs']
   if not jobs:break
   for job in jobs:
    processed+=1;error=None
