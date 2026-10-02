@@ -13,3 +13,11 @@ test('preserve different figures, companies, dates and material new titles',()=>
  assert.equal(duplicateNews(a,row(a.title,'中央社','https://example.com/b',{published_at:'2026-09-01T01:00:00Z'})),false);
  assert.equal(duplicateNews(a,row('聯電新增海外廠投資計畫','中央社','https://example.com/b')),false);
 });
+test('company names embedded in other companies are not relevant',async()=>{
+ const {companyMention}=await import('../src/news-policy.js');const c={code:'2303',name:'聯電',full_name:'聯華電子'};
+ assert.equal(companyMention('台聯電營收成長',c),false);
+ assert.equal(companyMention('台聯電與聯電合作',c),true);
+ assert.equal(companyMention('2303 聯電法說會',c),true);
+ assert.equal(companyMention('台聯電12303營收成長',c),false);
+ assert.equal(companyMention('大華電子營收',{code:'9999',name:'華電',full_name:'華電公司'},['大華電子']),false);
+});
