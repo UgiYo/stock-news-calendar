@@ -21,3 +21,9 @@ test('errors do not expose provider response which may echo secrets, and never f
  let count=0;await assert.rejects(requestAI(config,'text',{fetcher:async()=>{count++;return {ok:false,status:401,json:async()=>({error:config.key})};}}),e=>e.message.includes('401')&&!e.message.includes(config.key));assert.equal(count,1);
  await assert.rejects(requestAI(config,'text',{fetcher:async()=>{throw Error(config.key);}}),e=>e.message.includes('CORS')&&!e.message.includes(config.key));
 });
+test('Python transport sends key only to loopback and pairing code is never remembered',async()=>{
+ const c={...config,transport:'python',bridge:'http://127.0.0.1:8765',bridgeToken:'random-pairing'};
+ await requestAI(c,'news',{fetcher:async(url,options)=>{assert.equal(url,'http://127.0.0.1:8765/relay');assert.equal(options.headers['X-Local-AI-Token'],c.bridgeToken);assert.equal(options.headers.Authorization,undefined);assert.equal(JSON.parse(options.body).config.key,c.key);return {ok:true,json:async()=>({choices:[{message:{content:'ok'}}]})};}});
+ let value;saveAISettings(c,true,{setItem:(_,v)=>value=v});assert.ok(!value.includes('random-pairing'));
+ await assert.rejects(requestAI({...c,bridge:'http://outside.example'},'news'));
+});
