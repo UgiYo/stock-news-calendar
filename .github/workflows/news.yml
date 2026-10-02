@@ -36,3 +36,6 @@ jobs:
         run: python scripts/sync_catalog.py
       - name: Collect news and process queued summaries
         run: python scripts/collect.py
+      - name: Update shared daily stock prices
+        if: always()
+        run: python scripts/market_prices.py
