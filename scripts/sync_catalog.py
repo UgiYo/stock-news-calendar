@@ -35,7 +35,7 @@ def main():
     companies=normalize(list(csv.DictReader(io.StringIO(fetch_text(fallback)))),market)
    for i in range(0,len(companies),100):
     body=json.dumps({'companies':companies[i:i+100]},ensure_ascii=False).encode()
-    req=urllib.request.Request(base+'/admin/companies',data=body,headers={'Authorization':'Bearer '+key,'Content-Type':'application/json'})
+    req=urllib.request.Request(base+'/admin/companies',data=body,headers={'Authorization':'Bearer '+key,'Content-Type':'application/json','User-Agent':'StockNewsCalendar/2.0','Accept':'application/json'})
     try:
      with urllib.request.urlopen(req,timeout=60) as r:r.read()
     except urllib.error.HTTPError as e:
