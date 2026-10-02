@@ -111,3 +111,13 @@ npx wrangler dev --config worker/wrangler.toml
 - https://developers.cloudflare.com/d1/get-started/
 - https://developers.cloudflare.com/d1/reference/migrations/
 - https://developers.google.com/identity/gsi/web/guides/verify-google-id-token
+
+### 新聞事件與股價反應第一版
+
+追蹤公司的每則新聞可展開「股價反應」，包含發布時間對齊交易日、事件分類、前 5 日報酬、後 1/3/5/20 日個股與加權指數報酬，以及兩者差值（百分點）。事件日算第 1 個交易日，基準是事件日前一交易日收盤。13:30 起發布及非交易日新聞對齊下個有行情的交易日。這是發布後價格反應，不能證明因果。日期缺資料不補值。
+
+第一版股價來源為 TWSE 官方月行情，支援上市公司，未支援上櫃行情；價格為未還原 OHLCV，除權息、分割會影響報酬，不能当作總報酬。事件時間使用新聞發布時間，尚無人工校正的實際事件時間；事件分類為標題規則，既有近似標題去重尚不等同完整語意事件合併。
+
+`Update company news` 最後會執行 `scripts/market_prices.py`，共享補入最近五個月行情，逐公司失敗在 log 顯示並使步驟失敗。Worker 透過驗證 COLLECTOR_SECRET 的 `/admin/prices` 自動建立 prices 表，毋須手動 SQL migration。主鍵(code,date)與條件 upsert 避免使用者倍增或相同行情反覆寫入。讀取需登入並追蹤該公司。
+
+部署完成後手動執行一次 Update company news（queued）初始化股價，查看 Update shared daily stock prices 的 Market prices 2303 / TAIEX log。首次遇 TWSE 限制或尚無本月資料時可稍後重試。前端資料在重新整理後載入，未完成的後續區間顯示等待資料。
