@@ -1,5 +1,5 @@
 """Normalize TWSE Chinese and TPEx English company fields before D1 upload."""
-import csv,io,json,os,re,time,urllib.request
+import csv,io,json,os,re,time,urllib.request,urllib.error
 SOURCES=[('https://openapi.twse.com.tw/v1/opendata/t187ap03_L','https://mopsfin.twse.com.tw/opendata/t187ap03_L.csv','上市'),('https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O','https://mopsfin.twse.com.tw/opendata/t187ap03_O.csv','上櫃')]
 def normalize(rows,market):
  if not isinstance(rows,list) or not rows:raise ValueError('公司名錄不是有效資料陣列')
@@ -36,7 +36,11 @@ def main():
    for i in range(0,len(companies),100):
     body=json.dumps({'companies':companies[i:i+100]},ensure_ascii=False).encode()
     req=urllib.request.Request(base+'/admin/companies',data=body,headers={'Authorization':'Bearer '+key,'Content-Type':'application/json'})
-    with urllib.request.urlopen(req,timeout=60) as r:r.read()
+    try:
+     with urllib.request.urlopen(req,timeout=60) as r:r.read()
+    except urllib.error.HTTPError as e:
+     if e.code in (401,403):raise RuntimeError('Cloudflare Worker 拒絕寫入 (HTTP '+str(e.code)+')：請確認 GitHub Actions 與 Worker 的 COLLECTOR_SECRET 完全相同，且 Worker 設定已部署') from None
+     raise RuntimeError('Cloudflare Worker 寫入失敗 (HTTP '+str(e.code)+')，請檢查 Worker 設定及 D1 migration') from None
    print(market,len(companies))
   except Exception as e:
    failed.append(market);print(market,'sync failed:',str(e))
