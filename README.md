@@ -121,3 +121,11 @@ npx wrangler dev --config worker/wrangler.toml
 `Update company news` 最後會執行 `scripts/market_prices.py`，共享補入最近五個月行情，逐公司失敗在 log 顯示並使步驟失敗。Worker 透過驗證 COLLECTOR_SECRET 的 `/admin/prices` 自動建立 prices 表，毋須手動 SQL migration。主鍵(code,date)與條件 upsert 避免使用者倍增或相同行情反覆寫入。讀取需登入並追蹤該公司。
 
 部署完成後手動執行一次 Update company news（queued）初始化股價，查看 Update shared daily stock prices 的 Market prices 2303 / TAIEX log。首次遇 TWSE 限制或尚無本月資料時可稍後重試。前端資料在重新整理後載入，未完成的後續區間顯示等待資料。
+
+### 每日成交值排行榜與族群 Tag
+
+登入後首頁新增上市＋上櫃普通股成交金額前十（億元），排除 ETF／權證，以官方公司名錄交集限定普通公司股票。資料非盤中即時行情。Tag 使用交易所產業代碼中文對照，未知代碼直接顯示「產業 XX」，不猜測 AI 等概念股。
+
+點選排行榜的產業 Tag，顯示該日全市場同產業股票，按成交金額排序；點股票可預覽新聞，不會自動加入追蹤。提供最近保存 30 個交易日切換，歷史從首次執行起累積，不回填既往排行榜。排行共享保存 D1 rankings 表，一日一份，相同 payload 不重寫，自動刪除超過 30 份的舊排行；沒有使用者重複記錄。表由驗證密鑰的 admin endpoint 自動建立。
+
+GitHub Actions `Update daily turnover ranking and industry tags` 步驟執行 `scripts/ranking.py`，可手動 queued 初始化。上市／上櫃日期必須相同，上市 OpenAPI 延遲時改查當日 TWSE MI_INDEX；仍不同或来源不完整则步驟失敗，保留原排行，畫面日期呈現實際資料日，不標成今日。日期為官方來源，不用程式執行日冒充。
