@@ -99,10 +99,10 @@ export default {async fetch(req,env){
  const b=await req.json(),type=path.slice(1);let code=b.code,news;
  if(type==='summarize'){news=await sql('SELECT * FROM news WHERE id=?',b.id).first();if(!news)return reply({error:'新聞不存在'},404);code=news.company_code;}
  if(!await sql('SELECT 1 FROM watchlists WHERE user_id=? AND company_code=?',user.id,code).first())return reply({error:'尚未追蹤此公司'},403);
- if(news?.article_summary)return reply({news});
+ const retryAI=b.retry_ai===true&&news?.summary_method!=='ai';if(news?.article_summary&&!retryAI)return reply({news});
  const existing=await sql("SELECT * FROM jobs WHERE type=? AND company_code=? AND news_id IS ? AND status IN ('pending','running') ORDER BY created_at DESC LIMIT 1",type,code,news?.id||null).first();
  if(existing){let dispatched,dispatchError;if(existing.status==='pending'){dispatched=false;try{dispatched=await dispatch(env);}catch(e){dispatchError=e.message||'GitHub 連線失敗';}}return reply({job:existing,news,dispatched,dispatchError},202);}
- const recent=await sql("SELECT * FROM jobs WHERE type=? AND company_code=? AND news_id IS ? AND created_at>? ORDER BY created_at DESC LIMIT 1",type,code,news?.id||null,Date.now()-15*60000).first();if(recent?.status==='done')return reply({job:recent,news},202);
+ const recent=await sql("SELECT * FROM jobs WHERE type=? AND company_code=? AND news_id IS ? AND created_at>? ORDER BY created_at DESC LIMIT 1",type,code,news?.id||null,Date.now()-15*60000).first();if(recent?.status==='done'&&!retryAI)return reply({job:recent,news},202);
  const id=randomToken();await sql('INSERT OR IGNORE INTO jobs(id,type,company_code,news_id,created_at) VALUES(?,?,?,?,?)',id,type,code,news?.id||null,Date.now()).run();
  const queued=await sql("SELECT id,status FROM jobs WHERE type=? AND company_code=? AND news_id IS ? AND status IN ('pending','running') LIMIT 1",type,code,news?.id||null).first();
  let dispatched=false,dispatchError;try{dispatched=await dispatch(env);}catch(e){dispatchError=e.message||'GitHub 連線失敗';}return reply({job:queued,news,dispatched,dispatchError},202);
