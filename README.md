@@ -184,3 +184,19 @@ K 線可開關 MA5／10／15／60，預設開啟 5／10；輸入 1～250 的自�
 公司端點必須使用 HTTPS、瀏覽器信任的憑證，並允許來源 `https://ugiyo.github.io` 的 CORS 預檢 OPTIONS 與 POST，允許 `Content-Type, Authorization`；Azure 為 `Content-Type, api-key`。私人網路端點還可能需要瀏覽器的區域網路存取許可與公司 VPN。若瀏覽器連線失敗，不會改用本專案後端轉送。
 
 送出前可檢視、編輯新聞內容。預設只有標題與既有摘要／摘錄，不會自動抓取新聞連結全文；可自行貼上全文。每次上限 60,000 字元，超過時視窗明確提醒截取。摘要結果僅在目前視窗顯示，不寫入共享 DB。測試連線也會呼叫模型並可能計費。未持有實際公司服務金鑰，部署驗證不代表公司 CORS／模型設定已通過。
+
+### 本機 Python 模式：公司 AI 不需要設定 CORS
+
+需在**實際使用網站的同一台電腦**啟動 Python 3.8 以上；不需 pip 或外部套件。下載 `tools/local_ai_bridge.py`，在所在目錄執行：
+
+```bat
+py -3 local_ai_bridge.py --open
+```
+
+也可使用 `python local_ai_bridge.py --open`。Windows 可將 `tools/start-local-ai.bat` 與 Python 檔放在同一資料夾，雙擊 bat 開啟。保持命令視窗開啟；Ctrl+C 停止。
+
+網站 AI 設定中選「本機 Python」，本機網址預設 `http://127.0.0.1:8765`，填入命令視窗顯示的 `Pairing token`，再填公司 LiteLLM 的 HTTPS Base URL、模型與金鑰。配對碼每次啟動重新產生，永不寫入瀏覽器保存設定。金鑰在請求時經 loopback 傳入本機 Python，再由 Python 直接呼叫 AI，不傳至本專案後端。公司 AI 不需 CORS；本機工具已允許此網站來源。
+
+若瀏覽器要求本機／區域網路存取權限，需要允許。公司瀏覽器政策若禁止網站連線至 localhost，可直接開啟 `http://127.0.0.1:8765` 本機操作頁面，貼上新聞並填入金鑰；該頁不保存設定。手機上的 127.0.0.1 指手機自己，不能連到電腦上的工具。本版只監聽 127.0.0.1，不開放 LAN。
+
+本機工具限制 Host、Origin 與配對碼，拒絕重新導向、不記錄金鑰／內容、不保存結果。支援系統 HTTP(S) 代理環境變數；公司 CA 可用 `--ca-file company-ca.pem` 指定，保持 TLS 驗證。網頁取消會停止等待，但已送往 AI 的請求可能繼續執行並計費。工具不是公司 LiteLLM 的實際連線驗證；仍需在公司網路測試憑證、端點及模型權限。
