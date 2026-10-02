@@ -1,5 +1,5 @@
 """GitHub Actions worker: collect feeds and produce requested article summaries."""
-import os,json,time,re,calendar,socket,ipaddress,datetime,email.utils,xml.etree.ElementTree as ET
+import os,json,time,re,unicodedata,calendar,socket,ipaddress,datetime,email.utils,xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 import requests
 BASE=os.environ['WORKER_API_URL'].rstrip('/')
@@ -13,23 +13,45 @@ def previous_month(now):
  y,m=now.year,now.month-1
  if m==0:y,m=y-1,12
  return now.replace(year=y,month=m,day=min(now.day,calendar.monthrange(y,m)[1]))
+def trusted_domain(url):
+ return {'www.cna.com.tw':'中央社','cna.com.tw':'中央社','www.moneydj.com':'MoneyDJ','moneydj.com':'MoneyDJ','news.cnyes.com':'鉅亨網'}.get((urlparse(url).hostname or '').lower())
+def duplicate_news(a,b):
+ if a['company_code']!=b['company_code']:return False
+ if a['url']==b['url']:return True
+ if abs((datetime.datetime.fromisoformat(a['published_at'])-datetime.datetime.fromisoformat(b['published_at'])).total_seconds())>48*3600:return False
+ def norm(n):
+  t=re.sub(r'\s*[-–—|]\s*(中央社(?: CNA)?|MoneyDJ(?:理財網)?|(?:Anue)?鉅亨(?:網)?)\s*$','',n['title'],flags=re.I)
+  return ''.join(c for c in unicodedata.normalize('NFKC',t).lower() if c.isalnum())
+ x,y=norm(a),norm(b)
+ if not x or not y:return False
+ if x==y and sorted(re.findall(r'\d+(?:[.,]\d+)*',a['title']))==sorted(re.findall(r'\d+(?:[.,]\d+)*',b['title'])):return True
+ if sorted(re.findall(r'\d+(?:[.,]\d+)*',unicodedata.normalize('NFKC',a['title'])))!=sorted(re.findall(r'\d+(?:[.,]\d+)*',unicodedata.normalize('NFKC',b['title']))) or min(len(x),len(y))<12:return False
+ gx={x[i:i+2] for i in range(len(x)-1)};gy={y[i:i+2] for i in range(len(y)-1)}
+ return 2*len(gx&gy)/(len(gx)+len(gy))>=.9
+def curate_news(rows):
+ rank={'中央社':0,'MoneyDJ':1,'鉅亨網':2};kept=[]
+ for n in sorted(rows,key=lambda n:(rank[n['source']],n['published_at'])):
+  if not any(duplicate_news(k,n) for k in kept):kept.append(n)
+ return kept
 def collect(c):
  now=datetime.datetime.now(UTC);start=previous_month(now);rows={};cursor=start
  while cursor<now:
   end=min(cursor+datetime.timedelta(days=1),now)
-  q=f'("{c["name"]}" OR "{c["full_name"]}" OR "{c["code"]}") after:{(cursor-datetime.timedelta(days=1)).date()} before:{(end+datetime.timedelta(days=1)).date()}'
+  q=f'("{c["name"]}" OR "{c["full_name"]}" OR "{c["code"]}") (site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com) after:{(cursor-datetime.timedelta(days=1)).date()} before:{(end+datetime.timedelta(days=1)).date()}'
   r=requests.get('https://news.google.com/rss/search',params={'q':q,'hl':'zh-TW','gl':'TW','ceid':'TW:zh-Hant'},timeout=30);r.raise_for_status()
   root=ET.fromstring(r.content)
   if root.find('channel') is None:raise ValueError('Invalid RSS')
   for item in root.findall('./channel/item'):
    title=item.findtext('title') or '';url=item.findtext('link') or ''
+   source_element=item.find('source');source=trusted_domain(source_element.get('url','') if source_element is not None else '')
+   if not source:continue
    if not(c['name'] in title or c['full_name'] in title or re.search(r'(?<!\d)'+re.escape(c['code'])+r'(?!\d)',title)):continue
    try:published=email.utils.parsedate_to_datetime(item.findtext('pubDate')).astimezone(UTC)
    except (ValueError,TypeError,AttributeError):continue
    if start<=published<=now and url.startswith('https://'):
-    rows[url]={'company_code':c['code'],'title':title,'url':url,'source':item.findtext('source') or '未知來源','published_at':published.isoformat(),'news_date':published.astimezone(TW).date().isoformat()}
+    rows[url]={'company_code':c['code'],'title':title,'url':url,'source':source,'published_at':published.isoformat(),'news_date':published.astimezone(TW).date().isoformat()}
   cursor=end;time.sleep(.2)
- values=list(rows.values())
+ values=curate_news(list(rows.values()))
  for i in range(0,len(values),50):api('/admin/news',{'news':values[i:i+50]})
  api('/admin/company',{'code':c['code'],'updated_at':now.isoformat()})
  print('Collected',c['code'],len(values))
