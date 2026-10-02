@@ -1,3 +1,17 @@
+
+function xmlText(value){return String(value||'').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1').replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi,(_,entity)=>{const named={amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"};if(named[entity])return named[entity];const n=entity.startsWith('#x')?parseInt(entity.slice(2),16):Number(entity.slice(1));return n>0&&n<=0x10ffff?String.fromCodePoint(n):'';});}
+export function parsePreview(xml,company,now=new Date()){
+ if(!/<channel[\s>]/.test(xml))throw Error('Invalid news feed');
+ const start=new Date(now);const day=start.getUTCDate();start.setUTCDate(1);start.setUTCMonth(start.getUTCMonth()-1);start.setUTCDate(Math.min(day,new Date(Date.UTC(start.getUTCFullYear(),start.getUTCMonth()+1,0)).getUTCDate()));
+ const rows=new Map();for(const match of xml.matchAll(/<item[\s>]([\s\S]*?)<\/item>/g)){
+ const tag=name=>xmlText(match[1].match(new RegExp('<'+name+'(?:\\s[^>]*)?>([\\s\\S]*?)<\\/'+name+'>'))?.[1]);
+ const title=tag('title'),link=tag('link'),published=new Date(tag('pubDate'));
+ if(!title.includes(company.name)&&!(company.full_name&&title.includes(company.full_name))&&!new RegExp('(?<!\\d)'+company.code+'(?!\\d)').test(title))continue;
+ if(!Number.isFinite(published.getTime())||published<start||published>now)continue;
+ try{if(new URL(link).protocol!=='https:')continue;}catch{continue;}
+ rows.set(link,{company_code:company.code,title,url:link,source:tag('source')||'未知來源',published_at:published.toISOString(),news_date:new Date(published.getTime()+8*3600000).toISOString().slice(0,10),preview:true});
+ }return [...rows.values()].sort((a,b)=>b.published_at.localeCompare(a.published_at));
+}
 const encoder=new TextEncoder();
 export const randomToken=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');
 export async function hash(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(value))),x=>x.toString(16).padStart(2,'0')).join('');}
@@ -62,6 +76,13 @@ export default {async fetch(req,env){
  if(path==='/me')return reply({user});
  if(path==='/logout'&&req.method==='POST'){await sql('DELETE FROM sessions WHERE token_hash=?',await hash(token)).run();return reply({ok:true});}
  if(path==='/companies'){const q=(url.searchParams.get('q')||'').trim().slice(0,60);return reply({companies:(await sql("SELECT * FROM companies WHERE code=? OR instr(name,?)>0 OR instr(full_name,?)>0 ORDER BY code LIMIT 20",q,q,q).all()).results});}
+ if(path==='/preview'&&req.method==='GET'){
+ const code=url.searchParams.get('code');if(!/^\d{4,6}$/.test(code||''))return reply({error:'股號格式錯誤'},400);
+ const company=await sql('SELECT * FROM companies WHERE code=?',code).first();if(!company)return reply({error:'公司不存在'},404);
+ const feed=new URL('https://news.google.com/rss/search');feed.search=new URLSearchParams({q:`("${company.name}" OR "${company.full_name}" OR "${code}") when:1m`,hl:'zh-TW',gl:'TW',ceid:'TW:zh-Hant'}).toString();
+ const response=await fetch(feed,{headers:{'User-Agent':'StockNewsCalendar/2.0'},signal:AbortSignal.timeout(20000)});if(!response.ok)return reply({error:'新聞來源暫時無法讀取，請稍後重試'},502);
+ return reply({company,news:parsePreview(await response.text(),company)});
+ }
  if(path==='/watchlists'&&req.method==='GET')return reply({companies:(await sql('SELECT c.* FROM companies c JOIN watchlists w ON c.code=w.company_code WHERE w.user_id=? ORDER BY w.created_at,c.code',user.id).all()).results});
  if(path==='/watchlists'&&req.method==='POST'){const {code}=await req.json();if(!await sql('SELECT code FROM companies WHERE code=?',code).first())return reply({error:'公司不存在'},404);await sql('INSERT OR IGNORE INTO watchlists(user_id,company_code) VALUES(?,?)',user.id,code).run();return reply({ok:true});}
  if(path==='/watchlists'&&req.method==='DELETE'){await sql('DELETE FROM watchlists WHERE user_id=? AND company_code=?',user.id,url.searchParams.get('code')).run();return reply({ok:true});}
