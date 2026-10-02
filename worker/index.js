@@ -25,7 +25,7 @@ export async function verifyGoogle(token,clientID){
  const key=await crypto.subtle.importKey('jwk',jwk,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['verify']);
  if(!await crypto.subtle.verify('RSASSA-PKCS1-v1_5',key,b64(sig),encoder.encode(head+'.'+body)))throw Error('Invalid signature');return claims;
 }
-async function dispatch(env){if(!env.GITHUB_DISPATCH_TOKEN)return false;const r=await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/news.yml/dispatches`,{method:'POST',headers:{Authorization:`Bearer ${env.GITHUB_DISPATCH_TOKEN}`,'User-Agent':'stock-news-calendar','Accept':'application/vnd.github+json','Content-Type':'application/json'},body:JSON.stringify({ref:'main',inputs:{mode:'queued'}}),signal:AbortSignal.timeout(10000)});return r.ok;}
+async function dispatch(env){if(!env.GITHUB_DISPATCH_TOKEN)throw Error('Pages Production 尚未設定 GITHUB_DISPATCH_TOKEN');if(!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(env.GITHUB_REPO||''))throw Error('GITHUB_REPO 格式錯誤，應為 UgiYo/stock-news-calendar');const r=await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/news.yml/dispatches`,{method:'POST',headers:{Authorization:`Bearer ${env.GITHUB_DISPATCH_TOKEN}`,'User-Agent':'stock-news-calendar','Accept':'application/vnd.github+json','Content-Type':'application/json'},body:JSON.stringify({ref:'main',inputs:{mode:'queued'}}),signal:AbortSignal.timeout(10000)});if(!r.ok){const reason={401:'token 無效或已過期',403:'token 權限不足，需 Actions: Read and write；或 GitHub 存取限制',404:'repo、news.yml 不存在，或 token 未獲授權存取此 repo',422:'workflow 的 main 分支或 workflow_dispatch 設定不符'};throw Error('GitHub HTTP '+r.status+'：'+(reason[r.status]||'啟動請求失敗'));}return true;}
 export default {async fetch(req,env){
  const url=new URL(req.url),path=url.pathname;
  let appURL;
@@ -96,11 +96,11 @@ export default {async fetch(req,env){
  if(!await sql('SELECT 1 FROM watchlists WHERE user_id=? AND company_code=?',user.id,code).first())return reply({error:'尚未追蹤此公司'},403);
  if(news?.article_summary)return reply({news});
  const existing=await sql("SELECT * FROM jobs WHERE type=? AND company_code=? AND news_id IS ? AND status IN ('pending','running') ORDER BY created_at DESC LIMIT 1",type,code,news?.id||null).first();
- if(existing){let dispatched;if(existing.status==='pending'){dispatched=false;try{dispatched=await dispatch(env);}catch{}}return reply({job:existing,news,dispatched},202);}
+ if(existing){let dispatched,dispatchError;if(existing.status==='pending'){dispatched=false;try{dispatched=await dispatch(env);}catch(e){dispatchError=e.message||'GitHub 連線失敗';}}return reply({job:existing,news,dispatched,dispatchError},202);}
  const recent=await sql("SELECT * FROM jobs WHERE type=? AND company_code=? AND news_id IS ? AND created_at>? ORDER BY created_at DESC LIMIT 1",type,code,news?.id||null,Date.now()-15*60000).first();if(recent?.status==='done')return reply({job:recent,news},202);
  const id=randomToken();await sql('INSERT OR IGNORE INTO jobs(id,type,company_code,news_id,created_at) VALUES(?,?,?,?,?)',id,type,code,news?.id||null,Date.now()).run();
  const queued=await sql("SELECT id,status FROM jobs WHERE type=? AND company_code=? AND news_id IS ? AND status IN ('pending','running') LIMIT 1",type,code,news?.id||null).first();
- let dispatched=false;try{dispatched=await dispatch(env);}catch{}return reply({job:queued,news,dispatched},202);
+ let dispatched=false,dispatchError;try{dispatched=await dispatch(env);}catch(e){dispatchError=e.message||'GitHub 連線失敗';}return reply({job:queued,news,dispatched,dispatchError},202);
  }
  if(path==='/jobs'){const j=await sql('SELECT j.* FROM jobs j JOIN watchlists w ON w.company_code=j.company_code WHERE j.id=? AND w.user_id=?',url.searchParams.get('id'),user.id).first();if(!j)return reply({error:'Job not found'},404);return reply({job:j,news:j.news_id?await sql('SELECT * FROM news WHERE id=?',j.news_id).first():undefined});}
  return reply({error:'Not found'},404);
