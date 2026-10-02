@@ -39,6 +39,12 @@ def main():
     try:
      with urllib.request.urlopen(req,timeout=60) as r:r.read()
     except urllib.error.HTTPError as e:
+     response=e.read(4096).decode('utf-8',errors='replace')
+     try:detail=json.loads(response).get('error')
+     except (ValueError,AttributeError):detail=None
+     if e.code==403 and detail!='Forbidden':
+      code=re.search(r'(?:error code:|Error)\s*(\d{4})',response,re.I)
+      raise RuntimeError('Cloudflare 存取層拒絕請求 (HTTP 403'+(', code '+code.group(1) if code else '')+')，不是 Worker 密鑰驗證回應；請檢查 Cloudflare 安全規則／Access。Ray ID: '+str(e.headers.get('cf-ray','unknown'))) from None
      if e.code in (401,403):raise RuntimeError('Cloudflare Worker 拒絕寫入 (HTTP '+str(e.code)+')：請確認 GitHub Actions 與 Worker 的 COLLECTOR_SECRET 完全相同，且 Worker 設定已部署') from None
      raise RuntimeError('Cloudflare Worker 寫入失敗 (HTTP '+str(e.code)+')，請檢查 Worker 設定及 D1 migration') from None
    print(market,len(companies))
