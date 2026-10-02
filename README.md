@@ -170,3 +170,17 @@ K 線可開關 MA5／10／15／60，預設開啟 5／10；輸入 1～250 的自�
 登入 Google 後點「券商庫存」，選券商及數量單位，選擇 UTF-8／Big5 檔案或貼上明細，先預覽再確認。欄位示例：股票代號,股數,平均成本；成本可留空。明確股數／張數欄位優先於選擇單位，普通數量欄位按選擇單位處理。只匯入正數現股庫存，同代號重複時需先彙整，最多 100 檔。支援 0050 等代號保留前導零，但 ETF 可能無本站行情／無法加入普通公司新聞追蹤。
 
 每家券商各保存一份最新快照，確認時取代該券商舊明細。僅 localStorage 保存於裝置，按 Google 使用者 ID 隔離，不跨手機同步，不上傳股數、成本、券商密碼或憑證。行情查詢只傳股票代號，一次批次讀取已保存日收盤，不輪詢、不寫 DB。估計損益未含費用／股利；顯示行情實際日期，非券商即時帳務。可逐檔加入新聞追蹤、查看 K 線或清除此裝置該券商明細。
+
+### 使用者自己的 AI（僅瀏覽器直接連線）
+
+頁首「AI 設定」、當日總結中的「使用個人 AI」、新聞卡片的「個人 AI 摘要」支援 OpenAI、Azure OpenAI 與 LiteLLM。這組設定與 GitHub Actions 的 OPENAI_API_KEY 完全獨立。
+
+- OpenAI：Base URL `https://api.openai.com/v1`，填模型與自己的 API Key。
+- Azure OpenAI：填資源根網址 `https://資源名稱.openai.azure.com`、部署名稱、API version（預設 `2024-10-21`）、API Key。本介面使用 `/openai/deployments/{deployment}/chat/completions?api-version=...`，不是 Azure v1 模式。
+- LiteLLM：填公司閘道的 Base URL（例如 `https://ai.company.example/v1`，系統附加 `/chat/completions`）、閘道模型別名與個人虛擬金鑰。閘道若直接提供 `/chat/completions`，Base URL 不加 `/v1`。
+
+預設設定與金鑰只留在分頁記憶體，重新整理即清除。「在這個瀏覽器記住」才寫入該瀏覽器 localStorage，未加密且不跨裝置同步，共用裝置不應啟用。清除設定會刪除保存資料與記憶體金鑰。個人金鑰只放在直接 AI 請求的認證 header，不送往本專案 Worker、GitHub Actions 或 D1；不跟隨重新導向，不傳送 Cookie。模型供應商或公司閘道仍會收到金鑰、新聞與提示詞，並可能依其政策保存。請使用有限額、可撤銷的個人金鑰。
+
+公司端點必須使用 HTTPS、瀏覽器信任的憑證，並允許來源 `https://ugiyo.github.io` 的 CORS 預檢 OPTIONS 與 POST，允許 `Content-Type, Authorization`；Azure 為 `Content-Type, api-key`。私人網路端點還可能需要瀏覽器的區域網路存取許可與公司 VPN。若瀏覽器連線失敗，不會改用本專案後端轉送。
+
+送出前可檢視、編輯新聞內容。預設只有標題與既有摘要／摘錄，不會自動抓取新聞連結全文；可自行貼上全文。每次上限 60,000 字元，超過時視窗明確提醒截取。摘要結果僅在目前視窗顯示，不寫入共享 DB。測試連線也會呼叫模型並可能計費。未持有實際公司服務金鑰，部署驗證不代表公司 CORS／模型設定已通過。
