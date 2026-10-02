@@ -33,7 +33,14 @@ def curate_news(rows):
  for n in sorted(rows,key=lambda n:(rank[n['source']],n['published_at'])):
   if not any(duplicate_news(k,n) for k in kept):kept.append(n)
  return kept
+def company_mention(title,c,conflicts):
+ if re.search(r'(?<!\d)'+re.escape(c['code'])+r'(?!\d)',title):return True
+ cleaned=title
+ for name in sorted(set(conflicts+(['台聯電'] if c['code']=='2303' else [])),key=len,reverse=True):
+  if name and name!=c['name']:cleaned=cleaned.replace(name,' ')
+ return any(name and len(name)>=2 and name in cleaned for name in [c['name'],c['full_name']])
 def collect(c):
+ conflicts=api('/admin/company-aliases?code='+c['code'])['names']
  now=datetime.datetime.now(UTC);start=previous_month(now);rows={};cursor=start
  while cursor<now:
   end=min(cursor+datetime.timedelta(days=1),now)
@@ -45,7 +52,7 @@ def collect(c):
    title=item.findtext('title') or '';url=item.findtext('link') or ''
    source_element=item.find('source');source=trusted_domain(source_element.get('url','') if source_element is not None else '')
    if not source:continue
-   if not(c['name'] in title or c['full_name'] in title or re.search(r'(?<!\d)'+re.escape(c['code'])+r'(?!\d)',title)):continue
+   if not company_mention(title,c,conflicts):continue
    try:published=email.utils.parsedate_to_datetime(item.findtext('pubDate')).astimezone(UTC)
    except (ValueError,TypeError,AttributeError):continue
    if start<=published<=now and url.startswith('https://'):
