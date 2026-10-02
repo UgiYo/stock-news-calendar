@@ -96,8 +96,8 @@ export default {async fetch(req,env){
  if(!await sql('SELECT 1 FROM watchlists WHERE user_id=? AND company_code=?',user.id,code).first())return reply({error:'尚未追蹤此公司'},403);
  if(news?.article_summary)return reply({news});
  const existing=await sql("SELECT * FROM jobs WHERE type=? AND company_code=? AND news_id IS ? AND status IN ('pending','running') ORDER BY created_at DESC LIMIT 1",type,code,news?.id||null).first();
- if(existing)return reply({job:existing,news},202);
- const recent=await sql("SELECT * FROM jobs WHERE type=? AND company_code=? AND news_id IS ? AND created_at>? ORDER BY created_at DESC LIMIT 1",type,code,news?.id||null,Date.now()-15*60000).first();if(recent)return reply({job:recent,news},202);
+ if(existing){let dispatched;if(existing.status==='pending'){dispatched=false;try{dispatched=await dispatch(env);}catch{}}return reply({job:existing,news,dispatched},202);}
+ const recent=await sql("SELECT * FROM jobs WHERE type=? AND company_code=? AND news_id IS ? AND created_at>? ORDER BY created_at DESC LIMIT 1",type,code,news?.id||null,Date.now()-15*60000).first();if(recent?.status==='done')return reply({job:recent,news},202);
  const id=randomToken();await sql('INSERT OR IGNORE INTO jobs(id,type,company_code,news_id,created_at) VALUES(?,?,?,?,?)',id,type,code,news?.id||null,Date.now()).run();
  const queued=await sql("SELECT id,status FROM jobs WHERE type=? AND company_code=? AND news_id IS ? AND status IN ('pending','running') LIMIT 1",type,code,news?.id||null).first();
  let dispatched=false;try{dispatched=await dispatch(env);}catch{}return reply({job:queued,news,dispatched},202);
