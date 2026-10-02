@@ -158,3 +158,7 @@ GitHub Actions `Update daily turnover ranking and industry tags` 步驟執行 `s
 日行情支援上市 TWSE STOCK_DAY 與上櫃 TPEx tradingStock（成交股數千股轉為股）。每日 Actions 補所有已追蹤公司，以及保存排行中曾入前十的股票。首次補近五個月，後續僅更新最後行情日前七天涵蓋月份，條件 upsert 包含 OHLC 更正，所有使用者共用。首次自動執行 Refresh stock candlesticks；亦可手動重跑。既有 Update company news 每日會更新行情。
 
 分鐘 K 由 Worker 依官方公司名錄組合 Yahoo Finance .TW／.TWO 查詢近五個交易日；用來源真實分鐘 OHLC，不從日 K 推算。固定白名單代碼／週期，快取三分鐘，無分鐘資料 D1 寫入、無輪詢。Yahoo chart 介面非有服務保證的正式開放 API，可能延遲／限制存取；失敗顯示原因，日週月圖仍可用。圖最多顯示最近 100 根，省略未回傳時段、空 OHLC 和一般交易時段外資料；重新載入仍受三分鐘快取影響。
+
+### 可調整 MA 均線
+
+K 線可開關 MA5／10／15／60，預設開啟 5／10；輸入 1～250 的自訂週期（最多 6 條）後套用。MA 使用選定週期每根 K 棒收盤价的简单平均，日 K 為交易日、週 K 為週、分鐘 K 為該分鐘週期。先用完整已讀行情計算再裁出最近 100 根，避免因畫面範圍少算長均線。資料不滿 N 根不畫 MA；缺少有效收盤不補值。設定保存在裝置 localStorage，計算完全在前端，不新增 DB 寫入／Cloudflare 查詢。
