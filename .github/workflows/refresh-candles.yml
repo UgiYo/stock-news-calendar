@@ -1,0 +1,41 @@
+name: Refresh stock candlesticks
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/refresh-candles.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: news-collector
+  cancel-in-progress: false
+jobs:
+  prices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      WORKER_API_URL: ${{ vars.WORKER_API_URL }}
+      COLLECTOR_SECRET: ${{ secrets.COLLECTOR_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests==2.32.5
+      - name: Wait for price backend deployment
+        run: |
+          python - <<'PY'
+          import sys,time
+          sys.path.insert(0,'scripts')
+          from collect import api
+          for attempt in range(30):
+              try:
+                  api('/admin/chart-codes')
+                  break
+              except Exception:
+                  if attempt==29:raise
+                  print('Waiting for backend',attempt+1,flush=True)
+                  time.sleep(10)
+          PY
+      - name: Refresh daily OHLCV for tracked stocks and historical top ten
+        run: python scripts/market_prices.py
