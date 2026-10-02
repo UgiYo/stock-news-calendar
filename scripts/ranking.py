@@ -32,5 +32,12 @@ def main():
   if not table:raise ValueError('Missing TWSE turnover table')
   tq=[{'Code':dict(zip(table['fields'],row))['證券代號'],'TradeValue':dict(zip(table['fields'],row))['成交金額']} for row in table['data']]
  rows=normalize(tq,tc,'上市')+normalize(oq,oc,'上櫃');rows.sort(key=lambda r:(-r['amount'],r['code']))
- api('/admin/ranking',{'date':date,'stocks':rows});print('Turnover ranking',date,len(rows),'top ten',','.join(r['code'] for r in rows[:10]),flush=True)
+ # Use the official index trading calendar, never infer yesterday from a saved snapshot.
+ from market_prices import fetch_month
+ d=datetime.date.fromisoformat(date);days=fetch_month('TAIEX',d)
+ previous=[r['date'] for r in days if r['date']<date]
+ if not previous:
+  days=fetch_month('TAIEX',d.replace(day=1)-datetime.timedelta(days=1));previous=[r['date'] for r in days if r['date']<date]
+ if not previous:raise ValueError('Cannot establish previous trading date')
+ api('/admin/ranking',{'date':date,'previousDate':max(previous),'stocks':rows});print('Turnover ranking',date,len(rows),'top ten',','.join(r['code'] for r in rows[:10]),flush=True)
 if __name__=='__main__':main()
