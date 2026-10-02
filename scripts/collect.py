@@ -39,9 +39,15 @@ def company_mention(title,c,conflicts):
  for name in sorted(set(conflicts+(['台聯電'] if c['code']=='2303' else [])),key=len,reverse=True):
   if name and name!=c['name']:cleaned=cleaned.replace(name,' ')
  return any(name and len(name)>=2 and name in cleaned for name in [c['name'],c['full_name']])
+def collection_start(c,now):
+ earliest=previous_month(now)
+ try:
+  last=datetime.datetime.fromisoformat(c.get('last_collected_at') or '').astimezone(UTC)
+  return max(earliest,min(now,last)-datetime.timedelta(days=2))
+ except (ValueError,TypeError):return earliest
 def collect(c):
  conflicts=api('/admin/company-aliases?code='+c['code'])['names']
- now=datetime.datetime.now(UTC);start=previous_month(now);rows={};cursor=start
+ now=datetime.datetime.now(UTC);start=collection_start(c,now);rows={};cursor=start
  while cursor<now:
   end=min(cursor+datetime.timedelta(days=1),now)
   q=f'("{c["name"]}" OR "{c["full_name"]}" OR "{c["code"]}") (site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com) after:{(cursor-datetime.timedelta(days=1)).date()} before:{(end+datetime.timedelta(days=1)).date()}'
@@ -59,7 +65,7 @@ def collect(c):
     rows[url]={'company_code':c['code'],'title':title,'url':url,'source':source,'published_at':published.isoformat(),'news_date':published.astimezone(TW).date().isoformat()}
   cursor=end;time.sleep(.2)
  values=curate_news(list(rows.values()))
- for i in range(0,len(values),50):api('/admin/news',{'news':values[i:i+50]})
+ for i in range(0,len(values),20):api('/admin/news',{'news':values[i:i+20]})
  api('/admin/company',{'code':c['code'],'updated_at':now.isoformat()})
  print('Collected',c['code'],len(values))
 def safe_url(url):
