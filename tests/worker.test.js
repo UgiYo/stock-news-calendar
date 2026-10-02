@@ -14,3 +14,7 @@ test('Google identity verifies signature, audience and expiration',async()=>{
  globalThis.fetch=async()=>Response.json({keys:[jwk]});
  try{const enc=x=>Buffer.from(JSON.stringify(x)).toString('base64url');const claims={aud:'client',iss:'https://accounts.google.com',exp:Date.now()/1000+60,sub:'user',email:'a@example.com',email_verified:true};const input=enc({alg:'RS256',kid:'fixture'})+'.'+enc(claims);const signature=await crypto.subtle.sign('RSASSA-PKCS1-v1_5',pair.privateKey,new TextEncoder().encode(input));const token=input+'.'+Buffer.from(signature).toString('base64url');assert.equal((await verifyGoogle(token,'client')).sub,'user');await assert.rejects(verifyGoogle(token,'other-client'));await assert.rejects(verifyGoogle(input+'.'+Buffer.alloc(256).toString('base64url'),'client'));}finally{globalThis.fetch=original;}
 });
+test('missing or invalid APP_URL returns actionable configuration error',async()=>{
+ for(const value of [undefined,'','example.com','javascript:bad']){const r=await call({APP_URL:value},'/');assert.equal(r.status,503);assert.match((await r.json()).error,/APP_URL/);}
+ const r=await call({APP_URL:' https://example.com/ '},'/health');assert.equal(r.status,503);assert.ok((await r.json()).missing.includes('DB'));
+});
