@@ -1,0 +1,3 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {topTurnover,filterSector} from '../src/ranking.js';
+test('turnover ranks by amount not shares and returns only ten',()=>{const rows=Array.from({length:15},(_,i)=>({code:String(1000+i),amount:i*100,tag:i%2?'半導體':'航運'}));assert.equal(topTurnover(rows).length,10);assert.equal(topTurnover(rows)[0].code,'1014');assert.equal(rows[0].code,'1000');});
+test('sector selection includes matching stocks outside top ten',()=>{const rows=Array.from({length:15},(_,i)=>({code:String(1000+i),amount:i,tag:'半導體'}));assert.equal(filterSector(rows,'半導體').length,15);assert.equal(filterSector(rows,'航運').length,0);assert.equal(filterSector(rows,'').length,15);});
