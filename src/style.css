@@ -12,3 +12,5 @@
 .candle-tabs{display:flex;flex-wrap:wrap;gap:8px}.candlestick-scroll{overflow-x:auto;max-width:100%}.stock-ranking-dialog .candlestick-scroll svg{width:auto;height:340px;max-height:none}.candle-panel{margin:20px 0;padding:15px;background:#f4f8fa;border-radius:10px}.candle-panel small{display:block;line-height:1.7}.candlestick-scroll [data-candle]:focus{outline:2px solid #107b84}
 
 .ma-controls{border:1px solid #d2dce4;border-radius:8px;margin:12px 0;padding:12px}.ma-controls>div{display:flex;flex-wrap:wrap;gap:12px}.ma-controls label{display:inline-flex;align-items:center;gap:5px;margin:5px}.ma-controls input[type=checkbox]{width:auto}.ma-controls #ma-periods{max-width:190px;display:inline-block;margin:8px}
+
+.holdings-dialog label{display:block;margin:12px 0}.holdings-dialog textarea{width:100%;padding:10px;box-sizing:border-box;border:1px solid #dce5ec;border-radius:8px}.holdings-dialog select{padding:8px}.holdings-dialog table{border-collapse:collapse;width:100%;white-space:nowrap}.holdings-dialog td,.holdings-dialog th{padding:8px;border-bottom:1px solid #dce5ec;text-align:left}
