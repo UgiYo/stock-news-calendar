@@ -1,3 +1,4 @@
+export function companyMention(title,company,conflicts=[]){const text=String(title||'').normalize('NFKC');if(new RegExp('(?<!\\d)'+company.code+'(?!\\d)').test(text))return true;let cleaned=text;const names=[...conflicts,...(company.code==='2303'?['台聯電']:[])];for(const name of [...new Set(names)].sort((a,b)=>b.length-a.length))if(name&&name!==company.name)cleaned=cleaned.split(name).join(' ');return [company.name,company.full_name].filter(n=>n&&n.length>=2).some(n=>cleaned.includes(n));}
 export function trustedSource(source){const key=String(source||'').normalize('NFKC').replace(/\s/g,'').toLowerCase();return ({'中央社':'中央社','中央社cna':'中央社','cna':'中央社','moneydj':'MoneyDJ','moneydj理財網':'MoneyDJ','鉅亨網':'鉅亨網','鉅亨':'鉅亨網','anue鉅亨':'鉅亨網','anue鉅亨網':'鉅亨網'})[key]||null;}
 export function sourceDomain(value){try{const h=new URL(value).hostname.toLowerCase();return ({'www.cna.com.tw':'中央社','cna.com.tw':'中央社','www.moneydj.com':'MoneyDJ','moneydj.com':'MoneyDJ','news.cnyes.com':'鉅亨網'})[h]||null;}catch{return null;}}
 const normalizedTitle=n=>String(n.title||'').replace(/\s*[-–—|]\s*(中央社(?: CNA)?|MoneyDJ(?:理財網)?|(?:Anue)?鉅亨(?:網)?)\s*$/i,'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
@@ -5,13 +6,13 @@ export function duplicateNews(a,b){if(a.company_code!==b.company_code)return fal
 export function curateNews(rows){const rank={'中央社':0,'MoneyDJ':1,'鉅亨網':2};const candidates=rows.filter(n=>trustedSource(n.source)).map(n=>({...n,source:trustedSource(n.source)})).sort((a,b)=>Number(!!b.article_summary)-Number(!!a.article_summary)||rank[a.source]-rank[b.source]||String(b.published_at).localeCompare(String(a.published_at)));const kept=[];for(const n of candidates)if(!kept.some(k=>duplicateNews(k,n)))kept.push(n);return kept.sort((a,b)=>String(b.published_at).localeCompare(String(a.published_at)));}
 
 function xmlText(value){return String(value||'').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1').replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi,(_,entity)=>{const named={amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"};if(named[entity])return named[entity];const n=entity.startsWith('#x')?parseInt(entity.slice(2),16):Number(entity.slice(1));return n>0&&n<=0x10ffff?String.fromCodePoint(n):'';});}
-export function parsePreview(xml,company,now=new Date()){
+export function parsePreview(xml,company,now=new Date(),conflicts=[]){
  if(!/<channel[\s>]/.test(xml))throw Error('Invalid news feed');
  const start=new Date(now);const day=start.getUTCDate();start.setUTCDate(1);start.setUTCMonth(start.getUTCMonth()-1);start.setUTCDate(Math.min(day,new Date(Date.UTC(start.getUTCFullYear(),start.getUTCMonth()+1,0)).getUTCDate()));
  const rows=new Map();for(const match of xml.matchAll(/<item[\s>]([\s\S]*?)<\/item>/g)){
  const tag=name=>xmlText(match[1].match(new RegExp('<'+name+'(?:\\s[^>]*)?>([\\s\\S]*?)<\\/'+name+'>'))?.[1]);
  const title=tag('title'),link=tag('link'),published=new Date(tag('pubDate'));const sourceURL=xmlText(match[1].match(/<source\b[^>]*\burl=["']([^"']+)["']/)?.[1]);const source=sourceDomain(sourceURL);if(!source)continue;
- if(!title.includes(company.name)&&!(company.full_name&&title.includes(company.full_name))&&!new RegExp('(?<!\\d)'+company.code+'(?!\\d)').test(title))continue;
+ if(!companyMention(title,company,conflicts))continue;
  if(!Number.isFinite(published.getTime())||published<start||published>now)continue;
  try{if(new URL(link).protocol!=='https:')continue;}catch{continue;}
  rows.set(link,{company_code:company.code,title,url:link,source,published_at:published.toISOString(),news_date:new Date(published.getTime()+8*3600000).toISOString().slice(0,10),preview:true});
@@ -65,6 +66,7 @@ export default {async fetch(req,env){
  if(path.startsWith('/admin/')){
  const provided=req.headers.get('Authorization')||'';if(!env.COLLECTOR_SECRET||await hash(provided)!==await hash('Bearer '+env.COLLECTOR_SECRET))return reply({error:'Forbidden'},403);
  if(path==='/admin/companies'&&req.method==='POST'){const {companies}=await req.json();if(!Array.isArray(companies)||companies.length>100)return reply({error:'Invalid batch'},400);await env.DB.batch(companies.map(c=>{if(!/^\d{4,6}$/.test(c.code)||!c.name||!['上市','上櫃'].includes(c.market))throw Error('Invalid company');return sql('INSERT INTO companies(code,name,full_name,market) VALUES(?,?,?,?) ON CONFLICT(code) DO UPDATE SET name=excluded.name,full_name=excluded.full_name,market=excluded.market',c.code,c.name,c.full_name,c.market);}));return reply({ok:true});}
+ if(path==='/admin/company-aliases'){const c=await sql('SELECT * FROM companies WHERE code=?',url.searchParams.get('code')).first();if(!c)return reply({error:'公司不存在'},404);return reply({names:(await sql('SELECT name FROM companies WHERE code<>? AND name<>? AND instr(name,?)>0',c.code,c.name,c.name).all()).results.map(x=>x.name)});}
  if(path==='/admin/tracked')return reply({companies:(await sql('SELECT DISTINCT c.* FROM companies c JOIN watchlists w ON c.code=w.company_code').all()).results});
  if(path==='/admin/claim'&&req.method==='POST'){
  await sql("UPDATE jobs SET status='pending' WHERE status='running' AND claimed_at<?",Date.now()-20*60000).run();
@@ -86,9 +88,9 @@ export default {async fetch(req,env){
  const company=await sql('SELECT * FROM companies WHERE code=?',code).first();if(!company)return reply({error:'公司不存在'},404);
  const feed=new URL('https://news.google.com/rss/search');feed.search=new URLSearchParams({q:`("${company.name}" OR "${company.full_name}" OR "${code}") (site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com) when:1m`,hl:'zh-TW',gl:'TW',ceid:'TW:zh-Hant'}).toString();
  const response=await fetch(feed,{headers:{'User-Agent':'StockNewsCalendar/2.0'},signal:AbortSignal.timeout(20000)});if(!response.ok)return reply({error:'新聞來源暫時無法讀取，請稍後重試'},502);
- return reply({company,news:parsePreview(await response.text(),company)});
+ const conflicts=(await sql('SELECT name FROM companies WHERE code<>? AND name<>? AND instr(name,?)>0',company.code,company.name,company.name).all()).results.map(x=>x.name);return reply({company,news:parsePreview(await response.text(),company,new Date(),conflicts)});
  }
- if(path==='/watchlists'&&req.method==='GET')return reply({companies:(await sql('SELECT c.*, (SELECT COUNT(*) FROM news n WHERE n.company_code=c.code) AS news_count FROM companies c JOIN watchlists w ON c.code=w.company_code WHERE w.user_id=? ORDER BY w.created_at,c.code',user.id).all()).results});
+ if(path==='/watchlists'&&req.method==='GET'){const companies=(await sql('SELECT c.*, (SELECT COUNT(*) FROM news n WHERE n.company_code=c.code) AS news_count FROM companies c JOIN watchlists w ON c.code=w.company_code WHERE w.user_id=? ORDER BY w.created_at,c.code',user.id).all()).results;const catalog=(await sql('SELECT code,name FROM companies').all()).results;return reply({companies:companies.map(c=>({...c,conflicting_names:catalog.filter(other=>other.code!==c.code&&other.name!==c.name&&other.name.includes(c.name)).map(other=>other.name)}))});}
  if(path==='/watchlists'&&req.method==='POST'){const {code}=await req.json();if(!await sql('SELECT code FROM companies WHERE code=?',code).first())return reply({error:'公司不存在'},404);await sql('INSERT OR IGNORE INTO watchlists(user_id,company_code) VALUES(?,?)',user.id,code).run();return reply({ok:true});}
  if(path==='/watchlists'&&req.method==='DELETE'){await sql('DELETE FROM watchlists WHERE user_id=? AND company_code=?',user.id,url.searchParams.get('code')).run();return reply({ok:true});}
  if(path==='/news'){
