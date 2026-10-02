@@ -1,0 +1,3 @@
+import {topTurnover} from './ranking.js';
+export function newEntrants(rows,previous){if(!previous)return null;const codes=new Set(topTurnover(previous).map(r=>r.code));return new Set(topTurnover(rows).filter(r=>!codes.has(r.code)).map(r=>r.code));}
+export function sectorTrend(history,tag,anchor){const sorted=[...history].sort((a,b)=>a.date.localeCompare(b.date));const rows=sorted.map(h=>{const sector=h.sectors[tag]||{amount:0,count:0,topCount:0};return {...sector,date:h.date,previousDate:h.previousDate,share:h.total>0?sector.amount/h.total*100:null};});return rows.map((r,i)=>{const prior=rows.find(x=>x.date===r.previousDate),change=prior&&r.share!==null&&prior.share!==null?r.share-prior.share:null;return {...r,change,afterAnchor:r.date>=anchor};});}
