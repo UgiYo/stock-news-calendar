@@ -18,8 +18,9 @@ export function parsePreview(xml,company,now=new Date(),conflicts=[]){
  rows.set(link,{company_code:company.code,title,url:link,source,published_at:published.toISOString(),news_date:new Date(published.getTime()+8*3600000).toISOString().slice(0,10),preview:true});
  }return curateNews([...rows.values()]);
 }
-const ARTICLE_HOSTS=new Set(['www.cna.com.tw','cna.com.tw','www.moneydj.com','moneydj.com','news.cnyes.com']);
-export function checkedArticleURL(value){const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||(u.port&&u.port!=='443')||!ARTICLE_HOSTS.has(u.hostname)&&u.hostname!=='news.google.com')throw Error('只支援三家新聞來源及 Google News 原文連結');return u.href;}
+const ARTICLE_HOSTS=new Set(['www.cna.com.tw','cna.com.tw','www.moneydj.com','moneydj.com','m.moneydj.com','news.cnyes.com','gfe-desktop.cnyes.com']);
+export function normalizeArticleURL(value){let u=new URL(value);if(['www.google.com','google.com'].includes(u.hostname)&&u.pathname==='/url'){const target=u.searchParams.get('url')||u.searchParams.get('q');if(target)u=new URL(target);}if(ARTICLE_HOSTS.has(u.hostname)&&u.protocol==='http:'&&!u.port)u.protocol='https:';if(u.hostname==='gfe-desktop.cnyes.com')u.hostname='news.cnyes.com';if(u.hostname==='m.moneydj.com'&&/f1a\.aspx/i.test(u.pathname)){const id=[...u.searchParams].find(([key])=>key.toLowerCase()==='id')?.[1];if(id)u=new URL('https://www.moneydj.com/kmdj/news/newsviewer.aspx?a='+encodeURIComponent(id));}return checkedArticleURL(u.href);}
+export function checkedArticleURL(value){const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||(u.port&&u.port!=='443')||!ARTICLE_HOSTS.has(u.hostname)&&u.hostname!=='news.google.com')throw Error('來源網址未支援（'+u.hostname+'）；只接受三家新聞來源及 Google News 原文連結');return u.href;}
 export function extractArticleBody(html){
  if(/"isAccessibleForFree"\s*:\s*(false|"false")/i.test(html))throw Error('付費文章無法取得完整內文');
  const bodies=[];const walk=value=>{if(Array.isArray(value))value.forEach(walk);else if(value&&typeof value==='object'){if(typeof value.articleBody==='string')bodies.push(value.articleBody);Object.values(value).forEach(walk);}};
@@ -29,19 +30,19 @@ export function extractArticleBody(html){
   text=parts.join('');
  }
  text=xmlText(text.replace(/<[^>]*>/g,' ')).split('\n').map(line=>line.replace(/[ \t]+/g,' ').trim()).filter(Boolean).join('\n');
- if(text.length<350||/訂閱後閱讀|訂閱即可閱讀|解鎖全文|subscribe to continue/i.test(text))throw Error('無法取得完整內文：內容不足、付費牆或需 JavaScript');if(text.length>40000)throw Error('全文超過 40,000 字元，不會截斷後當作全文');return text;
+ if(text.length<80||/訂閱後閱讀|訂閱即可閱讀|解鎖全文|subscribe to continue/i.test(text))throw Error('無法取得完整內文：內容不足、付費牆或需 JavaScript');if(text.length>40000)throw Error('全文超過 40,000 字元，不會截斷後當作全文');return text;
 }
-async function fetchNewsPage(value,body){let url=checkedArticleURL(value);for(let i=0;i<6;i++){
+async function fetchNewsPage(value,body){let url=normalizeArticleURL(value);for(let i=0;i<6;i++){
  const response=await fetch(url,{method:body?'POST':'GET',body,redirect:'manual',headers:{'User-Agent':'Mozilla/5.0',...(body?{'Content-Type':'application/x-www-form-urlencoded'}:{})},signal:AbortSignal.timeout(12000)});
- if([301,302,303,307,308].includes(response.status)){url=checkedArticleURL(new URL(response.headers.get('Location'),url).href);body=undefined;continue;}if(!response.ok)throw Error('新聞來源 HTTP '+response.status);
+ if([301,302,303,307,308].includes(response.status)){url=normalizeArticleURL(new URL(response.headers.get('Location'),url).href);body=undefined;continue;}if(!response.ok)throw Error('新聞來源 HTTP '+response.status);
  const reader=response.body.getReader(),chunks=[];let size=0;while(true){const {value,done}=await reader.read();if(done)break;size+=value.byteLength;if(size>2000000){await reader.cancel();throw Error('來源頁面過大');}chunks.push(value);}const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}return {url,html:new TextDecoder().decode(bytes)};
  }throw Error('來源轉址過多');}
-export async function readArticleURL(value){let url=checkedArticleURL(value);
+export async function readArticleURL(value){let url=normalizeArticleURL(value);
  if(new URL(url).hostname==='news.google.com'){
-  const id=new URL(url).pathname.split('/').filter(Boolean).at(-1),page=await fetchNewsPage(url),signature=xmlText(page.html.match(/data-n-a-sg=["']([^"']+)["']/)?.[1]),timestamp=Number(page.html.match(/data-n-a-ts=["'](\d+)["']/)?.[1]);if(!signature||!timestamp)throw Error('Google News 原文解析失敗');
+  const id=new URL(url).pathname.split('/').filter(Boolean).at(-1);let decoded;try{const bytes=atob(id.replace(/-/g,'+').replace(/_/g,'/'));const candidate=bytes.match(/https?:\/\/[^\x00-\x20\x7f-\xff]+/)?.[0];if(candidate)decoded=normalizeArticleURL(candidate);}catch{}if(decoded&&ARTICLE_HOSTS.has(new URL(decoded).hostname))return readArticleURL(decoded);const page=await fetchNewsPage('https://news.google.com/rss/articles/'+encodeURIComponent(id)+'?hl=zh-TW&gl=TW&ceid=TW:zh-Hant');if(ARTICLE_HOSTS.has(new URL(page.url).hostname))return {url:page.url,text:extractArticleBody(page.html)};const signature=xmlText(page.html.match(/data-n-a-sg=["']([^"']+)["']/)?.[1]),timestamp=Number(page.html.match(/data-n-a-ts=["'](\d+)["']/)?.[1]);if(!signature||!timestamp)throw Error('Google News 原文解析失敗');
   const context=[['zh-TW','TW',['FINANCE_TOP_INDICES','WEB_TEST_1_0_0'],null,null,1,1,'TW:zh-Hant',null,360,null,null,null,null,null,0,null,null,null],'zh-TW','TW',1,[2,3,4,8],1,0,'',0,0,null,0];const request=JSON.stringify([[['Fbv4je',JSON.stringify(['garturlreq',context,id,timestamp,signature]),null,'generic']]]);const rpc=await fetchNewsPage('https://news.google.com/_/DotsSplashUi/data/batchexecute?rpcids=Fbv4je',new URLSearchParams({'f.req':request}));let resolved;
   for(const line of rpc.html.split('\n')){if(!line.trim().startsWith('['))continue;try{for(const item of JSON.parse(line)){if(item?.[1]==='Fbv4je'){const payload=JSON.parse(item[2]);if(payload[0]==='garturlres')resolved=payload[1];}}}catch{}}
-  if(!resolved)throw Error('Google News 原文解析失敗');url=checkedArticleURL(resolved);
+  if(!resolved)throw Error('Google News 原文解析失敗');url=normalizeArticleURL(resolved);
  }
  if(!ARTICLE_HOSTS.has(new URL(url).hostname))throw Error('原文來源不符');const page=await fetchNewsPage(url);if(!ARTICLE_HOSTS.has(new URL(page.url).hostname))throw Error('原文來源不符');return {url:page.url,text:extractArticleBody(page.html)};
 }
