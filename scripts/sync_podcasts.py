@@ -39,5 +39,5 @@ def main():
   with urllib.request.urlopen(request,timeout=20) as audio:
    print(json.dumps({'audio_status':audio.status,'audio_bytes':audio.headers.get('Content-Length'),'cors':audio.headers.get('Access-Control-Allow-Origin'),'final_audio_host':urllib.parse.urlparse(audio.url).hostname}))
  except Exception as error:print('Audio HEAD unavailable:',type(error).__name__)
- print(json.dumps({'episodes':len(data['episodes']),'latest_date':data['episodes'][0]['date'],'audio_host':urllib.parse.urlparse(data['episodes'][0]['audio_url']).hostname,'transcripts':sum(bool(n['transcript_url']) for n in data['episodes'])},ensure_ascii=False))
+ print(json.dumps({'earliest_date':data['episodes'][-1]['date'],'counts_by_month':{month:sum(e['date'].startswith(month) for e in data['episodes']) for month in sorted({e['date'][:7] for e in data['episodes']})},'episodes':len(data['episodes']),'latest_date':data['episodes'][0]['date'],'audio_host':urllib.parse.urlparse(data['episodes'][0]['audio_url']).hostname,'transcripts':sum(bool(n['transcript_url']) for n in data['episodes'])},ensure_ascii=False))
 if __name__=='__main__':main()
