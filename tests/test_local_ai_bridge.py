@@ -64,6 +64,16 @@ class BridgeTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 bridge.extract_article(page)
 
+    def test_aliases_and_short_complete_announcements(self):
+        from unittest.mock import patch
+        with patch.object(bridge.socket, 'getaddrinfo', return_value=[(None,None,None,None,('8.8.8.8',443))]):
+            self.assertEqual(bridge.normalize_article_url('http://www.moneydj.com/KMDJ/News/NewsViewer.aspx?a=x'), 'https://www.moneydj.com/KMDJ/News/NewsViewer.aspx?a=x')
+            self.assertEqual(bridge.normalize_article_url('https://gfe-desktop.cnyes.com/news/id/1'), 'https://news.cnyes.com/news/id/1')
+            self.assertEqual(bridge.normalize_article_url('https://m.moneydj.com/f1a.aspx?id=abc'), 'https://www.moneydj.com/kmdj/news/newsviewer.aspx?a=abc')
+            with self.assertRaises(ValueError):
+                bridge.normalize_article_url('http://user:pass@www.moneydj.com/a')
+        self.assertEqual(bridge.extract_article('<article itemprop="articleBody">' + '完整短篇公告。' * 15 + '</article>'), '完整短篇公告。' * 15)
+
     def test_article_reading_requires_pairing(self):
         request = urllib.request.Request(self.url + '/articles', data=b'{}', method='POST')
         self.assertEqual(self.status(request), 401)
