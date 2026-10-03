@@ -23,18 +23,22 @@ async function transcribeChunk(config,blob,model,{fetcher,signal}){
   const bytes=new Uint8Array(await blob.arrayBuffer());let raw='';for(let i=0;i<bytes.length;i+=32768)raw+=String.fromCharCode(...bytes.subarray(i,i+32768));
   response=await fetcher(localBridgeOrigin(config.bridge)+'/transcribe',{method:'POST',mode:'cors',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',headers:{'Content-Type':'application/json','X-Local-AI-Token':config.bridgeToken.trim()},body:JSON.stringify({config,model,audio:btoa(raw),type:blob.type}),signal});
  }else response=await fetcher(request.url,{...request.options,signal});
- if(!response.ok)throw Error('語音服務 HTTP '+response.status+'：請確認語音模型、權限、額度與連線。');
+ if(!response.ok)throw Object.assign(Error('語音服務 HTTP '+response.status+'：請確認語音模型、權限、額度與連線。'),{status:response.status});
  const data=await response.json();if(typeof data.text!=='string'||!data.text.trim())throw Error('語音服務沒有回傳逐字稿。');return data.text;
 }
-export async function transcribePodcast(config,blob,model,{fetcher=globalThis.fetch,signal,onProgress=()=>{}}={}){
+export function transcriptSegments(text){const matches=[...String(text||'').matchAll(/\[(\d+)～(\d+) 分鐘\]\n/g)];return matches.map((m,i)=>({start:Number(m[1])*60,end:Number(m[2])*60,text:text.slice(m.index+m[0].length,matches[i+1]?.index??text.length).trim()})).filter(s=>s.text&&s.end>s.start);}
+export function missingAudioRanges(duration,segments,size=120){const ranges=[];let at=0;for(const s of [...segments].sort((a,b)=>a.start-b.start)){if(s.start>at)for(let x=at;x<Math.min(duration,s.start);x+=size)ranges.push([x,Math.min(x+size,s.start,duration)]);at=Math.max(at,s.end);}for(let x=at;x<duration;x+=size)ranges.push([x,Math.min(x+size,duration)]);return ranges;}
+async function resilientChunk(config,blob,model,options){try{return await transcribeChunk(config,blob,model,options);}catch(e){if(options.signal?.aborted||!(e instanceof TypeError||[429,502,503,504].includes(e.status)))throw e;options.onProgress?.('連線暫時失敗，稍後重試此段一次…');await new Promise((resolve,reject)=>{const timer=setTimeout(resolve,2000);options.signal?.addEventListener('abort',()=>{clearTimeout(timer);reject(Error('已取消。'));},{once:true});});return transcribeChunk(config,blob,model,options);}}
+export async function transcribePodcast(config,blob,model,{fetcher=globalThis.fetch,signal,onProgress=()=>{},segments=[],onCheckpoint=()=>{}}={}){
  if(config.transport==='python'){await pairLocalBridge(config,{fetcher,signal});const r=await fetcher(localBridgeOrigin(config.bridge)+'/health',{signal});if((await r.json()).version<4)throw Error('請下載新版本機工具，才能使用 Podcast 音訊轉文字。');}
  if(!blob.size||blob.size>120000000)throw Error('音訊上限 120 MB；請改上傳分段音訊或逐字稿。');
- if(blob.size<=24000000){onProgress('正在將整集音訊送往指定語音服務轉文字…');return {text:await transcribeChunk(config,blob,model,{fetcher,signal}),failed:[]};}
+ if(blob.size<=24000000&&!segments.length){onProgress('正在將整集音訊送往指定語音服務轉文字…');return {text:await resilientChunk(config,blob,model,{fetcher,signal,onProgress}),failed:[],segments:[]};}
  const Context=globalThis.AudioContext||globalThis.webkitAudioContext;if(!Context)throw Error('此瀏覽器無法切分音訊，請上傳小於 24 MB 的分段音訊或逐字稿。');
- onProgress('正在於此裝置解碼並切分音訊…');const context=new Context();let buffer;try{buffer=await context.decodeAudioData(await blob.arrayBuffer());}finally{await context.close();}
- if(buffer.duration>7200)throw Error('單次最多處理兩小時，請分段操作。');const total=Math.ceil(buffer.duration/300),texts=[],failed=[];
- for(let i=0;i<total;i++){if(signal?.aborted)throw Error('已取消。');const start=i*300,end=Math.min(buffer.duration,start+300);onProgress(`音訊轉文字 ${i+1} / ${total} 段`);try{texts.push(`[${Math.floor(start/60)}～${Math.ceil(end/60)} 分鐘]\n`+await transcribeChunk(config,monoWav(buffer,start,end),model,{fetcher,signal}));}catch(e){if(signal?.aborted)throw e;failed.push(`${Math.floor(start/60)}～${Math.ceil(end/60)} 分鐘：${e.message}`);}}
- if(!texts.length)throw Error('全部音訊分段轉錄失敗：\n'+failed.join('\n'));return {text:texts.join('\n\n'),failed};
+ onProgress('正在於此裝置解碼音訊；成功段落將略過…');const context=new Context();let buffer;try{buffer=await context.decodeAudioData(await blob.arrayBuffer());}finally{await context.close();}
+ if(buffer.duration>7200)throw Error('單次最多處理兩小時，請分段操作。');const kept=segments.filter(s=>Number.isFinite(s.start)&&Number.isFinite(s.end)&&s.start>=0&&s.end>s.start&&s.text).map(s=>({...s})),ranges=missingAudioRanges(buffer.duration,kept),failed=[];
+ const result=()=>({text:[...kept].sort((a,b)=>a.start-b.start).map(s=>`[${Math.floor(s.start/60)}～${Math.ceil(s.end/60)} 分鐘]\n${s.text}`).join('\n\n'),failed:[...failed],segments:[...kept]});
+ for(let i=0;i<ranges.length;i++){if(signal?.aborted)throw Error('已取消。');const [start,end]=ranges[i];onProgress(`音訊轉文字 ${i+1} / ${ranges.length} 段（${Math.floor(start/60)}～${Math.ceil(end/60)} 分鐘），已完成段落不重送`);try{kept.push({start,end,text:await resilientChunk(config,monoWav(buffer,start,end),model,{fetcher,signal,onProgress})});}catch(e){if(signal?.aborted)throw e;failed.push(`${Math.floor(start/60)}～${Math.ceil(end/60)} 分鐘：${e instanceof TypeError?'網路請求失敗（無法由此判定是網路、CORS 或手機暫停）':e.message}`);}onCheckpoint(result());}
+ if(!kept.length)throw Error('全部音訊分段轉錄失敗：\n'+failed.join('\n'));return result();
 }
 export async function summarizePodcast(config,episode,text,{fetcher=globalThis.fetch,signal,onProgress=()=>{},partial=false}={}){
  if(!text?.trim()||text.length<80)throw Error('請先取得足夠的逐字稿內容。');if(text.length>300000)throw Error('逐字稿超過 300,000 字元，請分集整理。');
@@ -50,9 +54,9 @@ export async function generatePodcastHighlights(config,episode,{text='',model='w
   if(!model.trim())throw Error('請填語音模型／Azure 語音部署名稱。');
   if(!fetchAudio)throw Error('無法取得本集音訊。');onProgress('步驟 1 / 3：下載本集音訊…');
   const blob=await fetchAudio(episode,signal);onProgress('步驟 2 / 3：音訊轉逐字稿…');
-  const result=await transcribePodcast(config,blob,model,{fetcher,signal,onProgress});text=result.text;failed=result.failed;partial=failed.length>0;
+  const result=await transcribePodcast(config,blob,model,{fetcher,signal,onProgress,onCheckpoint:r=>onTranscript({...r,partial:true})});text=result.text;failed=result.failed;partial=failed.length>0;
   // Retain the transcript before summarizing so a failed summary can be retried without paying for transcription again.
-  onTranscript({text,failed,partial});
+  onTranscript({text,failed,partial,segments:result.segments});
  }else onProgress('使用已取得的逐字稿，略過下載與轉錄。');
  if(signal?.aborted)throw Error('已取消。');onProgress('步驟 3 / 3：整理本集重點…');
  const answer=await summarizePodcast(config,episode,text,{fetcher,signal,onProgress,partial});return {answer,text,failed,partial};
