@@ -5,6 +5,7 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 export function readAISettings(storage=globalThis.localStorage){try{return {...defaults,...JSON.parse(storage.getItem(STORAGE)||'null')};}catch{return {...defaults};}}
 export function saveAISettings(settings,remember,storage=globalThis.localStorage){const {bridgeToken,...persisted}=settings;if(remember)storage.setItem(STORAGE,JSON.stringify(persisted));else storage.removeItem(STORAGE);}
 let settings=readAISettings(),controller=null;
+export function currentAISettings(){return {...settings};}
 export function aiRequest(config,text){
  if(!['openai','azure','litellm'].includes(config.provider))throw Error('請選擇支援的 AI 服務。');
  if(!config.key?.trim()||!config.model?.trim())throw Error('請填 API Key 與模型／部署名稱。');
