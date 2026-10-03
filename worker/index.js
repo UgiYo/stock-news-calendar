@@ -34,7 +34,7 @@ export function extractArticleBody(html){
  if(text.length<80||/訂閱後閱讀|訂閱即可閱讀|解鎖全文|subscribe to continue/i.test(text))throw Error('無法取得完整內文：內容不足、付費牆或需 JavaScript');if(text.length>40000)throw Error('全文超過 40,000 字元，不會截斷後當作全文');return text;
 }
 async function fetchNewsPage(value,body){let url=normalizeArticleURL(value);for(let i=0;i<6;i++){
- const response=await fetch(url,{method:body?'POST':'GET',body,redirect:'manual',headers:{'User-Agent':'Mozilla/5.0',...(body?{'Content-Type':'application/x-www-form-urlencoded'}:{})},signal:AbortSignal.timeout(12000)});
+ let response;for(let attempt=0;attempt<2;attempt++){try{response=await fetch(url,{method:body?'POST':'GET',body,redirect:'manual',headers:{'User-Agent':'Mozilla/5.0',...(body?{'Content-Type':'application/x-www-form-urlencoded'}:{})},signal:AbortSignal.timeout(20000)});if(attempt===0&&[429,502,503,504].includes(response.status)){await response.body?.cancel();await new Promise(resolve=>setTimeout(resolve,1000));continue;}break;}catch(e){if(attempt===1)throw e;await new Promise(resolve=>setTimeout(resolve,1000));}}
  if([301,302,303,307,308].includes(response.status)){url=normalizeArticleURL(new URL(response.headers.get('Location'),url).href);body=undefined;continue;}if(!response.ok)throw Error('新聞來源 HTTP '+response.status);
  const reader=response.body.getReader(),chunks=[];let size=0;while(true){const {value,done}=await reader.read();if(done)break;size+=value.byteLength;if(size>2000000){await reader.cancel();throw Error('來源頁面過大');}chunks.push(value);}const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}return {url,html:new TextDecoder().decode(bytes)};
  }throw Error('來源轉址過多');}
