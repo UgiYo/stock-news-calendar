@@ -9,17 +9,14 @@ on:
       - 'scripts/sync_podcasts.py'
 permissions:
   contents: write
-  pages: write
-  id-token: write
+  actions: write
 concurrency:
-  group: pages
+  group: podcast-episodes
   cancel-in-progress: false
 jobs:
   podcast:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -35,19 +32,7 @@ jobs:
             git commit -m "Update podcast episode metadata"
             git push origin HEAD:main
           fi
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npm run build
+      - name: Deploy updated calendar data
+        run: gh workflow run pages.yml --ref main
         env:
-          VITE_WORKER_API_URL: ${{ vars.WORKER_API_URL }}
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4
+          GH_TOKEN: ${{ github.token }}
