@@ -19,6 +19,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -30,6 +32,7 @@ jobs:
           git add public/data/podcasts/*.json
           if ! git diff --cached --quiet; then
             git commit -m "Update podcast episode metadata"
+            git pull --rebase origin main
             git push origin HEAD:main
           fi
       - name: Deploy updated calendar data
