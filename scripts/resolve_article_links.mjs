@@ -8,6 +8,7 @@ let failures=0,resolved=0;
 const {news}=await api('/admin/article-links');
 for(const n of news){try{
  const url=await resolveArticleURL(n.url);
+ if(new URL(url).pathname.startsWith('/news/aigc/')){await api('/admin/article-links',{id:n.id,url});console.log(JSON.stringify({id:n.id,excluded:'publisher AI answer page'}));continue;}
  // Verify a real article body before retaining its original URL.
  const article=await readArticleURL(url);
  await api('/admin/article-links',{id:n.id,url:article.url});
