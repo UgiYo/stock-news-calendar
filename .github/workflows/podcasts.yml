@@ -1,0 +1,53 @@
+name: Update podcast episodes
+on:
+  schedule:
+    - cron: '12 0,6,12,18 * * *'
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/podcasts.yml'
+      - 'scripts/sync_podcasts.py'
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  podcast:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/sync_podcasts.py
+      - name: Retain shared bounded episode metadata
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/data/podcasts/zhaohua.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Update podcast episode metadata"
+            git push origin HEAD:main
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+        env:
+          VITE_WORKER_API_URL: ${{ vars.WORKER_API_URL }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
