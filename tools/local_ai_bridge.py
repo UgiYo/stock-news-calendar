@@ -249,7 +249,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.valid_host() or not self.allowed():
             self.reply(403, {'error': 'Origin rejected'})
         elif self.path == '/health':
-            self.reply(200, {'service': 'stock-news-local-ai', 'version': 3})
+            self.reply(200, {'service': 'stock-news-local-ai', 'version': 4})
         elif self.path == '/':
             self.reply(200, PAGE.replace('__TOKEN__', json.dumps(TOKEN)), 'text/html')
         else:
@@ -261,6 +261,57 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not secrets.compare_digest(self.headers.get('X-Local-AI-Token', '').encode('utf-8'), TOKEN.encode('utf-8')):
             self.reply(401, {'error': '本機配對碼不正確，請重新查看 Python 視窗。'})
+            return
+        if self.path == '/transcribe':
+            try:
+                import base64
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 0 < length < 33000000:
+                    raise ValueError('Audio too large')
+                data = json.loads(self.rfile.read(length))
+                audio = base64.b64decode(data.get('audio', ''), validate=True)
+                if not 0 < len(audio) <= 24000000:
+                    raise ValueError('Audio too large')
+                config = data.get('config', {})
+                model = str(data.get('model', '')).strip()
+                if not model or len(model) > 200:
+                    raise ValueError('Transcription model required')
+                checked = target_request(config, 'validate')
+                endpoint = checked.full_url
+                if config.get('provider') == 'azure':
+                    endpoint = re.sub(r'/deployments/[^/]+/chat/completions', '/deployments/' + quote(model, safe='') + '/audio/transcriptions', endpoint)
+                else:
+                    endpoint = endpoint.replace('/chat/completions', '/audio/transcriptions')
+                mime = data.get('type') or 'audio/mpeg'
+                if mime not in ('audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/mp4', 'audio/webm', 'audio/ogg', 'application/octet-stream'):
+                    raise ValueError('Invalid audio type')
+                extension = 'wav' if 'wav' in mime else 'm4a' if 'mp4' in mime else 'webm' if 'webm' in mime else 'mp3'
+                boundary = 'podcast-' + secrets.token_hex(16)
+                body = bytearray()
+                for name, value in [('model', model), ('language', 'zh'), ('response_format', 'json')]:
+                    body.extend(('--' + boundary + '\r\nContent-Disposition: form-data; name="' + name + '"\r\n\r\n' + value + '\r\n').encode())
+                body.extend(('--' + boundary + '\r\nContent-Disposition: form-data; name="file"; filename="podcast.' + extension + '"\r\nContent-Type: ' + mime + '\r\n\r\n').encode())
+                body.extend(audio)
+                body.extend(('\r\n--' + boundary + '--\r\n').encode())
+                headers = {k: v for k, v in checked.headers.items() if k.lower() != 'content-type'}
+                headers['Content-Type'] = 'multipart/form-data; boundary=' + boundary
+                request = urllib.request.Request(endpoint, data=bytes(body), headers=headers, method='POST')
+                context = ssl.create_default_context(cafile=self.server.ca_file)
+                opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=context))
+                with opener.open(request, timeout=180) as response:
+                    raw = response.read(1000001)
+                    if len(raw) > 1000000:
+                        raise ValueError('Transcript too large')
+                    result = json.loads(raw)
+                if not isinstance(result.get('text'), str) or not result['text'].strip():
+                    raise ValueError('No transcript')
+                self.reply(200, {'text': result['text']})
+            except urllib.error.HTTPError as error:
+                self.reply(502, {'error': '語音服務 HTTP ' + str(error.code)})
+            except ValueError:
+                self.reply(400, {'error': '請確認音訊大小、格式、語音模型及個人 AI 設定。'})
+            except Exception:
+                self.reply(502, {'error': '無法連線至語音服务，請確認連線、憑證或音訊格式。'})
             return
         if self.path == '/articles':
             try:
