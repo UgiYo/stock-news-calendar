@@ -80,6 +80,16 @@ class BridgeTest(unittest.TestCase):
         request.add_header('X-Local-AI-Token', bridge.TOKEN)
         self.assertEqual(self.status(request), 422)
 
+    def test_audio_relay_requires_pairing_and_rejects_project_key_target(self):
+        import base64
+        request = urllib.request.Request(self.url + '/transcribe', data=b'{}', method='POST')
+        self.assertEqual(self.status(request), 401)
+        request.add_header('X-Local-AI-Token', bridge.TOKEN)
+        self.assertEqual(self.status(request), 400)
+        data = {'config': {'provider':'litellm','endpoint':'https://news-calendar-api.pages.dev','key':'never-upload','model':'chat'}, 'audio':base64.b64encode(b'audio').decode(), 'model':'whisper-1'}
+        request = urllib.request.Request(self.url + '/transcribe', data=json.dumps(data).encode(), headers={'Content-Type':'application/json','X-Local-AI-Token':bridge.TOKEN}, method='POST')
+        self.assertEqual(self.status(request), 400)
+
     def test_target_validation_and_secret_location(self):
         c = {'provider': 'litellm', 'endpoint': 'https://company.example/v1', 'model': 'model', 'key': 'secret-value'}
         request = bridge.target_request(c, 'news')
