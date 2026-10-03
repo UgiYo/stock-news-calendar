@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {podcastDay,normalizeEpisodes,validPodcastLink} from '../src/podcasts.js';
-import {transcriptionRequest,monoWav,transcribePodcast,summarizePodcast} from '../src/podcast-ai.js';
+import {transcriptionRequest,monoWav,transcribePodcast,summarizePodcast,generatePodcastHighlights} from '../src/podcast-ai.js';
 const config={provider:'openai',endpoint:'https://api.openai.com/v1',model:'gpt-4.1-mini',key:'device-only',transport:'direct'};
 test('Podcast dates use Taiwan publication time, GUID deduplication and HTTPS links',()=>{
  assert.equal(podcastDay('2026-10-01T16:05:00Z'),'2026-10-02');assert.equal(podcastDay('invalid'),null);
@@ -23,4 +23,13 @@ test('Audio transcription and summary use personal service; episode description 
 test('a failed audio segment is listed while later segments still transcribe',async()=>{
  const Original=globalThis.AudioContext;const channel=new Float32Array(601);globalThis.AudioContext=class{async decodeAudioData(){return {duration:601,length:601,sampleRate:1,numberOfChannels:1,getChannelData:()=>channel};}async close(){}};let calls=0;
  try{const result=await transcribePodcast(config,{size:25000000,arrayBuffer:async()=>new ArrayBuffer(1)},'whisper-1',{fetcher:async()=>{calls++;if(calls===2)return {ok:false,status:429};return {ok:true,json:async()=>({text:'取得音訊內容'})};}});assert.equal(calls,3);assert.equal(result.failed.length,1);assert.match(result.failed[0],/5～10 分鐘/);assert.match(result.text,/0～5 分鐘/);assert.match(result.text,/10～11 分鐘/);}finally{globalThis.AudioContext=Original;}
+});
+
+
+test('one click downloads audio, retains transcript, then summarizes; retries reuse transcript',async()=>{
+ const phases=[],text='逐字稿討論聯電營收與產業觀點。'.repeat(20),episode={title:'EP',date:'2026-10-02'};
+ const fetcher=async(url,options)=>{if(url.endsWith('/audio/transcriptions')){phases.push('transcribe');return {ok:true,json:async()=>({text})};}phases.push('summarize');assert.ok(options.body.includes(text));return {ok:true,json:async()=>({choices:[{message:{content:'本集重點'}}]})};};
+ const result=await generatePodcastHighlights(config,episode,{fetcher,fetchAudio:async()=>{phases.push('download');return new Blob(['audio'],{type:'audio/mpeg'});},onTranscript:r=>{phases.push('retain');assert.equal(r.text,text);}});
+ assert.deepEqual(phases,['download','transcribe','retain','summarize']);assert.equal(result.answer,'本集重點');
+ phases.length=0;await generatePodcastHighlights(config,episode,{text:result.text,model:'',fetcher,fetchAudio:async()=>{throw Error('must not download');}});assert.deepEqual(phases,['summarize']);
 });
