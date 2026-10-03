@@ -21,3 +21,8 @@ test('company names embedded in other companies are not relevant',async()=>{
  assert.equal(companyMention('台聯電12303營收成長',c),false);
  assert.equal(companyMention('大華電子營收',{code:'9999',name:'華電',full_name:'華電公司'},['大華電子']),false);
 });
+
+test('publisher generated answer pages are excluded while formal news remains',()=>{
+ const base={company_code:'2303',title:'聯電新聞',source:'鉅亨網',published_at:'2026-09-03T00:00:00Z'};
+ const rows=curateNews([{...base,url:'https://news.google.com/rss/articles/a',article_url:'https://news.cnyes.com/news/aigc/answer/123'},{...base,url:'https://news.cnyes.com/news/id/123'}]);assert.equal(rows.length,1);assert.equal(rows[0].url,'https://news.cnyes.com/news/id/123');
+});
