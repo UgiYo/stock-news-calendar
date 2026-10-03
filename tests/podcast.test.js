@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {podcastDay,normalizeEpisodes,validPodcastLink,episodeGuests,filterPodcastEpisodes} from '../src/podcasts.js';
-import {transcriptionRequest,monoWav,transcribePodcast,summarizePodcast,generatePodcastHighlights} from '../src/podcast-ai.js';
+import {transcriptionRequest,monoWav,transcribePodcast,summarizePodcast,generatePodcastHighlights,transcriptSegments,missingAudioRanges} from '../src/podcast-ai.js';
 const config={provider:'openai',endpoint:'https://api.openai.com/v1',model:'gpt-4.1-mini',key:'device-only',transport:'direct'};
 test('Podcast dates use Taiwan publication time, GUID deduplication and HTTPS links',()=>{
  assert.equal(podcastDay('2026-10-01T16:05:00Z'),'2026-10-02');assert.equal(podcastDay('invalid'),null);
@@ -21,8 +21,8 @@ test('Audio transcription and summary use personal service; episode description 
 });
 
 test('a failed audio segment is listed while later segments still transcribe',async()=>{
- const Original=globalThis.AudioContext;const channel=new Float32Array(601);globalThis.AudioContext=class{async decodeAudioData(){return {duration:601,length:601,sampleRate:1,numberOfChannels:1,getChannelData:()=>channel};}async close(){}};let calls=0;
- try{const result=await transcribePodcast(config,{size:25000000,arrayBuffer:async()=>new ArrayBuffer(1)},'whisper-1',{fetcher:async()=>{calls++;if(calls===2)return {ok:false,status:429};return {ok:true,json:async()=>({text:'取得音訊內容'})};}});assert.equal(calls,3);assert.equal(result.failed.length,1);assert.match(result.failed[0],/5～10 分鐘/);assert.match(result.text,/0～5 分鐘/);assert.match(result.text,/10～11 分鐘/);}finally{globalThis.AudioContext=Original;}
+ const Original=globalThis.AudioContext;const channel=new Float32Array(301);globalThis.AudioContext=class{async decodeAudioData(){return {duration:301,length:301,sampleRate:1,numberOfChannels:1,getChannelData:()=>channel};}async close(){}};let calls=0;
+ try{const result=await transcribePodcast(config,{size:25000000,arrayBuffer:async()=>new ArrayBuffer(1)},'whisper-1',{fetcher:async()=>{calls++;if(calls===2)return {ok:false,status:403};return {ok:true,json:async()=>({text:'取得音訊內容'})};}});assert.equal(calls,3);assert.equal(result.failed.length,1);assert.match(result.failed[0],/2～4 分鐘/);assert.match(result.text,/0～2 分鐘/);assert.match(result.text,/4～6 分鐘/);}finally{globalThis.AudioContext=Original;}
 });
 
 
@@ -35,3 +35,6 @@ test('one click downloads audio, retains transcript, then summarizes; retries re
 });
 
 test('guest filter uses guest names and retains only matching publication dates',()=>{assert.deepEqual(episodeGuests('科技 ft.AI達人蔡明翰.PCB女王廖婉婷'),['蔡明翰','廖婉婷']);assert.deepEqual(episodeGuests('操盤手 黃豐凱'),['黃豐凱']);assert.deepEqual(episodeGuests('蔡明翰題材討論'),['未標示來賓']);const rows=[{title:'a ft.蔡明翰',date:'2026-10-01'},{title:'b ft.黃豐凱',date:'2026-10-02'}];assert.deepEqual(filterPodcastEpisodes(rows,'蔡明翰').map(e=>e.date),['2026-10-01']);});
+
+test('resume only uploads uncovered audio; old five-minute text can be reused',async()=>{const segments=transcriptSegments('[0～5 分鐘]\nfirst\n\n[5～10 分鐘]\nsecond');assert.deepEqual(missingAudioRanges(721,segments),[[600,720],[720,721]]);const Original=globalThis.AudioContext;globalThis.AudioContext=class{async decodeAudioData(){return {duration:721,length:721,sampleRate:1,numberOfChannels:1,getChannelData:()=>new Float32Array(721)};}async close(){}};let calls=0,checkpoints=0;try{const r=await transcribePodcast(config,{size:25000000,arrayBuffer:async()=>new ArrayBuffer(1)},'whisper-1',{segments,onCheckpoint:()=>checkpoints++,fetcher:async()=>{calls++;return {ok:true,json:async()=>({text:'recovered'})};}});assert.equal(calls,2);assert.equal(checkpoints,2);assert.equal(r.failed.length,0);assert.match(r.text,/first/);assert.match(r.text,/second/);assert.equal(r.segments.length,4);}finally{globalThis.AudioContext=Original;}});
+test('transient network failure retries once',async()=>{let calls=0;const result=await transcribePodcast(config,new Blob(['audio']),'whisper-1',{fetcher:async()=>{if(++calls===1)throw new TypeError('Failed to fetch');return {ok:true,json:async()=>({text:'recovered'})};}});assert.equal(calls,2);assert.equal(result.text,'recovered');});
