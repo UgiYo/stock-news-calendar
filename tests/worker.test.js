@@ -56,3 +56,16 @@ test('publisher aliases and known HTTP links normalize without opening other sou
 test('Google direct publisher redirects are read as articles without requiring RPC signature',async()=>{
  const original=globalThis.fetch;let calls=0;globalThis.fetch=async(url)=>{calls++;if(url.startsWith('https://news.google.com/'))return new Response(null,{status:302,headers:{Location:'http://www.moneydj.com/kmdj/news/newsviewer.aspx?a=123'}});assert.equal(url,'https://www.moneydj.com/kmdj/news/newsviewer.aspx?a=123');return new Response('<article>'+'完整原文末段。'.repeat(80)+'</article>');};try{const result=await readArticleURL('https://news.google.com/rss/articles/CBMopaque');assert.match(result.text,/完整原文末段/);assert.equal(calls,2);}finally{globalThis.fetch=original;}
 });
+
+test('saved original URL bypasses Google News and collector link updates preserve summaries',async()=>{
+ const {db,env}=setup();db.prepare('INSERT INTO users VALUES(?,?)').run('alice','a@example.com');db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(await hash('alice'),'alice',Date.now()+60000);
+ db.exec("INSERT INTO companies(code,name,full_name,market) VALUES('2303','聯電','聯華電子','上市')");
+ await call(env,'/admin/news','secret',{news:[{company_code:'2303',title:'聯電法說會',url:'https://news.google.com/rss/articles/opaque',source:'MoneyDJ',published_at:'2026-09-03T01:00:00Z',news_date:'2026-09-03'}]});
+ const id=db.prepare('SELECT id FROM news').get().id;db.prepare('UPDATE news SET article_summary=? WHERE id=?').run('existing summary',id);
+ assert.equal((await call(env,'/admin/article-links',null,{id,url:'https://www.moneydj.com/story'})).status,403);
+ assert.equal((await call(env,'/admin/article-links','secret',{id,url:'https://evil.example/story'})).status,400);
+ assert.equal((await call(env,'/admin/article-links','secret',{id,url:'https://www.moneydj.com/story'})).status,200);
+ assert.equal(db.prepare('SELECT article_summary FROM news').get().article_summary,'existing summary');
+ const original=globalThis.fetch;globalThis.fetch=async(url)=>{assert.equal(url,'https://www.moneydj.com/story');return new Response('<article>'+'完整新聞最後一段。'.repeat(30)+'</article>');};
+ try{const response=await call(env,'/article-content','alice',{url:'https://news.google.com/rss/articles/opaque'});assert.equal(response.status,200);assert.match((await response.json()).text,/最後一段/);}finally{globalThis.fetch=original;db.close();}
+});
