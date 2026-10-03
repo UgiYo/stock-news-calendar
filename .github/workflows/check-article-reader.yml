@@ -20,3 +20,5 @@ jobs:
         env:
           WORKER_API_URL: ${{ vars.WORKER_API_URL }}
           COLLECTOR_SECRET: ${{ secrets.COLLECTOR_SECRET }}
+
+# Verify retained publisher links and transient request retries.
