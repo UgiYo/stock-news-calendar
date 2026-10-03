@@ -30,7 +30,7 @@ test('one click downloads audio, retains transcript, then summarizes; retries re
  const phases=[],text='逐字稿討論聯電營收與產業觀點。'.repeat(20),episode={title:'EP',date:'2026-10-02'};
  const fetcher=async(url,options)=>{if(url.endsWith('/audio/transcriptions')){phases.push('transcribe');return {ok:true,json:async()=>({text})};}phases.push('summarize');assert.ok(options.body.includes(text));return {ok:true,json:async()=>({choices:[{message:{content:'本集重點'}}]})};};
  const result=await generatePodcastHighlights(config,episode,{fetcher,fetchAudio:async()=>{phases.push('download');return new Blob(['audio'],{type:'audio/mpeg'});},onTranscript:r=>{phases.push('retain');assert.equal(r.text,text);}});
- assert.deepEqual(phases,['download','transcribe','retain','summarize']);assert.equal(result.answer,'本集重點');
+ assert.deepEqual(phases,['download','transcribe','retain','retain','summarize']);assert.equal(result.answer,'本集重點');
  phases.length=0;await generatePodcastHighlights(config,episode,{text:result.text,model:'',fetcher,fetchAudio:async()=>{throw Error('must not download');}});assert.deepEqual(phases,['summarize']);
 });
 
@@ -40,3 +40,21 @@ test('resume only uploads uncovered audio; old five-minute text can be reused',a
 test('transient network failure retries once',async()=>{let calls=0;const result=await transcribePodcast(config,new Blob(['audio']),'whisper-1',{fetcher:async()=>{if(++calls===1)throw new TypeError('Failed to fetch');return {ok:true,json:async()=>({text:'recovered'})};}});assert.equal(calls,2);assert.equal(result.text,'recovered');});
 
 test('second channel import preserves identity and separates episode ids',async()=>{const channel=podcastChannelLink('https://open.spotify.com/show/1zWxx5pKk0XBEzMupVC7UZ?si=tracking');assert.equal(channel.id,'gooaye');assert.equal(validPodcastLink('https://evil.example/show/1zWxx5pKk0XBEzMupVC7UZ'),false);const episode={id:'same',title:'EP',published_at:'2026-10-01T08:00:00Z'};const a=normalizeEpisodes({id:'zhaohua',title:'兆華',episodes:[episode]}),b=normalizeEpisodes({id:'gooaye',title:'股癌',spotify:channel.spotify,episodes:[episode]});assert.notEqual(a[0].id,b[0].id);assert.equal(b[0].channel_name,'股癌');assert.equal(b[0].url,channel.spotify);const data=await fetchPodcastEpisodes({fetcher:async url=>url.includes('gooaye')?{ok:false}:{ok:true,json:async()=>({id:'zhaohua',episodes:[episode]})}});assert.equal(data.episodes.length,1);assert.match(data.error,/股癌/);});
+
+
+test('provider error preserves actionable details, redacts keys and does not retry exhausted quota',async()=>{
+ let calls=0;await assert.rejects(transcribePodcast(config,new Blob(['audio']),'whisper-1',{fetcher:async()=>{calls++;return {ok:false,status:429,json:async()=>({error:{code:'insufficient_quota',message:'Quota exhausted '+config.key}})};}}),e=>e.message.includes('Quota exhausted')&&!e.message.includes(config.key));assert.equal(calls,1);
+});
+test('authentication failure stops further uploads and checkpoints successful segments',async()=>{
+ const Original=globalThis.AudioContext;globalThis.AudioContext=class{async decodeAudioData(){return {duration:360,length:360,sampleRate:1,numberOfChannels:1,getChannelData:()=>new Float32Array(360)};}async close(){}};
+ let calls=0,checkpoint;try{await assert.rejects(transcribePodcast(config,{size:25000000,arrayBuffer:async()=>new ArrayBuffer(1)},'whisper-1',{onCheckpoint:r=>checkpoint=r,fetcher:async()=>++calls===1?{ok:true,json:async()=>({text:'saved'})}:{ok:false,status:401,json:async()=>({error:{message:'Invalid API key'}})}}),/Invalid API key/);assert.equal(calls,2);assert.equal(checkpoint.segments.length,1);}finally{globalThis.AudioContext=Original;}
+});
+test('one click completes missing ranges before summarizing a partial transcript',async()=>{
+ const Original=globalThis.AudioContext;globalThis.AudioContext=class{async decodeAudioData(){return {duration:240,length:240,sampleRate:1,numberOfChannels:1,getChannelData:()=>new Float32Array(240)};}async close(){}};
+ const text='已成功內容。'.repeat(30);let uploads=0;try{const r=await generatePodcastHighlights(config,{title:'episode'},{text,partial:true,segments:[{start:0,end:120,text}],fetchAudio:async()=>({size:25000000,arrayBuffer:async()=>new ArrayBuffer(1)}),fetcher:async(url,options)=>{if(url.endsWith('/audio/transcriptions')){uploads++;return {ok:true,json:async()=>({text:'補轉內容'})};}assert.ok(options.body.includes('補轉內容'));return {ok:true,json:async()=>({choices:[{message:{content:'summary'}}]})};}});assert.equal(uploads,1);assert.equal(r.partial,false);assert.match(r.text,/已成功內容/);}finally{globalThis.AudioContext=Original;}
+});
+
+
+test('a stalled transcription times out instead of hanging indefinitely',async()=>{
+ let calls=0;await assert.rejects(transcribePodcast(config,new Blob(['audio']),'whisper-1',{requestTimeoutMs:10,fetcher:async(url,{signal})=>{calls++;return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(new DOMException('aborted','AbortError')),{once:true}));}}),/停止等待/);assert.equal(calls,2);
+});
