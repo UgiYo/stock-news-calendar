@@ -233,7 +233,7 @@ AI 設定中的「本機 Python」提供三步引導：下載 ZIP → 完整解�
 
 ## Podcast 月曆與個人 AI 整理
 
-已接入「兆華與股惑仔」Spotify 頻道與 SoundOn 公開 RSS。左側 Podcast 頻道可啟用、更新或匯入；每集以台灣時間發布日期顯示於月曆及當日 Podcast 區塊，不套用個股篩選。GitHub Actions `Update podcast episodes` 每六小時刷新最近 100 日、最多 150 集的共用 JSON，並啟動 Pages 部署。集數不寫入 D1；不保存音訊。
+已接入「兆華與股惑仔」Spotify 頻道與 SoundOn 公開 RSS。左側 Podcast 頻道可啟用、更新或匯入；每集以台灣時間發布日期顯示於月曆及當日 Podcast 區塊，不套用個股篩選。GitHub Actions `Update podcast episodes` 每天台灣時間 22:00 刷新最近 100 日、最多 150 集的共用 JSON，並啟動 Pages 部署。集數不寫入 D1；不保存音訊。
 
 目前官方 RSS 沒有逐字稿。點「逐字稿・AI 整理」後，可下載原集並轉文字、選取音訊檔，或貼上／匯入 TXT、SRT、VTT。語音模型與文字模型分開指定（例如 OpenAI 的 `whisper-1`；Azure 填語音部署名稱；LiteLLM 必須有語音模型與 `/audio/transcriptions` 支援）。使用上方已套用的個人 AI Key，先取得逐字稿，再按「生成內容整理」。節目簡介不替代整集逐字稿。
 
