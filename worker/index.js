@@ -122,7 +122,7 @@ export default {async fetch(req,env){
  return reply({news:(await sql("SELECT id,title,url,article_url FROM news WHERE company_code=? AND news_date=? AND source IN ('MoneyDJ','MoneyDJ理財網','鉅亨網','news.cnyes.com','中央社') ORDER BY id LIMIT 10",code,date).all()).results});
  }
  if(path==='/admin/article')return reply({news:await sql('SELECT * FROM news WHERE id=?',url.searchParams.get('id')).first()});
- if(path==='/admin/summary'&&req.method==='POST'){const b=await req.json();await sql('UPDATE news SET article_summary=?,summary_status=?,summary_method=?,summary_error=?,summary_updated_at=?,article_url=? WHERE id=?',b.article_summary||null,b.article_summary?'ready':'unavailable',b.summary_method||null,b.summary_error||null,new Date().toISOString(),b.article_url||null,b.id).run();return reply({ok:true});}
+ if(path==='/admin/summary'&&req.method==='POST'){const b=await req.json();await sql('UPDATE news SET article_summary=?,summary_status=?,summary_method=?,summary_error=?,summary_updated_at=?,article_url=COALESCE(?,article_url) WHERE id=?',b.article_summary||null,b.article_summary?'ready':'unavailable',b.summary_method||null,b.summary_error||null,new Date().toISOString(),b.article_url||null,b.id).run();return reply({ok:true});}
  return reply({error:'Not found'},404);
  }
  const token=req.headers.get('Authorization')?.replace(/^Bearer /,'');if(!token)return reply({error:'請先登入'},401);
