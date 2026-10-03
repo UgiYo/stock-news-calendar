@@ -43,3 +43,17 @@ export async function summarizePodcast(config,episode,text,{fetcher=globalThis.f
  const parts=[];for(let at=0;at<text.length;at+=45000){onProgress(`逐段整理逐字稿 ${parts.length+1} / ${Math.ceil(text.length/45000)}…`);parts.push(await requestAI(config,prompt+'以下為其中一段，保留重要事實供最後整合：\n'+text.slice(at,at+45000),{fetcher,signal}));}
  if(parts.join('\n').length>50000)throw Error('分段摘要合計超出整合上限。');return requestAI(config,prompt+'以下是全部已讀取片段的摘要，請整合並避免重複：\n'+parts.join('\n\n'),{fetcher,signal});
 }
+
+export async function generatePodcastHighlights(config,episode,{text='',model='whisper-1',partial=false,fetchAudio,fetcher=globalThis.fetch,signal,onProgress=()=>{},onTranscript=()=>{}}={}){
+ aiRequest(config,'驗證設定');let failed=[];
+ if(!text.trim()){
+  if(!model.trim())throw Error('請填語音模型／Azure 語音部署名稱。');
+  if(!fetchAudio)throw Error('無法取得本集音訊。');onProgress('步驟 1 / 3：下載本集音訊…');
+  const blob=await fetchAudio(episode,signal);onProgress('步驟 2 / 3：音訊轉逐字稿…');
+  const result=await transcribePodcast(config,blob,model,{fetcher,signal,onProgress});text=result.text;failed=result.failed;partial=failed.length>0;
+  // Retain the transcript before summarizing so a failed summary can be retried without paying for transcription again.
+  onTranscript({text,failed,partial});
+ }else onProgress('使用已取得的逐字稿，略過下載與轉錄。');
+ if(signal?.aborted)throw Error('已取消。');onProgress('步驟 3 / 3：整理本集重點…');
+ const answer=await summarizePodcast(config,episode,text,{fetcher,signal,onProgress,partial});return {answer,text,failed,partial};
+}
