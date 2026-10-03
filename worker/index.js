@@ -18,6 +18,34 @@ export function parsePreview(xml,company,now=new Date(),conflicts=[]){
  rows.set(link,{company_code:company.code,title,url:link,source,published_at:published.toISOString(),news_date:new Date(published.getTime()+8*3600000).toISOString().slice(0,10),preview:true});
  }return curateNews([...rows.values()]);
 }
+const ARTICLE_HOSTS=new Set(['www.cna.com.tw','cna.com.tw','www.moneydj.com','moneydj.com','news.cnyes.com']);
+export function checkedArticleURL(value){const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||(u.port&&u.port!=='443')||!ARTICLE_HOSTS.has(u.hostname)&&u.hostname!=='news.google.com')throw Error('只支援三家新聞來源及 Google News 原文連結');return u.href;}
+export function extractArticleBody(html){
+ if(/"isAccessibleForFree"\s*:\s*(false|"false")/i.test(html))throw Error('付費文章無法取得完整內文');
+ const bodies=[];const walk=value=>{if(Array.isArray(value))value.forEach(walk);else if(value&&typeof value==='object'){if(typeof value.articleBody==='string')bodies.push(value.articleBody);Object.values(value).forEach(walk);}};
+ for(const match of html.matchAll(/<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)){try{walk(JSON.parse(match[1]));}catch{}}
+ let text;if(bodies.length)text=bodies.sort((a,b)=>b.length-a.length)[0];else{
+  const stack=[],parts=[];for(const token of html.matchAll(/<!--[\s\S]*?-->|<[^>]+>|[^<]+/g)){const value=token[0];if(value.startsWith('<!--'))continue;if(value.startsWith('<')){const tag=value.match(/^<\/?\s*([\w:-]+)/)?.[1]?.toLowerCase();if(!tag)continue;if(/^<\//.test(value)){const index=stack.map(x=>x.tag).lastIndexOf(tag);if(index>=0)stack.splice(index);if(['p','div','li','article'].includes(tag))parts.push('\n');}else{const target=tag==='article'||/\b(?:id|class|itemprop)\s*=\s*["'][^"']*(?:centralcontent|paragraph|articlebody|article[-_]content|article__content|articlecontent|article-body|news[-_]content|news_text|maincontent|highlight)/i.test(value);if(!['br','img','meta','link','input','hr','source','wbr'].includes(tag))stack.push({tag,target,skip:['script','style','nav','footer','aside'].includes(tag)});else if(tag==='br')parts.push('\n');}}else if(stack.some(x=>x.target)&&!stack.some(x=>x.skip))parts.push(value);}
+  text=parts.join('');
+ }
+ text=xmlText(text.replace(/<[^>]*>/g,' ')).split('\n').map(line=>line.replace(/[ \t]+/g,' ').trim()).filter(Boolean).join('\n');
+ if(text.length<350||/訂閱後閱讀|訂閱即可閱讀|解鎖全文|subscribe to continue/i.test(text))throw Error('無法取得完整內文：內容不足、付費牆或需 JavaScript');if(text.length>40000)throw Error('全文超過 40,000 字元，不會截斷後當作全文');return text;
+}
+async function fetchNewsPage(value,body){let url=checkedArticleURL(value);for(let i=0;i<6;i++){
+ const response=await fetch(url,{method:body?'POST':'GET',body,redirect:'manual',headers:{'User-Agent':'Mozilla/5.0',...(body?{'Content-Type':'application/x-www-form-urlencoded'}:{})},signal:AbortSignal.timeout(12000)});
+ if([301,302,303,307,308].includes(response.status)){url=checkedArticleURL(new URL(response.headers.get('Location'),url).href);body=undefined;continue;}if(!response.ok)throw Error('新聞來源 HTTP '+response.status);
+ const reader=response.body.getReader(),chunks=[];let size=0;while(true){const {value,done}=await reader.read();if(done)break;size+=value.byteLength;if(size>2000000){await reader.cancel();throw Error('來源頁面過大');}chunks.push(value);}const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}return {url,html:new TextDecoder().decode(bytes)};
+ }throw Error('來源轉址過多');}
+export async function readArticleURL(value){let url=checkedArticleURL(value);
+ if(new URL(url).hostname==='news.google.com'){
+  const id=new URL(url).pathname.split('/').filter(Boolean).at(-1),page=await fetchNewsPage(url),signature=xmlText(page.html.match(/data-n-a-sg=["']([^"']+)["']/)?.[1]),timestamp=Number(page.html.match(/data-n-a-ts=["'](\d+)["']/)?.[1]);if(!signature||!timestamp)throw Error('Google News 原文解析失敗');
+  const context=[['zh-TW','TW',['FINANCE_TOP_INDICES','WEB_TEST_1_0_0'],null,null,1,1,'TW:zh-Hant',null,360,null,null,null,null,null,0,null,null,null],'zh-TW','TW',1,[2,3,4,8],1,0,'',0,0,null,0];const request=JSON.stringify([[['Fbv4je',JSON.stringify(['garturlreq',context,id,timestamp,signature]),null,'generic']]]);const rpc=await fetchNewsPage('https://news.google.com/_/DotsSplashUi/data/batchexecute?rpcids=Fbv4je',new URLSearchParams({'f.req':request}));let resolved;
+  for(const line of rpc.html.split('\n')){if(!line.trim().startsWith('['))continue;try{for(const item of JSON.parse(line)){if(item?.[1]==='Fbv4je'){const payload=JSON.parse(item[2]);if(payload[0]==='garturlres')resolved=payload[1];}}}catch{}}
+  if(!resolved)throw Error('Google News 原文解析失敗');url=checkedArticleURL(resolved);
+ }
+ if(!ARTICLE_HOSTS.has(new URL(url).hostname))throw Error('原文來源不符');const page=await fetchNewsPage(url);if(!ARTICLE_HOSTS.has(new URL(page.url).hostname))throw Error('原文來源不符');return {url:page.url,text:extractArticleBody(page.html)};
+}
+
 const encoder=new TextEncoder();
 export const randomToken=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');
 export async function hash(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(value))),x=>x.toString(16).padStart(2,'0')).join('');}
@@ -90,6 +118,10 @@ export default {async fetch(req,env){
  if(path==='/ranking-stock'){const code=url.searchParams.get('code');if(!/^[1-9]\d{3}$/.test(code||''))return reply({error:'Invalid stock code'},400);try{const snapshots=(await sql('SELECT date,payload FROM rankings ORDER BY date LIMIT 60').all()).results;const history=[];let stock=null;for(const snapshot of snapshots){const p=JSON.parse(snapshot.payload),rows=Array.isArray(p)?p:p.stocks,found=rows.find(r=>r.code===code);if(found)stock=found;const rank=found?1+rows.filter(r=>r.amount>found.amount||(r.amount===found.amount&&r.code<code)).length:null;history.push({date:snapshot.date,previousDate:Array.isArray(p)?null:p.previousDate,amount:found?.amount??null,rank});}return reply({stock,history});}catch(e){if(String(e.message).includes('no such table'))return reply({stock:null,history:[]});throw e;}}
  if(path==='/ranking'){const requested=url.searchParams.get('date');if(requested&&!/^\d{4}-\d{2}-\d{2}$/.test(requested))return reply({error:'Invalid date'},400);try{const dates=(await sql('SELECT date FROM rankings ORDER BY date DESC LIMIT 60').all()).results.map(r=>r.date),date=requested||dates[0];const saved=(await sql('SELECT date,payload FROM rankings WHERE date>=COALESCE((SELECT date FROM rankings WHERE date<? ORDER BY date DESC LIMIT 1 OFFSET 5),(SELECT MIN(date) FROM rankings)) ORDER BY date LIMIT 28',date||'').all()).results.map(r=>{const p=JSON.parse(r.payload);return {date:r.date,stocks:Array.isArray(p)?p:p.stocks,previousDate:Array.isArray(p)?null:p.previousDate};}),row=saved.find(r=>r.date===date),previous=saved.find(r=>r.date===row?.previousDate);const history=saved.map(r=>{const total=r.stocks.reduce((sum,x)=>sum+x.amount,0),sectors={};for(const x of r.stocks){sectors[x.tag]??={amount:0,count:0,topCount:0};sectors[x.tag].amount+=x.amount;sectors[x.tag].count++;}for(const x of [...r.stocks].sort((a,b)=>b.amount-a.amount||a.code.localeCompare(b.code)).slice(0,10))sectors[x.tag].topCount++;return {date:r.date,previousDate:r.previousDate,total,sectors};});return reply({date:date||null,dates,stocks:row?.stocks||[],previousDate:row?.previousDate||null,previousStocks:previous?.stocks||null,history});}catch(e){if(String(e.message).includes('no such table'))return reply({date:null,dates:[],stocks:[],history:[]});throw e;}}
  if(path==='/prices'){const code=url.searchParams.get('code');if(!await sql('SELECT 1 FROM watchlists WHERE user_id=? AND company_code=?',user.id,code).first())return reply({error:'請先追蹤公司'},403);try{return reply({prices:(await sql("SELECT * FROM prices WHERE code IN (?, 'TAIEX') AND date>=date('now','-180 days') ORDER BY date",code).all()).results});}catch(e){if(String(e.message).includes('no such table'))return reply({prices:[]});throw e;}}
+ if(path==='/article-content'&&req.method==='POST'){
+ const b=await req.json();if(Object.keys(b).some(k=>k!=='url')||typeof b.url!=='string'||b.url.length>3000)return reply({error:'僅接受新聞網址，不可傳送 AI 設定或金鑰'},400);
+ try{return reply(await readArticleURL(b.url));}catch(e){return reply({error:e.message||'無法讀取完整新聞內文'},422);}
+ }
  if(path==='/me')return reply({user});
  if(path==='/logout'&&req.method==='POST'){await sql('DELETE FROM sessions WHERE token_hash=?',await hash(token)).run();return reply({ok:true});}
  if(path==='/companies'){const q=(url.searchParams.get('q')||'').trim().slice(0,60);return reply({companies:(await sql("SELECT * FROM companies WHERE code=? OR instr(name,?)>0 OR instr(full_name,?)>0 ORDER BY code LIMIT 20",q,q,q).all()).results});}
