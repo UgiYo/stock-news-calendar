@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {aiRequest,requestAI,saveAISettings,readAISettings,pairLocalBridge} from '../src/local-ai.js';
+import {aiRequest,requestAI,saveAISettings,readAISettings,pairLocalBridge,summarizeFullNews} from '../src/local-ai.js';
 const config={provider:'litellm',endpoint:'https://ai.example.internal/v1',model:'company-model',key:'private-token'};
 test('personal key is only in direct provider auth header, never URL or prompt; redirects and cookies blocked',async()=>{
  let calls=0;
@@ -29,6 +29,13 @@ test('Python transport sends key only to loopback and pairing code is never reme
 });
 
 test('guided pairing verifies tool identity and sends pairing token without provider credentials',async()=>{
- const calls=[];await pairLocalBridge({bridge:'http://127.0.0.1:8765',bridgeToken:'pair-code',key:'private-key'},{fetcher:async(url,options)=>{calls.push(url);assert.ok(!JSON.stringify(options).includes('private-key'));if(url.endsWith('/health'))return {ok:true,json:async()=>({service:'stock-news-local-ai'})};assert.equal(options.headers['X-Local-AI-Token'],'pair-code');return {ok:true,json:async()=>({paired:true})};}});assert.deepEqual(calls,['http://127.0.0.1:8765/health','http://127.0.0.1:8765/pair']);
+ const calls=[];await pairLocalBridge({bridge:'http://127.0.0.1:8765',bridgeToken:'pair-code',key:'private-key'},{fetcher:async(url,options)=>{calls.push(url);assert.ok(!JSON.stringify(options).includes('private-key'));if(url.endsWith('/health'))return {ok:true,json:async()=>({service:'stock-news-local-ai',version:3})};assert.equal(options.headers['X-Local-AI-Token'],'pair-code');return {ok:true,json:async()=>({paired:true})};}});assert.deepEqual(calls,['http://127.0.0.1:8765/health','http://127.0.0.1:8765/pair']);
  await assert.rejects(pairLocalBridge({bridge:'http://127.0.0.1:8765',bridgeToken:'x'},{fetcher:async()=>({ok:true,json:async()=>({service:'wrong-tool'})})}));
+});
+
+test('all news bodies are fetched before AI and failures prevent every AI request',async()=>{
+ const rows=[{title:'A',url:'https://www.cna.com.tw/a',news_date:'2026-10-02'},{title:'B',url:'https://www.moneydj.com/b',news_date:'2026-10-02'}],c={...config,transport:'python',bridge:'http://127.0.0.1:8765',bridgeToken:'paired'},calls=[];
+ const fetcher=async(url,options)=>{calls.push(url);if(url.endsWith('/health'))return {ok:true,json:async()=>({service:'stock-news-local-ai',version:3})};if(url.endsWith('/pair'))return {ok:true,json:async()=>({paired:true})};if(url.endsWith('/articles')){assert.ok(!options.body.includes(config.key));const requested=JSON.parse(options.body).url;return {ok:true,json:async()=>({url:requested,text:(requested.endsWith('/a')?'完整內文甲':'完整內文乙').repeat(100)})};}assert.ok(options.body.includes('完整內文甲'));assert.ok(options.body.includes('完整內文乙'));return {ok:true,json:async()=>({choices:[{message:{content:'combined'}}]})};};
+ const result=await summarizeFullNews(rows,c,{fetcher});assert.equal(result.answer,'combined');assert.equal(result.articles.length,2);assert.ok(calls.lastIndexOf(c.bridge+'/articles')<calls.indexOf(c.bridge+'/relay'));
+ let aiCalls=0;await assert.rejects(summarizeFullNews(rows,c,{fetcher:async(url)=>{if(url.endsWith('/health'))return {ok:true,json:async()=>({service:'stock-news-local-ai',version:3})};if(url.endsWith('/pair'))return {ok:true,json:async()=>({paired:true})};if(url.endsWith('/articles'))return {ok:false,json:async()=>({error:'付費牆'})};aiCalls++;throw Error('must not call AI');}}),/沒有以標題或舊摘要替代/);assert.equal(aiCalls,0);
 });
