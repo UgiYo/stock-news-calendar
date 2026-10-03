@@ -37,3 +37,14 @@ html{scrollbar-gutter:stable}body.modal-open{overflow:hidden}button,input,select
 .ai-result-toast{position:fixed;bottom:16px;right:16px;z-index:10000;max-width:min(420px,calc(100vw - 32px));padding:16px;background:#fff;border:2px solid #137e84;border-radius:12px;box-shadow:0 4px 24px #0003;display:flex;flex-wrap:wrap;gap:10px}.ai-result-toast span{width:100%}#ai-results-center article{padding:16px 0;border-bottom:1px solid #ddd}
 
 .podcast-filter{background:#fff;border:2px solid #8c71b0;border-radius:12px;padding:16px;margin-bottom:20px;scroll-margin-top:16px}.podcast-filter h2{margin:0 0 10px}.podcast-filter label{margin:8px 0}.podcast-filter select{display:block;width:100%;min-height:44px;padding:10px;border:1px solid #c7d5e0;border-radius:8px;font:inherit;background:#fff;color:#163047}.podcast-filter small{display:block;margin-top:8px}.podcast-filter details{margin-top:12px}
+
+/* Notification components must not inherit the main watchlist aside/grid sizing. */
+.ai-result-toast{width:min(420px,calc(100vw - 32px));height:auto;min-height:0;max-height:40dvh;overflow:auto;inset:auto 16px 16px auto;align-items:flex-start;align-content:flex-start}
+.ai-result-toast button{height:auto;min-height:40px;flex:0 1 auto}.ai-result-toast span{overflow-wrap:anywhere}
+.ai-notification-panel{position:fixed;top:86px;right:16px;width:min(420px,calc(100vw - 32px));max-height:75dvh;overflow:auto;background:white;color:#163047;z-index:200;padding:16px;border:1px solid #d6e0e8;border-radius:12px;box-shadow:0 8px 30px #0003}
+.ai-notification-panel h2{font-size:18px}.ai-notification-panel>button{display:block;width:100%;text-align:left;margin:8px 0;overflow-wrap:anywhere}.ai-notification-panel small{display:block;margin-top:6px}
+.result-categories{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}.result-categories [aria-pressed=true]{background:#0e777e;color:white}
+#ai-results-center article{overflow-wrap:anywhere}#ai-results-center .article-summary{max-width:100%}
+@media(max-width:600px){.ai-notification-panel{top:16px;right:8px;width:calc(100vw - 16px);max-height:85dvh}}
+
+.cloud-ai-option,.cloud-ai-help{flex:1 0 100%;width:100%;display:block;overflow-wrap:anywhere}.cloud-ai-option input{width:auto;margin-right:8px}.cloud-ai-help{line-height:1.6;margin-bottom:8px}

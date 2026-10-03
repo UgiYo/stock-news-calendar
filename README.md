@@ -250,3 +250,14 @@ Podcast 長音訊改為每段 2 分鐘（16 kHz 單聲道 WAV），暫時網路�
 已接入第二個頻道「Gooaye 股癌」：可貼上 Spotify show/1zWxx5pKk0XBEzMupVC7UZ 匯入。官方 SoundOn RSS 同樣每天台灣時間 18:00 更新最近 100 日（涵蓋三個月），每頻道最多 150 集。月曆上方可選擇頻道，再依來賓篩選；來賓未標示不猜測。不同頻道單集 ID 分開，原有成果不變。
 
 手機離開 App 不保證背景運作。從任務建立（包含下載尚未完成）起，進度會保存於同一裝置／瀏覽器；重新開啟後，沒有執行中的任務會標為中斷，成果中心可繼續任務，保留成功音訊段落。未登入時的本機成果也會在登入後顯示，其他已登入帳號的成果不混用。記錄只包含節目來源、逐字稿、成果與進度，沒有 API Key。
+
+
+### Personal AI background tasks and result notifications
+
+The header notification list links each unread item to its own result. Results are grouped into news and podcast categories. Device mode retains local progress and requires an open browser tab; it does not continue after the tab is closed.
+
+Cloud background mode is opt-in per task and requires login. It accepts public OpenAI/Azure endpoints, encrypts the task payload and temporary provider key using AES-GCM with a key derived from the existing COLLECTOR_SECRET, and processes jobs in GitHub Actions. The provider key is deleted on terminal status or stale-task cleanup; queued tasks expire after 24 hours. `/ai-jobs` only returns the logged-in user's results and never returns encrypted credentials. Completion/read state is synchronized to that account.
+
+**Rollout:** deploy the updated Worker (including `worker/ai-jobs.js`) with the existing DB binding, COLLECTOR_SECRET, GITHUB_DISPATCH_TOKEN and GITHUB_REPO. The new table is created automatically. The existing `news.yml` workflow installs cryptography and ffmpeg and runs the personal job processor before the news collector; it safely skips if the Worker still returns 404. No new secret values are needed. The frontend shows a clear error when the background API is not deployed. Cloud tasks cannot reach company-only endpoints.
+
+Cloud result deletion cancels future checkpoints and removes its stored credentials. A provider request already in progress may still finish and incur API usage. Worker code can be bundled for Cloudflare dashboard upload using `node_modules/esbuild/bin/esbuild worker/index.js --bundle --format=esm --outfile=worker-bundle.js`; retain the existing Worker settings/bindings when updating it.

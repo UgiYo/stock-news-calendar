@@ -31,6 +31,10 @@ jobs:
           cache: pip
           cache-dependency-path: scripts/requirements.txt
       - run: pip install -r scripts/requirements.txt
+      - name: Ensure audio tools for background transcription
+        run: command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: Process personal background AI tasks
+        run: python scripts/personal_ai_jobs.py
       - name: Sync official company catalog
         if: env.RUN_MODE == 'daily'
         run: python scripts/sync_catalog.py

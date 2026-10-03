@@ -1,3 +1,4 @@
 requests==2.32.5
 trafilatura==2.0.0
 googlenewsdecoder==0.1.7
+cryptography>=43,<47

@@ -2,7 +2,7 @@ name: Check podcast UI
 on:
   workflow_dispatch:
   push:
-    paths: ['src/podcast-ai.js', 'src/podcasts.js', 'src/ai-results.js', 'scripts/check_podcast_ui.mjs', '.github/workflows/check-podcast-ui.yml']
+    paths: ['src/podcast-ai.js', 'src/podcasts.js', 'src/ai-results.js', 'src/cloud-ai.js', 'src/style.css', 'src/main.js', 'src/local-ai.js', 'scripts/check_podcast_ui.mjs', '.github/workflows/check-podcast-ui.yml']
 permissions:
   contents: read
 jobs:

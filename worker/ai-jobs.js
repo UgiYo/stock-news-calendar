@@ -1,0 +1,35 @@
+const enc=new TextEncoder();
+const b64=bytes=>{let value='';for(let i=0;i<bytes.length;i+=16384)value+=String.fromCharCode(...bytes.subarray(i,i+16384));return btoa(value);};
+export async function encryptTask(value,secret,id){const key=await crypto.subtle.importKey('raw',await crypto.subtle.digest('SHA-256',enc.encode('personal-ai-jobs-v1:'+secret)),{name:'AES-GCM'},false,['encrypt']);const iv=crypto.getRandomValues(new Uint8Array(12));const bytes=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:enc.encode(id)},key,enc.encode(JSON.stringify(value)));return {iv:b64(iv),data:b64(new Uint8Array(bytes))};}
+export function cloudConfig(config){if(!['openai','azure'].includes(config?.provider)||config.transport==='python')throw Error('雲端背景目前只支援公開 OpenAI／Azure 端點；公司內網請用裝置模式。');const u=new URL(config.endpoint);if(u.protocol!=='https:'||u.username||u.password||u.port||u.search||u.hash||(config.provider==='openai'?u.hostname!=='api.openai.com':!u.hostname.endsWith('.openai.azure.com')))throw Error('不支援的雲端 AI 端點。');if(!config.key?.trim()||config.key.length>1000||!config.model?.trim()||config.model.length>200)throw Error('請填有效 API Key 與模型。');return {provider:config.provider,endpoint:u.href,model:config.model.trim(),key:config.key.trim(),version:String(config.version||'2024-10-21').slice(0,40)};}
+const schema="CREATE TABLE IF NOT EXISTS personal_ai_tasks(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,kind TEXT NOT NULL,title TEXT NOT NULL,date TEXT NOT NULL,status TEXT NOT NULL,progress TEXT NOT NULL,encrypted TEXT,output TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,read_at INTEGER,lease TEXT)";
+const publicTask=r=>({id:r.id,title:r.title,kind:r.kind,date:r.date,state:['done','partial'].includes(r.status)?'complete':['failed','interrupted'].includes(r.status)?'interrupted':r.status,progress:r.progress,updated_at:new Date(r.updated_at).toISOString(),read_at:r.read_at?new Date(r.read_at).toISOString():null,cloud_id:r.id,...JSON.parse(r.output)});
+export async function aiJobsRoute(req,env,{user,admin=false,reply,dispatch,readArticleURL}){
+ const path=new URL(req.url).pathname;if(!path.startsWith('/ai-jobs')&&!path.startsWith('/admin/ai-jobs'))return null;
+ const sql=(q,...args)=>env.DB.prepare(q).bind(...args);await sql(schema).run();const now=Date.now();
+ await sql("UPDATE personal_ai_tasks SET status='interrupted',progress='處理程序中斷，請重新送出並保留成功段落',encrypted=NULL,updated_at=?,lease=NULL WHERE status='running' AND updated_at<?",now,now-20*60000).run();
+ await sql("UPDATE personal_ai_tasks SET status='interrupted',progress='任務已逾期，請重新送出',encrypted=NULL,updated_at=? WHERE encrypted IS NOT NULL AND expires_at<?",now,now).run();
+ if(admin){
+  if(path==='/admin/ai-jobs/article'){const b=await req.json();try{return reply(await readArticleURL(b.url));}catch(e){return reply({error:e.message},422);}}
+  if(path==='/admin/ai-jobs/claim'&&req.method==='POST'){const lease=crypto.randomUUID();const r=await sql("UPDATE personal_ai_tasks SET status='running',progress='背景處理中',lease=?,updated_at=? WHERE id IN (SELECT id FROM personal_ai_tasks WHERE status='queued' AND expires_at>? ORDER BY created_at LIMIT 1) RETURNING *",lease,now,now).first();return reply({task:r?{id:r.id,kind:r.kind,title:r.title,date:r.date,lease,encrypted:JSON.parse(r.encrypted),output:JSON.parse(r.output)}:null});}
+  if(path==='/admin/ai-jobs/update'&&req.method==='POST'){const b=await req.json();if(!['running','done','partial','failed'].includes(b.status)||enc.encode(JSON.stringify(b.output||{})).length>1500000)return reply({error:'Invalid output'},400);const output={};for(const field of ['answer','text','partial','failures','segments','articles','episode','total','request'])if(b.output?.[field]!==undefined)output[field]=b.output[field];const changed=await sql("UPDATE personal_ai_tasks SET status=?,progress=?,output=?,encrypted=CASE WHEN ?='running' THEN encrypted ELSE NULL END,updated_at=?,read_at=NULL,lease=CASE WHEN ?='running' THEN lease ELSE NULL END WHERE id=? AND lease=? AND status='running' RETURNING id",b.status,String(b.progress||'').slice(0,1000),JSON.stringify(output),b.status,now,b.status,b.id,b.lease).first();return reply({ok:!!changed});}
+  return reply({error:'Not found'},404);
+ }
+ if(path==='/ai-jobs/capabilities')return reply({enabled:!!env.COLLECTOR_SECRET&&!!env.GITHUB_DISPATCH_TOKEN,providers:['openai','azure']});
+ if(req.method==='GET')return reply({tasks:(await sql('SELECT * FROM personal_ai_tasks WHERE user_id=? ORDER BY updated_at DESC LIMIT 100',user.id).all()).results.map(publicTask)});
+ if(req.method==='DELETE'){await sql('DELETE FROM personal_ai_tasks WHERE id=? AND user_id=?',new URL(req.url).searchParams.get('id'),user.id).run();return reply({ok:true});}
+ if(path==='/ai-jobs/read'&&req.method==='POST'){const b=await req.json();await sql('UPDATE personal_ai_tasks SET read_at=? WHERE id=? AND user_id=?',now,b.id,user.id).run();return reply({ok:true});}
+ if(path==='/ai-jobs'&&req.method==='POST'){
+  if(!env.COLLECTOR_SECRET||!env.GITHUB_DISPATCH_TOKEN)return reply({error:'後端背景任務尚未啟用。'},503);
+  const b=await req.json();if(b.consent!==true)return reply({error:'請確認本次雲端背景處理與暫存 Key 說明。'},400);
+  if(!['news','podcast'].includes(b.kind)||typeof b.title!=='string'||b.title.length>500||enc.encode(JSON.stringify(b.input||{})).length>900000)return reply({error:'Invalid task'},400);
+  let config;try{config=cloudConfig(b.config);}catch(e){return reply({error:e.message},400);}
+  const count=await sql("SELECT COUNT(*) AS n FROM personal_ai_tasks WHERE user_id=? AND (status IN ('queued','running') OR created_at>?)",user.id,now-86400000).first();if(count.n>=30)return reply({error:'每日最多建立 30 個背景任務。'},429);
+  const initial=b.kind==='podcast'?{episode:Object.fromEntries(['id','title','date','audio_url','url','channel_name'].map(k=>[k,String(b.input?.episode?.[k]||'').slice(0,2000)])),text:typeof b.input?.text==='string'?b.input.text:'',segments:Array.isArray(b.input?.segments)?b.input.segments:[],partial:!!b.input?.partial}:{request:{rows:(Array.isArray(b.input?.rows)?b.input.rows:[]).map(r=>Object.fromEntries(['title','url','article_url','news_date','company_code','source'].map(k=>[k,String(r[k]||'').slice(0,2000)]))),date:b.date,title:b.title}};
+  const id=crypto.randomUUID(),encrypted=await encryptTask({config,input:b.input},env.COLLECTOR_SECRET,id);
+  await sql('INSERT INTO personal_ai_tasks(id,user_id,kind,title,date,status,progress,encrypted,created_at,updated_at,expires_at,output) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',id,user.id,b.kind,b.title,String(b.date||'').slice(0,10),'queued','已排入背景任務，可關閉頁面',JSON.stringify(encrypted),now,now,now+86400000,JSON.stringify(initial)).run();
+  let dispatched;try{dispatched=await dispatch(env);}catch{await sql("UPDATE personal_ai_tasks SET status='failed',progress='無法啟動 GitHub Actions，請檢查後端設定',encrypted=NULL WHERE id=?",id).run();return reply({error:'無法啟動背景工作，沒有繼續保存本次 Key。'},503);}
+  return reply({task:publicTask(await sql('SELECT * FROM personal_ai_tasks WHERE id=?',id).first()),dispatched},202);
+ }
+ return reply({error:'Not found'},404);
+}
