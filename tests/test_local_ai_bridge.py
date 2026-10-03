@@ -52,6 +52,24 @@ class BridgeTest(unittest.TestCase):
         with urllib.request.urlopen(request) as response:
             self.assertTrue(json.load(response)['paired'])
 
+    def test_extracts_complete_body_and_rejects_teaser_or_paywall(self):
+        text = '首段事件內容。' * 60 + '最後一段重要數據。'
+        html = '<html><nav>menu</nav><div class="centralContent"><p>' + text + '</p></div><footer>other stories</footer></html>'
+        extracted = bridge.extract_article(html)
+        self.assertIn('最後一段重要數據', extracted)
+        self.assertNotIn('other stories', extracted)
+        self.assertNotIn('menu', extracted)
+        self.assertEqual(bridge.extract_article('<script type="application/ld+json">' + json.dumps({'@type':'NewsArticle','articleBody':text}) + '</script>'), text)
+        for page in ('<div class="centralContent">teaser</div>', '<script type="application/ld+json">{"isAccessibleForFree":false}</script>' + html):
+            with self.assertRaises(ValueError):
+                bridge.extract_article(page)
+
+    def test_article_reading_requires_pairing(self):
+        request = urllib.request.Request(self.url + '/articles', data=b'{}', method='POST')
+        self.assertEqual(self.status(request), 401)
+        request.add_header('X-Local-AI-Token', bridge.TOKEN)
+        self.assertEqual(self.status(request), 422)
+
     def test_target_validation_and_secret_location(self):
         c = {'provider': 'litellm', 'endpoint': 'https://company.example/v1', 'model': 'model', 'key': 'secret-value'}
         request = bridge.target_request(c, 'news')
