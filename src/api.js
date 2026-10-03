@@ -1,7 +1,7 @@
-const base=(import.meta.env.VITE_WORKER_API_URL||'').replace(/\/$/,'');
+const base=(import.meta.env?.VITE_WORKER_API_URL||'').replace(/\/$/,'');
 const key='stock-news-session';
 export async function api(path,options={}){
- const token=localStorage.getItem(key);const response=await fetch(base+path,{method:options.method||(options.body?'POST':'GET'),headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:options.body?JSON.stringify(options.body):undefined,signal:AbortSignal.timeout(30000)});
+ const token=localStorage.getItem(key);const response=await fetch(base+path,{method:options.method||(options.body?'POST':'GET'),headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:options.body?JSON.stringify(options.body):undefined,signal:AbortSignal.timeout(path==='/article-content'?90000:30000)});
  const data=await response.json();if(!response.ok)throw Error(data.error||'後端服務無法使用');return data;
 }
 export function login(){if(!base)throw Error('請先設定 Workers 網址');location.assign(base+'/auth/start');}
