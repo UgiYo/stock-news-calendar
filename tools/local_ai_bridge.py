@@ -52,7 +52,29 @@ def target_request(config, text):
         body['model'] = model
     return urllib.request.Request(endpoint, data=json.dumps(body).encode(), headers=headers, method='POST')
 
-SOURCE_HOSTS = {'www.cna.com.tw', 'cna.com.tw', 'www.moneydj.com', 'moneydj.com', 'news.cnyes.com'}
+SOURCE_HOSTS = {'www.cna.com.tw', 'cna.com.tw', 'www.moneydj.com', 'moneydj.com', 'm.moneydj.com', 'news.cnyes.com', 'gfe-desktop.cnyes.com'}
+
+def normalize_article_url(url):
+    from urllib.parse import parse_qs, urlunsplit
+    u = urlsplit(url)
+    if u.username or u.password:
+        raise ValueError('Credentials in news URL rejected')
+    if u.hostname in ('www.google.com', 'google.com') and u.path == '/url':
+        query = parse_qs(u.query)
+        target = query.get('url', query.get('q', [None]))[0]
+        if target:
+            u = urlsplit(target)
+    if u.hostname in SOURCE_HOSTS and u.scheme == 'http' and u.port in (None, 80):
+        u = u._replace(scheme='https', netloc=u.hostname)
+    if u.hostname == 'gfe-desktop.cnyes.com':
+        u = u._replace(netloc='news.cnyes.com')
+    if u.hostname == 'm.moneydj.com' and u.path.lower().endswith('/f1a.aspx'):
+        ids = {k.lower():v for k,v in parse_qs(u.query).items()}
+        if ids.get('id'):
+            u = urlsplit('https://www.moneydj.com/kmdj/news/newsviewer.aspx?a=' + quote(ids['id'][0], safe=''))
+    value = urlunsplit(u)
+    safe_article_url(value)
+    return value
 
 def safe_article_url(url):
     u = urlsplit(url)
@@ -121,13 +143,14 @@ def extract_article(html):
         walk(value)
     text = max(bodies, key=len) if bodies else ''.join(parser.parts)
     text = '\n'.join(re.sub(r'[ \t]+', ' ', line).strip() for line in text.splitlines() if line.strip())
-    if len(text) < 350 or re.search('訂閱後閱讀|訂閱即可閱讀|解鎖全文|subscribe to continue', text, re.I):
+    if len(text) < 80 or re.search('訂閱後閱讀|訂閱即可閱讀|解鎖全文|subscribe to continue', text, re.I):
         raise ValueError('無法取得完整內文：內容不足、付費牆或需要 JavaScript')
     if len(text) > 40000:
         raise ValueError('文章超過 40,000 字元，不會截斷後假稱全文')
     return text
 
 def news_page(url, data=None):
+    url = normalize_article_url(url)
     opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=ssl.create_default_context()))
     for _ in range(6):
         safe_article_url(url)
@@ -141,13 +164,16 @@ def news_page(url, data=None):
         except urllib.error.HTTPError as error:
             if error.code not in (301,302,303,307,308):
                 raise ValueError('新聞來源 HTTP ' + str(error.code))
-            url = urljoin(url, error.headers.get('Location', ''))
+            url = normalize_article_url(urljoin(url, error.headers.get('Location', '')))
             data = None
     raise ValueError('新聞轉址過多')
 
 def read_news(url):
+    url = normalize_article_url(url)
     if urlsplit(url).hostname == 'news.google.com':
-        _, html = news_page(url)
+        final, html = news_page(url)
+        if urlsplit(final).hostname in SOURCE_HOSTS:
+            return {'url': final, 'text': extract_article(html)}
         parser = ArticleParser()
         parser.feed(html)
         article_id = urlsplit(url).path.rstrip('/').split('/')[-1]
@@ -171,7 +197,7 @@ def read_news(url):
                 continue
         if not resolved:
             raise ValueError('Google News 原文網址解析失敗')
-        url = resolved
+        url = normalize_article_url(resolved)
     if urlsplit(url).hostname not in SOURCE_HOSTS:
         raise ValueError('原文不是支援的三家來源')
     final, html = news_page(url)
