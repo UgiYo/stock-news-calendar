@@ -17,3 +17,6 @@ jobs:
         with:
           node-version: '24'
       - run: node scripts/check_article_reader.mjs
+        env:
+          WORKER_API_URL: ${{ vars.WORKER_API_URL }}
+          COLLECTOR_SECRET: ${{ secrets.COLLECTOR_SECRET }}
