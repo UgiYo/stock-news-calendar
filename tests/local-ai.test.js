@@ -33,7 +33,7 @@ test('guided pairing verifies tool identity and sends pairing token without prov
  await assert.rejects(pairLocalBridge({bridge:'http://127.0.0.1:8765',bridgeToken:'x'},{fetcher:async()=>({ok:true,json:async()=>({service:'wrong-tool'})})}));
 });
 
-test('all news bodies are fetched before AI and failures prevent every AI request',async()=>{
+test('all news bodies are fetched before AI and total read failure prevents AI requests',async()=>{
  const rows=[{title:'A',url:'https://www.cna.com.tw/a',news_date:'2026-10-02'},{title:'B',url:'https://www.moneydj.com/b',news_date:'2026-10-02'}],c={...config,transport:'python',bridge:'http://127.0.0.1:8765',bridgeToken:'paired'},calls=[];
  const fetcher=async(url,options)=>{calls.push(url);if(url.endsWith('/health'))return {ok:true,json:async()=>({service:'stock-news-local-ai',version:3})};if(url.endsWith('/pair'))return {ok:true,json:async()=>({paired:true})};if(url.endsWith('/articles')){assert.ok(!options.body.includes(config.key));const requested=JSON.parse(options.body).url;return {ok:true,json:async()=>({url:requested,text:(requested.endsWith('/a')?'完整內文甲':'完整內文乙').repeat(100)})};}assert.ok(options.body.includes('完整內文甲'));assert.ok(options.body.includes('完整內文乙'));return {ok:true,json:async()=>({choices:[{message:{content:'combined'}}]})};};
  const result=await summarizeFullNews(rows,c,{fetcher});assert.equal(result.answer,'combined');assert.equal(result.articles.length,2);assert.ok(calls.lastIndexOf(c.bridge+'/articles')<calls.indexOf(c.bridge+'/relay'));
@@ -43,4 +43,11 @@ test('all news bodies are fetched before AI and failures prevent every AI reques
 test('mobile OpenAI retrieves article bodies without loopback and sends key only to OpenAI',async()=>{
  let read=0,ai=0;const c={...config,provider:'openai',endpoint:'https://api.openai.com/v1',transport:'direct',bridgeToken:''};
  const result=await summarizeFullNews([{title:'新聞',url:'https://www.cna.com.tw/story',news_date:'2026-10-02'}],c,{articleFetcher:async(url)=>{assert.equal(url,'https://www.cna.com.tw/story');read++;return {url,text:'完整新聞內文'.repeat(100)};},fetcher:async(url,options)=>{assert.equal(read,1);assert.equal(url,'https://api.openai.com/v1/chat/completions');assert.equal(options.headers.Authorization,'Bearer '+c.key);assert.ok(!options.body.includes(c.key));ai++;return {ok:true,json:async()=>({choices:[{message:{content:'mobile summary'}}]})};}});assert.equal(result.answer,'mobile summary');assert.equal(ai,1);
+});
+
+
+test('partial article failures are reported and only successful bodies are sent to AI',async()=>{
+ const rows=[{title:'Failed headline',url:'https://www.moneydj.com/failed',article_summary:'OLD SUMMARY'},{title:'Success',url:'https://www.cna.com.tw/ok'}],reads=[];let calls=0;
+ const result=await summarizeFullNews(rows,{...config,transport:'direct'},{articleFetcher:async(url)=>{reads.push(url);if(url.endsWith('/failed'))throw Error('來源 HTTP 403');return {url,text:'完整成功內文。'.repeat(30)};},fetcher:async(url,options)=>{calls++;assert.equal(reads.length,2);assert.ok(options.body.includes('完整成功內文'));assert.ok(options.body.includes('部分新聞摘要'));assert.ok(!options.body.includes('Failed headline'));assert.ok(!options.body.includes('OLD SUMMARY'));return {ok:true,json:async()=>({choices:[{message:{content:'partial summary'}}]})};}});
+ assert.equal(calls,1);assert.equal(result.answer,'partial summary');assert.equal(result.total,2);assert.equal(result.articles.length,1);assert.deepEqual(result.failed,[{title:'Failed headline',url:rows[0].url,reason:'來源 HTTP 403'}]);
 });
