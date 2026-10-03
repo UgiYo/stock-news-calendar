@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {podcastDay,normalizeEpisodes,validPodcastLink} from '../src/podcasts.js';
+import {podcastDay,normalizeEpisodes,validPodcastLink,episodeGuests,filterPodcastEpisodes} from '../src/podcasts.js';
 import {transcriptionRequest,monoWav,transcribePodcast,summarizePodcast,generatePodcastHighlights} from '../src/podcast-ai.js';
 const config={provider:'openai',endpoint:'https://api.openai.com/v1',model:'gpt-4.1-mini',key:'device-only',transport:'direct'};
 test('Podcast dates use Taiwan publication time, GUID deduplication and HTTPS links',()=>{
@@ -33,3 +33,5 @@ test('one click downloads audio, retains transcript, then summarizes; retries re
  assert.deepEqual(phases,['download','transcribe','retain','summarize']);assert.equal(result.answer,'本集重點');
  phases.length=0;await generatePodcastHighlights(config,episode,{text:result.text,model:'',fetcher,fetchAudio:async()=>{throw Error('must not download');}});assert.deepEqual(phases,['summarize']);
 });
+
+test('guest filter uses guest names and retains only matching publication dates',()=>{assert.deepEqual(episodeGuests('科技 ft.AI達人蔡明翰.PCB女王廖婉婷'),['蔡明翰','廖婉婷']);assert.deepEqual(episodeGuests('操盤手 黃豐凱'),['黃豐凱']);assert.deepEqual(episodeGuests('蔡明翰題材討論'),['未標示來賓']);const rows=[{title:'a ft.蔡明翰',date:'2026-10-01'},{title:'b ft.黃豐凱',date:'2026-10-02'}];assert.deepEqual(filterPodcastEpisodes(rows,'蔡明翰').map(e=>e.date),['2026-10-01']);});
