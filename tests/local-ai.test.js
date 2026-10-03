@@ -39,3 +39,8 @@ test('all news bodies are fetched before AI and failures prevent every AI reques
  const result=await summarizeFullNews(rows,c,{fetcher});assert.equal(result.answer,'combined');assert.equal(result.articles.length,2);assert.ok(calls.lastIndexOf(c.bridge+'/articles')<calls.indexOf(c.bridge+'/relay'));
  let aiCalls=0;await assert.rejects(summarizeFullNews(rows,c,{fetcher:async(url)=>{if(url.endsWith('/health'))return {ok:true,json:async()=>({service:'stock-news-local-ai',version:3})};if(url.endsWith('/pair'))return {ok:true,json:async()=>({paired:true})};if(url.endsWith('/articles'))return {ok:false,json:async()=>({error:'付費牆'})};aiCalls++;throw Error('must not call AI');}}),/沒有以標題或舊摘要替代/);assert.equal(aiCalls,0);
 });
+
+test('mobile OpenAI retrieves article bodies without loopback and sends key only to OpenAI',async()=>{
+ let read=0,ai=0;const c={...config,provider:'openai',endpoint:'https://api.openai.com/v1',transport:'direct',bridgeToken:''};
+ const result=await summarizeFullNews([{title:'新聞',url:'https://www.cna.com.tw/story',news_date:'2026-10-02'}],c,{articleFetcher:async(url)=>{assert.equal(url,'https://www.cna.com.tw/story');read++;return {url,text:'完整新聞內文'.repeat(100)};},fetcher:async(url,options)=>{assert.equal(read,1);assert.equal(url,'https://api.openai.com/v1/chat/completions');assert.equal(options.headers.Authorization,'Bearer '+c.key);assert.ok(!options.body.includes(c.key));ai++;return {ok:true,json:async()=>({choices:[{message:{content:'mobile summary'}}]})};}});assert.equal(result.answer,'mobile summary');assert.equal(ai,1);
+});
