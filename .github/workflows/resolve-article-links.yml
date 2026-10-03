@@ -1,0 +1,29 @@
+name: Resolve news article links
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/resolve-article-links.yml'
+      - 'scripts/resolve_article_links.mjs'
+  workflow_run:
+    workflows: ['Update company news']
+    types: [completed]
+permissions:
+  contents: read
+concurrency:
+  group: resolve-article-links
+  cancel-in-progress: false
+jobs:
+  resolve:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      WORKER_API_URL: ${{ vars.WORKER_API_URL }}
+      COLLECTOR_SECRET: ${{ secrets.COLLECTOR_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/resolve_article_links.mjs
