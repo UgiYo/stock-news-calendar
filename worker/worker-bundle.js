@@ -1,0 +1,773 @@
+// worker/ai-jobs.js
+var enc = new TextEncoder();
+var b64 = (bytes) => {
+  let value = "";
+  for (let i = 0; i < bytes.length; i += 16384) value += String.fromCharCode(...bytes.subarray(i, i + 16384));
+  return btoa(value);
+};
+async function encryptTask(value, secret, id) {
+  const key = await crypto.subtle.importKey("raw", await crypto.subtle.digest("SHA-256", enc.encode("personal-ai-jobs-v1:" + secret)), { name: "AES-GCM" }, false, ["encrypt"]);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const bytes = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: enc.encode(id) }, key, enc.encode(JSON.stringify(value)));
+  return { iv: b64(iv), data: b64(new Uint8Array(bytes)) };
+}
+function cloudConfig(config) {
+  if (!["openai", "azure"].includes(config?.provider) || config.transport === "python") throw Error("\u96F2\u7AEF\u80CC\u666F\u76EE\u524D\u53EA\u652F\u63F4\u516C\u958B OpenAI\uFF0FAzure \u7AEF\u9EDE\uFF1B\u516C\u53F8\u5167\u7DB2\u8ACB\u7528\u88DD\u7F6E\u6A21\u5F0F\u3002");
+  const u = new URL(config.endpoint);
+  if (u.protocol !== "https:" || u.username || u.password || u.port || u.search || u.hash || (config.provider === "openai" ? u.hostname !== "api.openai.com" : !u.hostname.endsWith(".openai.azure.com"))) throw Error("\u4E0D\u652F\u63F4\u7684\u96F2\u7AEF AI \u7AEF\u9EDE\u3002");
+  if (!config.key?.trim() || config.key.length > 1e3 || !config.model?.trim() || config.model.length > 200) throw Error("\u8ACB\u586B\u6709\u6548 API Key \u8207\u6A21\u578B\u3002");
+  return { provider: config.provider, endpoint: u.href, model: config.model.trim(), key: config.key.trim(), version: String(config.version || "2024-10-21").slice(0, 40) };
+}
+var schema = "CREATE TABLE IF NOT EXISTS personal_ai_tasks(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,kind TEXT NOT NULL,title TEXT NOT NULL,date TEXT NOT NULL,status TEXT NOT NULL,progress TEXT NOT NULL,encrypted TEXT,output TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,read_at INTEGER,lease TEXT)";
+var publicTask = (r) => ({ id: r.id, title: r.title, kind: r.kind, date: r.date, state: ["done", "partial"].includes(r.status) ? "complete" : ["failed", "interrupted"].includes(r.status) ? "interrupted" : r.status, progress: r.progress, updated_at: new Date(r.updated_at).toISOString(), read_at: r.read_at ? new Date(r.read_at).toISOString() : null, cloud_id: r.id, ...JSON.parse(r.output) });
+async function aiJobsRoute(req, env, { user, admin = false, reply, dispatch: dispatch2, readArticleURL: readArticleURL2 }) {
+  const path = new URL(req.url).pathname;
+  if (!path.startsWith("/ai-jobs") && !path.startsWith("/admin/ai-jobs")) return null;
+  const sql = (q, ...args) => env.DB.prepare(q).bind(...args);
+  await sql(schema).run();
+  const now = Date.now();
+  await sql("UPDATE personal_ai_tasks SET status='interrupted',progress='\u8655\u7406\u7A0B\u5E8F\u4E2D\u65B7\uFF0C\u8ACB\u91CD\u65B0\u9001\u51FA\u4E26\u4FDD\u7559\u6210\u529F\u6BB5\u843D',encrypted=NULL,updated_at=?,lease=NULL WHERE status='running' AND updated_at<?", now, now - 20 * 6e4).run();
+  await sql("UPDATE personal_ai_tasks SET status='interrupted',progress='\u4EFB\u52D9\u5DF2\u903E\u671F\uFF0C\u8ACB\u91CD\u65B0\u9001\u51FA',encrypted=NULL,updated_at=? WHERE encrypted IS NOT NULL AND expires_at<?", now, now).run();
+  if (admin) {
+    if (path === "/admin/ai-jobs/article") {
+      const b = await req.json();
+      try {
+        return reply(await readArticleURL2(b.url));
+      } catch (e) {
+        return reply({ error: e.message }, 422);
+      }
+    }
+    if (path === "/admin/ai-jobs/claim" && req.method === "POST") {
+      const lease = crypto.randomUUID();
+      const r = await sql("UPDATE personal_ai_tasks SET status='running',progress='\u80CC\u666F\u8655\u7406\u4E2D',lease=?,updated_at=? WHERE id IN (SELECT id FROM personal_ai_tasks WHERE status='queued' AND expires_at>? ORDER BY created_at LIMIT 1) RETURNING *", lease, now, now).first();
+      return reply({ task: r ? { id: r.id, kind: r.kind, title: r.title, date: r.date, lease, encrypted: JSON.parse(r.encrypted), output: JSON.parse(r.output) } : null });
+    }
+    if (path === "/admin/ai-jobs/update" && req.method === "POST") {
+      const b = await req.json();
+      if (!["running", "done", "partial", "failed"].includes(b.status) || enc.encode(JSON.stringify(b.output || {})).length > 15e5) return reply({ error: "Invalid output" }, 400);
+      const output = {};
+      for (const field of ["answer", "text", "partial", "failures", "segments", "articles", "episode", "total", "request"]) if (b.output?.[field] !== void 0) output[field] = b.output[field];
+      const changed = await sql("UPDATE personal_ai_tasks SET status=?,progress=?,output=?,encrypted=CASE WHEN ?='running' THEN encrypted ELSE NULL END,updated_at=?,read_at=NULL,lease=CASE WHEN ?='running' THEN lease ELSE NULL END WHERE id=? AND lease=? AND status='running' RETURNING id", b.status, String(b.progress || "").slice(0, 1e3), JSON.stringify(output), b.status, now, b.status, b.id, b.lease).first();
+      return reply({ ok: !!changed });
+    }
+    return reply({ error: "Not found" }, 404);
+  }
+  if (path === "/ai-jobs/capabilities") return reply({ enabled: !!env.COLLECTOR_SECRET && !!env.GITHUB_DISPATCH_TOKEN, providers: ["openai", "azure"] });
+  if (req.method === "GET") return reply({ tasks: (await sql("SELECT * FROM personal_ai_tasks WHERE user_id=? ORDER BY updated_at DESC LIMIT 100", user.id).all()).results.map(publicTask) });
+  if (req.method === "DELETE") {
+    await sql("DELETE FROM personal_ai_tasks WHERE id=? AND user_id=?", new URL(req.url).searchParams.get("id"), user.id).run();
+    return reply({ ok: true });
+  }
+  if (path === "/ai-jobs/read" && req.method === "POST") {
+    const b = await req.json();
+    await sql("UPDATE personal_ai_tasks SET read_at=? WHERE id=? AND user_id=?", now, b.id, user.id).run();
+    return reply({ ok: true });
+  }
+  if (path === "/ai-jobs" && req.method === "POST") {
+    if (!env.COLLECTOR_SECRET || !env.GITHUB_DISPATCH_TOKEN) return reply({ error: "\u5F8C\u7AEF\u80CC\u666F\u4EFB\u52D9\u5C1A\u672A\u555F\u7528\u3002" }, 503);
+    const b = await req.json();
+    if (b.consent !== true) return reply({ error: "\u8ACB\u78BA\u8A8D\u672C\u6B21\u96F2\u7AEF\u80CC\u666F\u8655\u7406\u8207\u66AB\u5B58 Key \u8AAA\u660E\u3002" }, 400);
+    if (!["news", "podcast"].includes(b.kind) || typeof b.title !== "string" || b.title.length > 500 || enc.encode(JSON.stringify(b.input || {})).length > 9e5) return reply({ error: "Invalid task" }, 400);
+    let config;
+    try {
+      config = cloudConfig(b.config);
+    } catch (e) {
+      return reply({ error: e.message }, 400);
+    }
+    const count = await sql("SELECT COUNT(*) AS n FROM personal_ai_tasks WHERE user_id=? AND (status IN ('queued','running') OR created_at>?)", user.id, now - 864e5).first();
+    if (count.n >= 30) return reply({ error: "\u6BCF\u65E5\u6700\u591A\u5EFA\u7ACB 30 \u500B\u80CC\u666F\u4EFB\u52D9\u3002" }, 429);
+    const initial = b.kind === "podcast" ? { episode: Object.fromEntries(["id", "title", "date", "audio_url", "url", "channel_name"].map((k) => [k, String(b.input?.episode?.[k] || "").slice(0, 2e3)])), text: typeof b.input?.text === "string" ? b.input.text : "", segments: Array.isArray(b.input?.segments) ? b.input.segments : [], partial: !!b.input?.partial } : { request: { rows: (Array.isArray(b.input?.rows) ? b.input.rows : []).map((r) => Object.fromEntries(["title", "url", "article_url", "news_date", "company_code", "source"].map((k) => [k, String(r[k] || "").slice(0, 2e3)]))), date: b.date, title: b.title } };
+    const id = crypto.randomUUID(), encrypted = await encryptTask({ config, input: b.input }, env.COLLECTOR_SECRET, id);
+    await sql("INSERT INTO personal_ai_tasks(id,user_id,kind,title,date,status,progress,encrypted,created_at,updated_at,expires_at,output) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", id, user.id, b.kind, b.title, String(b.date || "").slice(0, 10), "queued", "\u5DF2\u6392\u5165\u80CC\u666F\u4EFB\u52D9\uFF0C\u53EF\u95DC\u9589\u9801\u9762", JSON.stringify(encrypted), now, now, now + 864e5, JSON.stringify(initial)).run();
+    let dispatched;
+    try {
+      dispatched = await dispatch2(env);
+    } catch {
+      await sql("UPDATE personal_ai_tasks SET status='failed',progress='\u7121\u6CD5\u555F\u52D5 GitHub Actions\uFF0C\u8ACB\u6AA2\u67E5\u5F8C\u7AEF\u8A2D\u5B9A',encrypted=NULL WHERE id=?", id).run();
+      return reply({ error: "\u7121\u6CD5\u555F\u52D5\u80CC\u666F\u5DE5\u4F5C\uFF0C\u6C92\u6709\u7E7C\u7E8C\u4FDD\u5B58\u672C\u6B21 Key\u3002" }, 503);
+    }
+    return reply({ task: publicTask(await sql("SELECT * FROM personal_ai_tasks WHERE id=?", id).first()), dispatched }, 202);
+  }
+  return reply({ error: "Not found" }, 404);
+}
+
+// worker/index.js
+function companyMention(title, company, conflicts = []) {
+  const text = String(title || "").normalize("NFKC");
+  if (new RegExp("(?<!\\d)" + company.code + "(?!\\d)").test(text)) return true;
+  let cleaned = text;
+  const names = [...conflicts, ...company.code === "2303" ? ["\u53F0\u806F\u96FB"] : []];
+  for (const name of [...new Set(names)].sort((a, b) => b.length - a.length)) if (name && name !== company.name) cleaned = cleaned.split(name).join(" ");
+  return [company.name, company.full_name].filter((n) => n && n.length >= 2).some((n) => cleaned.includes(n));
+}
+function trustedSource(source) {
+  const key = String(source || "").normalize("NFKC").replace(/\s/g, "").toLowerCase();
+  return { "\u4E2D\u592E\u793E": "\u4E2D\u592E\u793E", "\u4E2D\u592E\u793Ecna": "\u4E2D\u592E\u793E", "cna": "\u4E2D\u592E\u793E", "moneydj": "MoneyDJ", "moneydj\u7406\u8CA1\u7DB2": "MoneyDJ", "\u9245\u4EA8\u7DB2": "\u9245\u4EA8\u7DB2", "\u9245\u4EA8": "\u9245\u4EA8\u7DB2", "anue\u9245\u4EA8": "\u9245\u4EA8\u7DB2", "anue\u9245\u4EA8\u7DB2": "\u9245\u4EA8\u7DB2" }[key] || null;
+}
+function sourceDomain(value) {
+  try {
+    const h = new URL(value).hostname.toLowerCase();
+    return { "www.cna.com.tw": "\u4E2D\u592E\u793E", "cna.com.tw": "\u4E2D\u592E\u793E", "www.moneydj.com": "MoneyDJ", "moneydj.com": "MoneyDJ", "news.cnyes.com": "\u9245\u4EA8\u7DB2" }[h] || null;
+  } catch {
+    return null;
+  }
+}
+var normalizedTitle = (n) => String(n.title || "").replace(/\s*[-–—|]\s*(中央社(?: CNA)?|MoneyDJ(?:理財網)?|(?:Anue)?鉅亨(?:網)?)\s*$/i, "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+function duplicateNews(a, b) {
+  if (a.company_code !== b.company_code) return false;
+  if (a.url === b.url) return true;
+  if (Math.abs(Date.parse(a.published_at) - Date.parse(b.published_at)) > 48 * 36e5) return false;
+  const x = normalizedTitle(a), y = normalizedTitle(b);
+  if (!x || !y) return false;
+  const nums = (n) => (String(n.title || "").normalize("NFKC").match(/\d+(?:[.,]\d+)*/g) || []).sort().join("|");
+  if (nums(a) !== nums(b)) return false;
+  if (x === y) return true;
+  if (Math.min(x.length, y.length) < 12) return false;
+  const grams = (s) => new Set(Array.from({ length: s.length - 1 }, (_, i) => s.slice(i, i + 2)));
+  const gx = grams(x), gy = grams(y);
+  const common = [...gx].filter((g) => gy.has(g)).length;
+  return 2 * common / (gx.size + gy.size) >= 0.9;
+}
+function isGeneratedAnswer(value) {
+  try {
+    const u = new URL(value);
+    return ["news.cnyes.com", "gfe-desktop.cnyes.com"].includes(u.hostname) && u.pathname.startsWith("/news/aigc/");
+  } catch {
+    return false;
+  }
+}
+function curateNews(rows) {
+  const rank = { "\u4E2D\u592E\u793E": 0, "MoneyDJ": 1, "\u9245\u4EA8\u7DB2": 2 };
+  const candidates = rows.filter((n) => trustedSource(n.source) && !isGeneratedAnswer(n.article_url || n.url)).map((n) => ({ ...n, source: trustedSource(n.source) })).sort((a, b) => Number(!!b.article_summary) - Number(!!a.article_summary) || rank[a.source] - rank[b.source] || String(b.published_at).localeCompare(String(a.published_at)));
+  const kept = [];
+  for (const n of candidates) if (!kept.some((k) => duplicateNews(k, n))) kept.push(n);
+  return kept.sort((a, b) => String(b.published_at).localeCompare(String(a.published_at)));
+}
+function xmlText(value) {
+  return String(value || "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (_, entity) => {
+    const named = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+    if (named[entity]) return named[entity];
+    const n = entity.startsWith("#x") ? parseInt(entity.slice(2), 16) : Number(entity.slice(1));
+    return n > 0 && n <= 1114111 ? String.fromCodePoint(n) : "";
+  });
+}
+function parsePreview(xml, company, now = /* @__PURE__ */ new Date(), conflicts = []) {
+  if (!/<channel[\s>]/.test(xml)) throw Error("Invalid news feed");
+  const start = new Date(now);
+  const day = start.getUTCDate();
+  start.setUTCDate(1);
+  start.setUTCMonth(start.getUTCMonth() - 1);
+  start.setUTCDate(Math.min(day, new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0)).getUTCDate()));
+  const rows = /* @__PURE__ */ new Map();
+  for (const match of xml.matchAll(/<item[\s>]([\s\S]*?)<\/item>/g)) {
+    const tag = (name) => xmlText(match[1].match(new RegExp("<" + name + "(?:\\s[^>]*)?>([\\s\\S]*?)<\\/" + name + ">"))?.[1]);
+    const title = tag("title"), link = tag("link"), published = new Date(tag("pubDate"));
+    const sourceURL = xmlText(match[1].match(/<source\b[^>]*\burl=["']([^"']+)["']/)?.[1]);
+    const source = sourceDomain(sourceURL);
+    if (!source) continue;
+    if (!companyMention(title, company, conflicts)) continue;
+    if (!Number.isFinite(published.getTime()) || published < start || published > now) continue;
+    try {
+      if (new URL(link).protocol !== "https:") continue;
+    } catch {
+      continue;
+    }
+    rows.set(link, { company_code: company.code, title, url: link, source, published_at: published.toISOString(), news_date: new Date(published.getTime() + 8 * 36e5).toISOString().slice(0, 10), preview: true });
+  }
+  return curateNews([...rows.values()]);
+}
+var ARTICLE_HOSTS = /* @__PURE__ */ new Set(["www.cna.com.tw", "cna.com.tw", "www.moneydj.com", "moneydj.com", "m.moneydj.com", "news.cnyes.com", "gfe-desktop.cnyes.com"]);
+function normalizeArticleURL(value) {
+  let u = new URL(value);
+  if (["www.google.com", "google.com"].includes(u.hostname) && u.pathname === "/url") {
+    const target = u.searchParams.get("url") || u.searchParams.get("q");
+    if (target) u = new URL(target);
+  }
+  if (ARTICLE_HOSTS.has(u.hostname) && u.protocol === "http:" && !u.port) u.protocol = "https:";
+  if (u.hostname === "gfe-desktop.cnyes.com") u.hostname = "news.cnyes.com";
+  if (u.hostname === "m.moneydj.com" && /f1a\.aspx/i.test(u.pathname)) {
+    const id = [...u.searchParams].find(([key]) => key.toLowerCase() === "id")?.[1];
+    if (id) u = new URL("https://www.moneydj.com/kmdj/news/newsviewer.aspx?a=" + encodeURIComponent(id));
+  }
+  return checkedArticleURL(u.href);
+}
+function checkedArticleURL(value) {
+  const u = new URL(value);
+  if (u.protocol !== "https:" || u.username || u.password || u.port && u.port !== "443" || !ARTICLE_HOSTS.has(u.hostname) && u.hostname !== "news.google.com") throw Error("\u4F86\u6E90\u7DB2\u5740\u672A\u652F\u63F4\uFF08" + u.hostname + "\uFF09\uFF1B\u53EA\u63A5\u53D7\u4E09\u5BB6\u65B0\u805E\u4F86\u6E90\u53CA Google News \u539F\u6587\u9023\u7D50");
+  return u.href;
+}
+function extractArticleBody(html) {
+  if (/"isAccessibleForFree"\s*:\s*(false|"false")/i.test(html)) throw Error("\u4ED8\u8CBB\u6587\u7AE0\u7121\u6CD5\u53D6\u5F97\u5B8C\u6574\u5167\u6587");
+  const bodies = [];
+  const walk = (value) => {
+    if (Array.isArray(value)) value.forEach(walk);
+    else if (value && typeof value === "object") {
+      if (typeof value.articleBody === "string") bodies.push(value.articleBody);
+      Object.values(value).forEach(walk);
+    }
+  };
+  for (const match of html.matchAll(/<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try {
+      walk(JSON.parse(match[1]));
+    } catch {
+    }
+  }
+  let text;
+  if (bodies.length) text = bodies.sort((a, b) => b.length - a.length)[0];
+  else {
+    const stack = [], parts = [];
+    for (const token of html.matchAll(/<!--[\s\S]*?-->|<[^>]+>|[^<]+/g)) {
+      const value = token[0];
+      if (value.startsWith("<!--")) continue;
+      if (value.startsWith("<")) {
+        const tag = value.match(/^<\/?\s*([\w:-]+)/)?.[1]?.toLowerCase();
+        if (!tag) continue;
+        if (/^<\//.test(value)) {
+          const index = stack.map((x) => x.tag).lastIndexOf(tag);
+          if (index >= 0) stack.splice(index);
+          if (["p", "div", "li", "article"].includes(tag)) parts.push("\n");
+        } else {
+          const target = tag === "article" || /\b(?:id|class|itemprop)\s*=\s*["'][^"']*(?:centralcontent|paragraph|articlebody|article[-_]content|article__content|articlecontent|article-body|news[-_]content|news_text|maincontent|highlight)/i.test(value);
+          if (!["br", "img", "meta", "link", "input", "hr", "source", "wbr"].includes(tag)) stack.push({ tag, target, skip: ["script", "style", "nav", "footer", "aside"].includes(tag) });
+          else if (tag === "br") parts.push("\n");
+        }
+      } else if (stack.some((x) => x.target) && !stack.some((x) => x.skip)) parts.push(value);
+    }
+    text = parts.join("");
+  }
+  text = xmlText(text.replace(/<[^>]*>/g, " ")).split("\n").map((line) => line.replace(/[ \t]+/g, " ").trim()).filter(Boolean).join("\n");
+  if (text.length < 80 || /訂閱後閱讀|訂閱即可閱讀|解鎖全文|subscribe to continue/i.test(text)) throw Error("\u7121\u6CD5\u53D6\u5F97\u5B8C\u6574\u5167\u6587\uFF1A\u5167\u5BB9\u4E0D\u8DB3\u3001\u4ED8\u8CBB\u7246\u6216\u9700 JavaScript");
+  if (text.length > 4e4) throw Error("\u5168\u6587\u8D85\u904E 40,000 \u5B57\u5143\uFF0C\u4E0D\u6703\u622A\u65B7\u5F8C\u7576\u4F5C\u5168\u6587");
+  return text;
+}
+async function fetchNewsPage(value, body) {
+  let url = normalizeArticleURL(value);
+  for (let i = 0; i < 6; i++) {
+    let response;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        response = await fetch(url, { method: body ? "POST" : "GET", body, redirect: "manual", headers: { "User-Agent": "Mozilla/5.0", ...body ? { "Content-Type": "application/x-www-form-urlencoded" } : {} }, signal: AbortSignal.timeout(2e4) });
+        if (attempt === 0 && [429, 502, 503, 504].includes(response.status)) {
+          await response.body?.cancel();
+          await new Promise((resolve) => setTimeout(resolve, 1e3));
+          continue;
+        }
+        break;
+      } catch (e) {
+        if (attempt === 1) throw e;
+        await new Promise((resolve) => setTimeout(resolve, 1e3));
+      }
+    }
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      url = normalizeArticleURL(new URL(response.headers.get("Location"), url).href);
+      body = void 0;
+      continue;
+    }
+    if (!response.ok) throw Error("\u65B0\u805E\u4F86\u6E90 HTTP " + response.status);
+    const reader = response.body.getReader(), chunks = [];
+    let size = 0;
+    while (true) {
+      const { value: value2, done } = await reader.read();
+      if (done) break;
+      size += value2.byteLength;
+      if (size > 2e6) {
+        await reader.cancel();
+        throw Error("\u4F86\u6E90\u9801\u9762\u904E\u5927");
+      }
+      chunks.push(value2);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return { url, html: new TextDecoder().decode(bytes) };
+  }
+  throw Error("\u4F86\u6E90\u8F49\u5740\u904E\u591A");
+}
+async function resolveArticleURL(value, includePage = false) {
+  let url = normalizeArticleURL(value);
+  if (new URL(url).hostname === "news.google.com") {
+    const id = new URL(url).pathname.split("/").filter(Boolean).at(-1);
+    let decoded;
+    try {
+      const bytes = atob(id.replace(/-/g, "+").replace(/_/g, "/"));
+      const candidate = bytes.match(/https?:\/\/[^\x00-\x20\x7f-\xff]+/)?.[0];
+      if (candidate) decoded = normalizeArticleURL(candidate);
+    } catch {
+    }
+    if (decoded && ARTICLE_HOSTS.has(new URL(decoded).hostname)) return decoded;
+    const page = await fetchNewsPage("https://news.google.com/rss/articles/" + encodeURIComponent(id) + "?hl=zh-TW&gl=TW&ceid=TW:zh-Hant");
+    if (ARTICLE_HOSTS.has(new URL(page.url).hostname)) return includePage ? page : page.url;
+    const signature = xmlText(page.html.match(/data-n-a-sg=["']([^"']+)["']/)?.[1]), timestamp = Number(page.html.match(/data-n-a-ts=["'](\d+)["']/)?.[1]);
+    if (!signature || !timestamp) throw Error("Google News \u539F\u6587\u89E3\u6790\u5931\u6557");
+    const context = [["zh-TW", "TW", ["FINANCE_TOP_INDICES", "WEB_TEST_1_0_0"], null, null, 1, 1, "TW:zh-Hant", null, 360, null, null, null, null, null, 0, null, null, null], "zh-TW", "TW", 1, [2, 3, 4, 8], 1, 0, "", 0, 0, null, 0];
+    const request = JSON.stringify([[["Fbv4je", JSON.stringify(["garturlreq", context, id, timestamp, signature]), null, "generic"]]]);
+    const rpc = await fetchNewsPage("https://news.google.com/_/DotsSplashUi/data/batchexecute?rpcids=Fbv4je", new URLSearchParams({ "f.req": request }));
+    let resolved;
+    for (const line of rpc.html.split("\n")) {
+      if (!line.trim().startsWith("[")) continue;
+      try {
+        for (const item of JSON.parse(line)) {
+          if (item?.[1] === "Fbv4je") {
+            const payload = JSON.parse(item[2]);
+            if (payload[0] === "garturlres") resolved = payload[1];
+          }
+        }
+      } catch {
+      }
+    }
+    if (!resolved) throw Error("Google News \u539F\u6587\u89E3\u6790\u5931\u6557");
+    url = normalizeArticleURL(resolved);
+  }
+  return url;
+}
+async function readArticleURL(value) {
+  const resolved = await resolveArticleURL(value, true);
+  if (typeof resolved === "object") return { url: resolved.url, text: extractArticleBody(resolved.html) };
+  const url = resolved;
+  if (!ARTICLE_HOSTS.has(new URL(url).hostname)) throw Error("\u539F\u6587\u4F86\u6E90\u4E0D\u7B26");
+  const page = await fetchNewsPage(url);
+  if (!ARTICLE_HOSTS.has(new URL(page.url).hostname)) throw Error("\u539F\u6587\u4F86\u6E90\u4E0D\u7B26");
+  return { url: page.url, text: extractArticleBody(page.html) };
+}
+var encoder = new TextEncoder();
+var randomToken = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), (x) => x.toString(16).padStart(2, "0")).join("");
+async function hash(value) {
+  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value))), (x) => x.toString(16).padStart(2, "0")).join("");
+}
+var b642 = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+async function verifyGoogle(token, clientID) {
+  const [head, body, sig] = token.split(".");
+  if (!head || !body || !sig) throw Error("Invalid identity token");
+  const header = JSON.parse(new TextDecoder().decode(b642(head))), claims = JSON.parse(new TextDecoder().decode(b642(body)));
+  if (header.alg !== "RS256" || !["accounts.google.com", "https://accounts.google.com"].includes(claims.iss) || claims.aud !== clientID || claims.exp <= Date.now() / 1e3 || !claims.sub || claims.email_verified !== true) throw Error("Invalid identity token");
+  const response = await fetch("https://www.googleapis.com/oauth2/v3/certs", { signal: AbortSignal.timeout(1e4) });
+  if (!response.ok) throw Error("Google identity unavailable");
+  const jwk = (await response.json()).keys.find((k) => k.kid === header.kid);
+  if (!jwk) throw Error("Invalid signing key");
+  const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+  if (!await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b642(sig), encoder.encode(head + "." + body))) throw Error("Invalid signature");
+  return claims;
+}
+async function dispatch(env) {
+  if (!env.GITHUB_DISPATCH_TOKEN) throw Error("Pages Production \u5C1A\u672A\u8A2D\u5B9A GITHUB_DISPATCH_TOKEN");
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(env.GITHUB_REPO || "")) throw Error("GITHUB_REPO \u683C\u5F0F\u932F\u8AA4\uFF0C\u61C9\u70BA UgiYo/stock-news-calendar");
+  const r = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/news.yml/dispatches`, { method: "POST", headers: { Authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`, "User-Agent": "stock-news-calendar", "Accept": "application/vnd.github+json", "Content-Type": "application/json" }, body: JSON.stringify({ ref: "main", inputs: { mode: "queued" } }), signal: AbortSignal.timeout(1e4) });
+  if (!r.ok) {
+    const reason = { 401: "token \u7121\u6548\u6216\u5DF2\u904E\u671F", 403: "token \u6B0A\u9650\u4E0D\u8DB3\uFF0C\u9700 Actions: Read and write\uFF1B\u6216 GitHub \u5B58\u53D6\u9650\u5236", 404: "repo\u3001news.yml \u4E0D\u5B58\u5728\uFF0C\u6216 token \u672A\u7372\u6388\u6B0A\u5B58\u53D6\u6B64 repo", 422: "workflow \u7684 main \u5206\u652F\u6216 workflow_dispatch \u8A2D\u5B9A\u4E0D\u7B26" };
+    throw Error("GitHub HTTP " + r.status + "\uFF1A" + (reason[r.status] || "\u555F\u52D5\u8ACB\u6C42\u5931\u6557"));
+  }
+  return true;
+}
+var index_default = { async fetch(req, env) {
+  const url = new URL(req.url), path = url.pathname;
+  let appURL;
+  try {
+    appURL = new URL(String(env.APP_URL || "").trim());
+    if (!["https:", "http:"].includes(appURL.protocol) || appURL.username || appURL.password || appURL.search || appURL.hash) throw Error("Invalid APP_URL");
+    if (!appURL.pathname.endsWith("/")) appURL.pathname += "/";
+  } catch {
+    return Response.json({ error: "APP_URL \u5C1A\u672A\u8A2D\u5B9A\u6216\u683C\u5F0F\u932F\u8AA4\u3002\u8ACB\u5728 Worker Settings \u2192 Variables and Secrets \u65B0\u589E Text \u8B8A\u6578 APP_URL\uFF0C\u503C\u70BA https://ugiyo.github.io/stock-news-calendar/\uFF0C\u5132\u5B58\u4E26\u91CD\u65B0\u90E8\u7F72\u3002" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+  }
+  const origin = appURL.origin;
+  const headers = { "Content-Type": "application/json", "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Headers": "authorization,content-type", "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS", "Cache-Control": "no-store", "Vary": "Origin" };
+  const reply = (data, status = 200) => Response.json(data, { status, headers });
+  const sql = (q, ...args) => env.DB.prepare(q).bind(...args);
+  try {
+    if (req.method === "OPTIONS") return new Response(null, { headers });
+    if (req.headers.get("Origin") && req.headers.get("Origin") !== origin) return reply({ error: "Origin not allowed" }, 403);
+    if (path === "/health") {
+      const missing = ["DB", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "COLLECTOR_SECRET"].filter((k) => !env[k]);
+      return reply({ ok: missing.length === 0, missing }, missing.length ? 503 : 200);
+    }
+    if (path === "/auth/start") {
+      const state = randomToken(), verifier = randomToken();
+      await sql("DELETE FROM oauth_states WHERE expires_at<?", Date.now()).run();
+      await sql("INSERT INTO oauth_states VALUES(?,?,?)", state, verifier, Date.now() + 6e5).run();
+      const challenge = await crypto.subtle.digest("SHA-256", encoder.encode(verifier));
+      const encoded = btoa(String.fromCharCode(...new Uint8Array(challenge))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      const params = new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, redirect_uri: url.origin + "/auth/callback", response_type: "code", scope: "openid email profile", state, code_challenge: encoded, code_challenge_method: "S256", prompt: "select_account" });
+      return new Response(null, { status: 302, headers: { Location: "https://accounts.google.com/o/oauth2/v2/auth?" + params, "Set-Cookie": `oauth_state=${state}; Secure; HttpOnly; SameSite=Lax; Max-Age=600; Path=/auth` } });
+    }
+    if (path === "/auth/callback") {
+      const state = url.searchParams.get("state"), cookie = req.headers.get("Cookie") || "";
+      if (!state || !cookie.split(";").some((x) => x.trim() === "oauth_state=" + state)) return reply({ error: "Invalid OAuth state" }, 400);
+      const row = await sql("DELETE FROM oauth_states WHERE state=? AND expires_at>? RETURNING *", state, Date.now()).first();
+      if (!row) return reply({ error: "OAuth request expired" }, 400);
+      if (!url.searchParams.get("code")) return new Response(null, { status: 302, headers: { Location: appURL.href + "#login_error=cancelled" } });
+      const response = await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ code: url.searchParams.get("code"), client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, redirect_uri: url.origin + "/auth/callback", grant_type: "authorization_code", code_verifier: row.verifier }), signal: AbortSignal.timeout(15e3) });
+      if (!response.ok) throw Error("Google login failed");
+      const identity = await verifyGoogle((await response.json()).id_token, env.GOOGLE_CLIENT_ID);
+      await sql("INSERT INTO users VALUES(?,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email", identity.sub, identity.email).run();
+      const token2 = randomToken();
+      await sql("DELETE FROM sessions WHERE expires_at<?", Date.now()).run();
+      await sql("INSERT INTO sessions VALUES(?,?,?)", await hash(token2), identity.sub, Date.now() + 30 * 864e5).run();
+      return new Response(null, { status: 302, headers: { Location: appURL.href + "#session=" + token2, "Set-Cookie": "oauth_state=; Secure; HttpOnly; SameSite=Lax; Max-Age=0; Path=/auth", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
+    }
+    if (path.startsWith("/admin/")) {
+      const provided = req.headers.get("Authorization") || "";
+      if (!env.COLLECTOR_SECRET || await hash(provided) !== await hash("Bearer " + env.COLLECTOR_SECRET)) return reply({ error: "Forbidden" }, 403);
+      const personal2 = await aiJobsRoute(req, env, { admin: true, reply, dispatch, readArticleURL });
+      if (personal2) return personal2;
+      if (path === "/admin/chart-codes") {
+        const codes = new Set((await sql("SELECT DISTINCT company_code AS code FROM watchlists").all()).results.map((r) => r.code));
+        try {
+          for (const row of (await sql("SELECT payload FROM rankings ORDER BY date DESC LIMIT 60").all()).results) {
+            const p = JSON.parse(row.payload), stocks = Array.isArray(p) ? p : p.stocks;
+            for (const r of [...stocks].sort((a, b) => b.amount - a.amount || a.code.localeCompare(b.code)).slice(0, 10)) codes.add(r.code);
+          }
+        } catch (e) {
+          if (!String(e.message).includes("no such table")) throw e;
+        }
+        if (!codes.size) return reply({ companies: [] });
+        const hasPrices = await sql("SELECT name FROM sqlite_master WHERE type='table' AND name='prices'").first(), list = [...codes], companies = [];
+        for (let i = 0; i < list.length; i += 100) {
+          const chunk = list.slice(i, i + 100), placeholders = chunk.map(() => "?").join(",");
+          const query = hasPrices ? `SELECT c.*,(SELECT MAX(date) FROM prices p WHERE p.code=c.code) AS last_price_date FROM companies c WHERE code IN (${placeholders})` : `SELECT * FROM companies WHERE code IN (${placeholders})`;
+          companies.push(...(await sql(query, ...chunk).all()).results);
+        }
+        return reply({ companies });
+      }
+      if (path === "/admin/ranking-dates") {
+        try {
+          return reply({ dates: (await sql("SELECT date FROM rankings ORDER BY date DESC LIMIT 60").all()).results.map((r) => r.date) });
+        } catch (e) {
+          if (String(e.message).includes("no such table")) return reply({ dates: [] });
+          throw e;
+        }
+      }
+      if (path === "/admin/ranking" && req.method === "POST") {
+        const b = await req.json();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(b.date) || !Array.isArray(b.stocks) || b.stocks.length > 5e3 || b.stocks.some((r) => !/^\d{4}$/.test(r.code) || !r.name || !r.tag || !["\u4E0A\u5E02", "\u4E0A\u6AC3"].includes(r.market) || !Number.isFinite(r.amount) || r.amount < 0)) return reply({ error: "Invalid ranking" }, 400);
+        await sql("CREATE TABLE IF NOT EXISTS rankings(date TEXT PRIMARY KEY,payload TEXT NOT NULL)").run();
+        await sql("INSERT INTO rankings(date,payload) VALUES(?,?) ON CONFLICT(date) DO UPDATE SET payload=excluded.payload WHERE rankings.payload<>excluded.payload", b.date, JSON.stringify({ stocks: b.stocks, previousDate: /^\d{4}-\d{2}-\d{2}$/.test(b.previousDate || "") ? b.previousDate : null })).run();
+        await sql("DELETE FROM rankings WHERE date NOT IN (SELECT date FROM rankings ORDER BY date DESC LIMIT 60)").run();
+        return reply({ ok: true });
+      }
+      if (path === "/admin/prices" && req.method === "POST") {
+        const { prices } = await req.json();
+        if (!Array.isArray(prices) || prices.length > 20 || prices.some((p) => !/^(\d{4,6}|TAIEX)$/.test(p.code) || !/^\d{4}-\d{2}-\d{2}$/.test(p.date) || !Number.isFinite(p.close) || p.close <= 0)) return reply({ error: "Invalid prices" }, 400);
+        await sql("CREATE TABLE IF NOT EXISTS prices(code TEXT NOT NULL,date TEXT NOT NULL,open REAL,high REAL,low REAL,close REAL NOT NULL,volume REAL,PRIMARY KEY(code,date))").run();
+        if (prices.length) await env.DB.batch(prices.map((p) => sql("INSERT INTO prices(code,date,open,high,low,close,volume) VALUES(?,?,?,?,?,?,?) ON CONFLICT(code,date) DO UPDATE SET open=excluded.open,high=excluded.high,low=excluded.low,close=excluded.close,volume=excluded.volume WHERE prices.open IS NOT excluded.open OR prices.high IS NOT excluded.high OR prices.low IS NOT excluded.low OR prices.close IS NOT excluded.close OR prices.volume IS NOT excluded.volume", p.code, p.date, p.open ?? null, p.high ?? null, p.low ?? null, p.close, p.volume ?? null)));
+        return reply({ ok: true });
+      }
+      if (path === "/admin/companies" && req.method === "POST") {
+        const { companies } = await req.json();
+        if (!Array.isArray(companies) || companies.length > 100) return reply({ error: "Invalid batch" }, 400);
+        await env.DB.batch(companies.map((c) => {
+          if (!/^\d{4,6}$/.test(c.code) || !c.name || !["\u4E0A\u5E02", "\u4E0A\u6AC3"].includes(c.market)) throw Error("Invalid company");
+          return sql("INSERT INTO companies(code,name,full_name,market) VALUES(?,?,?,?) ON CONFLICT(code) DO UPDATE SET name=excluded.name,full_name=excluded.full_name,market=excluded.market WHERE companies.name IS NOT excluded.name OR companies.full_name IS NOT excluded.full_name OR companies.market IS NOT excluded.market", c.code, c.name, c.full_name, c.market);
+        }));
+        return reply({ ok: true });
+      }
+      if (path === "/admin/company-aliases") {
+        const c = await sql("SELECT * FROM companies WHERE code=?", url.searchParams.get("code")).first();
+        if (!c) return reply({ error: "\u516C\u53F8\u4E0D\u5B58\u5728" }, 404);
+        return reply({ names: (await sql("SELECT name FROM companies WHERE code<>? AND name<>? AND instr(name,?)>0", c.code, c.name, c.name).all()).results.map((x) => x.name) });
+      }
+      if (path === "/admin/tracked") return reply({ companies: (await sql("SELECT DISTINCT c.* FROM companies c JOIN watchlists w ON c.code=w.company_code").all()).results });
+      if (path === "/admin/claim" && req.method === "POST") {
+        await sql("UPDATE jobs SET status='pending' WHERE status='running' AND claimed_at<?", Date.now() - 20 * 6e4).run();
+        const jobs = (await sql("UPDATE jobs SET status='running',claimed_at=? WHERE id IN (SELECT id FROM jobs WHERE status='pending' ORDER BY created_at LIMIT 1) RETURNING *", Date.now()).all()).results;
+        return reply({ jobs });
+      }
+      if (path === "/admin/job" && req.method === "POST") {
+        const b = await req.json();
+        await sql("UPDATE jobs SET status=?,error=? WHERE id=?", b.error ? "failed" : "done", b.error || null, b.id).run();
+        return reply({ ok: true });
+      }
+      if (path === "/admin/news" && req.method === "POST") {
+        const b = await req.json();
+        if (!Array.isArray(b.news) || b.news.length > 20) return reply({ error: "Invalid batch" }, 400);
+        const candidates = curateNews(b.news), stored = [];
+        for (const code of [...new Set(candidates.map((n) => n.company_code))]) {
+          const dates = candidates.filter((n) => n.company_code === code).map((n) => n.news_date).sort();
+          if (!/^\d{4,6}$/.test(code) || dates.some((d) => !/^\d{4}-\d{2}-\d{2}$/.test(d))) return reply({ error: "Invalid news" }, 400);
+          const from = new Date(Date.parse(dates[0]) - 2 * 864e5).toISOString().slice(0, 10), to = new Date(Date.parse(dates.at(-1)) + 2 * 864e5).toISOString().slice(0, 10);
+          stored.push(...(await sql("SELECT * FROM news WHERE news_date BETWEEN ? AND ? AND company_code=?", from, to, code).all()).results);
+        }
+        const accepted = [];
+        for (const n of candidates) if (!stored.some((k) => trustedSource(k.source) && k.url !== n.url && duplicateNews(k, n))) accepted.push(n);
+        if (accepted.length) await env.DB.batch(accepted.map((n) => {
+          if (!/^\d{4,6}$/.test(n.company_code) || !/^https:\/\//.test(n.url) || !/^\d{4}-\d{2}-\d{2}$/.test(n.news_date)) throw Error("Invalid news");
+          return sql("INSERT INTO news(company_code,title,url,source,published_at,news_date) VALUES(?,?,?,?,?,?) ON CONFLICT(company_code,url) DO UPDATE SET title=excluded.title,source=excluded.source,published_at=excluded.published_at,news_date=excluded.news_date WHERE news.title IS NOT excluded.title OR news.source IS NOT excluded.source OR news.published_at IS NOT excluded.published_at OR news.news_date IS NOT excluded.news_date", n.company_code, n.title, n.url, n.source, n.published_at, n.news_date);
+        }));
+        return reply({ ok: true });
+      }
+      if (path === "/admin/company" && req.method === "POST") {
+        const b = await req.json();
+        await sql("UPDATE companies SET last_collected_at=COALESCE(?,last_collected_at),last_error=? WHERE code=?", b.updated_at || null, b.error || null, b.code).run();
+        return reply({ ok: true });
+      }
+      if (path === "/admin/article-links") {
+        if (req.method === "POST") {
+          const b = await req.json();
+          let direct;
+          try {
+            direct = normalizeArticleURL(b.url);
+          } catch {
+            return reply({ error: "Invalid article link" }, 400);
+          }
+          if (!ARTICLE_HOSTS.has(new URL(direct).hostname) || !Number.isSafeInteger(b.id)) return reply({ error: "Invalid article link" }, 400);
+          await sql("UPDATE news SET article_url=? WHERE id=? AND article_url IS NOT ?", direct, b.id, direct).run();
+          return reply({ ok: true });
+        }
+        const code = url.searchParams.get("code");
+        if (code && !/^\d{4,6}$/.test(code)) return reply({ error: "Invalid code" }, 400);
+        const query = "SELECT id,title,url,article_url FROM news WHERE source IN ('MoneyDJ','MoneyDJ\u7406\u8CA1\u7DB2','\u4E2D\u592E\u793E','\u4E2D\u592E\u793E CNA','\u9245\u4EA8\u7DB2','\u9245\u4EA8','Anue\u9245\u4EA8','news.cnyes.com') AND (article_url IS NULL OR article_url LIKE 'https://news.google.com/%')";
+        return reply({ news: (await sql(query + (code ? " AND company_code=?" : "") + " ORDER BY news_date DESC,id DESC LIMIT 100", ...code ? [code] : []).all()).results });
+      }
+      if (path === "/admin/article-probe") {
+        if (req.method === "POST") {
+          const b = await req.json();
+          try {
+            const result = await readArticleURL(b.url);
+            return reply({ ok: true, url: result.url, characters: result.text.length });
+          } catch (e) {
+            return reply({ ok: false, error: e.message }, 422);
+          }
+        }
+        const code = url.searchParams.get("code"), date = url.searchParams.get("date");
+        if (!/^\d{4,6}$/.test(code || "") || !/^\d{4}-\d{2}-\d{2}$/.test(date || "")) return reply({ error: "Invalid probe range" }, 400);
+        return reply({ news: (await sql("SELECT id,title,url,article_url FROM news WHERE company_code=? AND news_date=? AND source IN ('MoneyDJ','MoneyDJ\u7406\u8CA1\u7DB2','\u9245\u4EA8\u7DB2','news.cnyes.com','\u4E2D\u592E\u793E') ORDER BY id LIMIT 10", code, date).all()).results });
+      }
+      if (path === "/admin/article") return reply({ news: await sql("SELECT * FROM news WHERE id=?", url.searchParams.get("id")).first() });
+      if (path === "/admin/summary" && req.method === "POST") {
+        const b = await req.json();
+        await sql("UPDATE news SET article_summary=?,summary_status=?,summary_method=?,summary_error=?,summary_updated_at=?,article_url=COALESCE(?,article_url) WHERE id=?", b.article_summary || null, b.article_summary ? "ready" : "unavailable", b.summary_method || null, b.summary_error || null, (/* @__PURE__ */ new Date()).toISOString(), b.article_url || null, b.id).run();
+        return reply({ ok: true });
+      }
+      return reply({ error: "Not found" }, 404);
+    }
+    const token = req.headers.get("Authorization")?.replace(/^Bearer /, "");
+    if (!token) return reply({ error: "\u8ACB\u5148\u767B\u5165" }, 401);
+    const user = await sql("SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?", await hash(token), Date.now()).first();
+    if (!user) return reply({ error: "\u767B\u5165\u5DF2\u904E\u671F\uFF0C\u8ACB\u91CD\u65B0\u767B\u5165" }, 401);
+    if (path === "/portfolio-quotes") {
+      const codes = [...new Set((url.searchParams.get("codes") || "").split(",").filter(Boolean))];
+      if (!codes.length) return reply({ quotes: [] });
+      if (codes.length > 100 || codes.some((c) => !/^\d{4,6}$/.test(c))) return reply({ error: "Invalid codes" }, 400);
+      try {
+        return reply({ quotes: (await sql(`SELECT p.code,p.date,p.close FROM prices p WHERE p.code IN (${codes.map(() => "?").join(",")}) AND p.date=(SELECT MAX(q.date) FROM prices q WHERE q.code=p.code)`, ...codes).all()).results });
+      } catch (e) {
+        if (String(e.message).includes("no such table")) return reply({ quotes: [] });
+        throw e;
+      }
+    }
+    if (path === "/intraday") {
+      const code = url.searchParams.get("code"), interval = url.searchParams.get("interval") || "5m";
+      if (!/^[1-9]\d{3}$/.test(code || "") || !["1m", "5m", "15m", "60m"].includes(interval)) return reply({ error: "Invalid interval" }, 400);
+      const company = await sql("SELECT * FROM companies WHERE code=?", code).first();
+      if (!company) return reply({ error: "\u516C\u53F8\u4E0D\u5B58\u5728" }, 404);
+      const symbol = code + (company.market === "\u4E0A\u6AC3" ? ".TWO" : ".TW"), key = new Request(url.origin + "/cache/intraday/" + symbol + "/" + interval), cache = globalThis.caches?.default;
+      const cached = await cache?.match(key);
+      if (cached) return reply(await cached.json());
+      let result;
+      for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
+        try {
+          const response = await fetch(`https://${host}/v8/finance/chart/${symbol}?interval=${interval}&range=5d&includePrePost=false`, { headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" }, signal: AbortSignal.timeout(1e4) });
+          if (response.ok) {
+            result = (await response.json()).chart?.result?.[0];
+            if (result) break;
+          }
+        } catch {
+        }
+      }
+      if (!result || result.meta?.symbol !== symbol) return reply({ error: "\u5206\u9418\u884C\u60C5\u4F86\u6E90\u66AB\u6642\u7121\u6CD5\u8B80\u53D6\uFF0C\u8ACB\u7A0D\u5F8C\u91CD\u8A66\uFF1B\u65E5\u9031\u6708 K \u4ECD\u53EF\u4F7F\u7528\u3002" }, 502);
+      const quote = result.indicators?.quote?.[0], prices = [];
+      for (const [i, timestamp] of (result.timestamp || []).entries()) {
+        const open = quote?.open?.[i], high = quote?.high?.[i], low = quote?.low?.[i], close = quote?.close?.[i], volume = quote?.volume?.[i];
+        if (![open, high, low, close].every((v) => Number.isFinite(v) && v > 0) || low > Math.min(open, close) || high < Math.max(open, close)) continue;
+        const time = new Date(timestamp * 1e3 + 8 * 36e5), minutes = time.getUTCHours() * 60 + time.getUTCMinutes();
+        if (minutes < 540 || minutes > 810) continue;
+        prices.push({ date: time.toISOString().slice(0, 16).replace("T", " "), timestamp, open, high, low, close, volume: Number.isFinite(volume) ? volume : null });
+      }
+      const data = { prices, source: "Yahoo Finance", interval, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+      if (cache) await cache.put(key, Response.json(data, { headers: { "Cache-Control": "public, max-age=180" } }));
+      return reply(data);
+    }
+    if (path === "/chart-prices") {
+      const code = url.searchParams.get("code");
+      if (!/^[1-9]\d{3}$/.test(code || "")) return reply({ error: "Invalid stock code" }, 400);
+      try {
+        return reply({ prices: (await sql("SELECT * FROM prices WHERE code=? AND date>=date('now','-180 days') ORDER BY date", code).all()).results });
+      } catch (e) {
+        if (String(e.message).includes("no such table")) return reply({ prices: [] });
+        throw e;
+      }
+    }
+    if (path === "/ranking-stock") {
+      const code = url.searchParams.get("code");
+      if (!/^[1-9]\d{3}$/.test(code || "")) return reply({ error: "Invalid stock code" }, 400);
+      try {
+        const snapshots = (await sql("SELECT date,payload FROM rankings ORDER BY date LIMIT 60").all()).results;
+        const history = [];
+        let stock = null;
+        for (const snapshot of snapshots) {
+          const p = JSON.parse(snapshot.payload), rows = Array.isArray(p) ? p : p.stocks, found = rows.find((r) => r.code === code);
+          if (found) stock = found;
+          const rank = found ? 1 + rows.filter((r) => r.amount > found.amount || r.amount === found.amount && r.code < code).length : null;
+          history.push({ date: snapshot.date, previousDate: Array.isArray(p) ? null : p.previousDate, amount: found?.amount ?? null, rank });
+        }
+        return reply({ stock, history });
+      } catch (e) {
+        if (String(e.message).includes("no such table")) return reply({ stock: null, history: [] });
+        throw e;
+      }
+    }
+    if (path === "/ranking") {
+      const requested = url.searchParams.get("date");
+      if (requested && !/^\d{4}-\d{2}-\d{2}$/.test(requested)) return reply({ error: "Invalid date" }, 400);
+      try {
+        const dates = (await sql("SELECT date FROM rankings ORDER BY date DESC LIMIT 60").all()).results.map((r) => r.date), date = requested || dates[0];
+        const saved = (await sql("SELECT date,payload FROM rankings WHERE date>=COALESCE((SELECT date FROM rankings WHERE date<? ORDER BY date DESC LIMIT 1 OFFSET 5),(SELECT MIN(date) FROM rankings)) ORDER BY date LIMIT 28", date || "").all()).results.map((r) => {
+          const p = JSON.parse(r.payload);
+          return { date: r.date, stocks: Array.isArray(p) ? p : p.stocks, previousDate: Array.isArray(p) ? null : p.previousDate };
+        }), row = saved.find((r) => r.date === date), previous = saved.find((r) => r.date === row?.previousDate);
+        const history = saved.map((r) => {
+          const total = r.stocks.reduce((sum, x) => sum + x.amount, 0), sectors = {};
+          for (const x of r.stocks) {
+            sectors[x.tag] ??= { amount: 0, count: 0, topCount: 0 };
+            sectors[x.tag].amount += x.amount;
+            sectors[x.tag].count++;
+          }
+          for (const x of [...r.stocks].sort((a, b) => b.amount - a.amount || a.code.localeCompare(b.code)).slice(0, 10)) sectors[x.tag].topCount++;
+          return { date: r.date, previousDate: r.previousDate, total, sectors };
+        });
+        return reply({ date: date || null, dates, stocks: row?.stocks || [], previousDate: row?.previousDate || null, previousStocks: previous?.stocks || null, history });
+      } catch (e) {
+        if (String(e.message).includes("no such table")) return reply({ date: null, dates: [], stocks: [], history: [] });
+        throw e;
+      }
+    }
+    if (path === "/prices") {
+      const code = url.searchParams.get("code");
+      if (!await sql("SELECT 1 FROM watchlists WHERE user_id=? AND company_code=?", user.id, code).first()) return reply({ error: "\u8ACB\u5148\u8FFD\u8E64\u516C\u53F8" }, 403);
+      try {
+        return reply({ prices: (await sql("SELECT * FROM prices WHERE code IN (?, 'TAIEX') AND date>=date('now','-180 days') ORDER BY date", code).all()).results });
+      } catch (e) {
+        if (String(e.message).includes("no such table")) return reply({ prices: [] });
+        throw e;
+      }
+    }
+    if (path === "/article-content" && req.method === "POST") {
+      const b = await req.json();
+      if (Object.keys(b).some((k) => k !== "url") || typeof b.url !== "string" || b.url.length > 3e3) return reply({ error: "\u50C5\u63A5\u53D7\u65B0\u805E\u7DB2\u5740\uFF0C\u4E0D\u53EF\u50B3\u9001 AI \u8A2D\u5B9A\u6216\u91D1\u9470" }, 400);
+      try {
+        const saved = await sql("SELECT article_url FROM news WHERE url=? AND article_url IS NOT NULL LIMIT 1", b.url).first();
+        return reply(await readArticleURL(saved?.article_url || b.url));
+      } catch (e) {
+        return reply({ error: e.message || "\u7121\u6CD5\u8B80\u53D6\u5B8C\u6574\u65B0\u805E\u5167\u6587" }, 422);
+      }
+    }
+    const personal = await aiJobsRoute(req, env, { user, reply, dispatch, readArticleURL });
+    if (personal) return personal;
+    if (path === "/me") return reply({ user });
+    if (path === "/logout" && req.method === "POST") {
+      await sql("DELETE FROM sessions WHERE token_hash=?", await hash(token)).run();
+      return reply({ ok: true });
+    }
+    if (path === "/companies") {
+      const q = (url.searchParams.get("q") || "").trim().slice(0, 60);
+      return reply({ companies: (await sql("SELECT * FROM companies WHERE code=? OR instr(name,?)>0 OR instr(full_name,?)>0 ORDER BY code LIMIT 20", q, q, q).all()).results });
+    }
+    if (path === "/preview" && req.method === "GET") {
+      const code = url.searchParams.get("code");
+      if (!/^\d{4,6}$/.test(code || "")) return reply({ error: "\u80A1\u865F\u683C\u5F0F\u932F\u8AA4" }, 400);
+      const company = await sql("SELECT * FROM companies WHERE code=?", code).first();
+      if (!company) return reply({ error: "\u516C\u53F8\u4E0D\u5B58\u5728" }, 404);
+      const feed = new URL("https://news.google.com/rss/search");
+      feed.search = new URLSearchParams({ q: `("${company.name}" OR "${company.full_name}" OR "${code}") (site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com) when:1m`, hl: "zh-TW", gl: "TW", ceid: "TW:zh-Hant" }).toString();
+      const response = await fetch(feed, { headers: { "User-Agent": "StockNewsCalendar/2.0" }, signal: AbortSignal.timeout(2e4) });
+      if (!response.ok) return reply({ error: "\u65B0\u805E\u4F86\u6E90\u66AB\u6642\u7121\u6CD5\u8B80\u53D6\uFF0C\u8ACB\u7A0D\u5F8C\u91CD\u8A66" }, 502);
+      const conflicts = (await sql("SELECT name FROM companies WHERE code<>? AND name<>? AND instr(name,?)>0", company.code, company.name, company.name).all()).results.map((x) => x.name);
+      return reply({ company, news: parsePreview(await response.text(), company, /* @__PURE__ */ new Date(), conflicts) });
+    }
+    if (path === "/watchlists" && req.method === "GET") {
+      const companies = (await sql("SELECT c.*, (SELECT COUNT(*) FROM news n WHERE n.company_code=c.code) AS news_count FROM companies c JOIN watchlists w ON c.code=w.company_code WHERE w.user_id=? ORDER BY w.created_at,c.code", user.id).all()).results;
+      const catalog = (await sql("SELECT code,name FROM companies").all()).results;
+      return reply({ companies: companies.map((c) => ({ ...c, conflicting_names: catalog.filter((other) => other.code !== c.code && other.name !== c.name && other.name.includes(c.name)).map((other) => other.name) })) });
+    }
+    if (path === "/watchlists" && req.method === "POST") {
+      const { code } = await req.json();
+      if (!await sql("SELECT code FROM companies WHERE code=?", code).first()) return reply({ error: "\u516C\u53F8\u4E0D\u5B58\u5728" }, 404);
+      await sql("INSERT OR IGNORE INTO watchlists(user_id,company_code) VALUES(?,?)", user.id, code).run();
+      return reply({ ok: true });
+    }
+    if (path === "/watchlists" && req.method === "DELETE") {
+      await sql("DELETE FROM watchlists WHERE user_id=? AND company_code=?", user.id, url.searchParams.get("code")).run();
+      return reply({ ok: true });
+    }
+    if (path === "/news") {
+      const from = url.searchParams.get("from"), to = url.searchParams.get("to"), offset = Number(url.searchParams.get("offset") || 0);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || !Number.isSafeInteger(offset) || offset < 0) return reply({ error: "Invalid range" }, 400);
+      return reply({ news: (await sql("SELECT n.* FROM news n JOIN watchlists w ON w.company_code=n.company_code WHERE w.user_id=? AND n.news_date BETWEEN ? AND ? ORDER BY n.published_at DESC,n.id DESC LIMIT 500 OFFSET ?", user.id, from, to, offset).all()).results });
+    }
+    if ((path === "/collect" || path === "/summarize") && req.method === "POST") {
+      const b = await req.json(), type = path.slice(1);
+      let code = b.code, news;
+      if (type === "summarize") {
+        news = await sql("SELECT * FROM news WHERE id=?", b.id).first();
+        if (!news) return reply({ error: "\u65B0\u805E\u4E0D\u5B58\u5728" }, 404);
+        code = news.company_code;
+      }
+      if (!await sql("SELECT 1 FROM watchlists WHERE user_id=? AND company_code=?", user.id, code).first()) return reply({ error: "\u5C1A\u672A\u8FFD\u8E64\u6B64\u516C\u53F8" }, 403);
+      const retryAI = b.retry_ai === true && news?.summary_method !== "ai";
+      if (news?.article_summary && !retryAI) return reply({ news });
+      const existing = await sql("SELECT * FROM jobs WHERE type=? AND company_code=? AND news_id IS ? AND status IN ('pending','running') ORDER BY created_at DESC LIMIT 1", type, code, news?.id || null).first();
+      if (existing) {
+        let dispatched2, dispatchError2;
+        if (existing.status === "pending") {
+          dispatched2 = false;
+          try {
+            dispatched2 = await dispatch(env);
+          } catch (e) {
+            dispatchError2 = e.message || "GitHub \u9023\u7DDA\u5931\u6557";
+          }
+        }
+        return reply({ job: existing, news, dispatched: dispatched2, dispatchError: dispatchError2 }, 202);
+      }
+      const recent = await sql("SELECT * FROM jobs WHERE type=? AND company_code=? AND news_id IS ? AND created_at>? ORDER BY created_at DESC LIMIT 1", type, code, news?.id || null, Date.now() - 15 * 6e4).first();
+      if (recent?.status === "done" && !retryAI) return reply({ job: recent, news }, 202);
+      const id = randomToken();
+      await sql("INSERT OR IGNORE INTO jobs(id,type,company_code,news_id,created_at) VALUES(?,?,?,?,?)", id, type, code, news?.id || null, Date.now()).run();
+      const queued = await sql("SELECT id,status FROM jobs WHERE type=? AND company_code=? AND news_id IS ? AND status IN ('pending','running') LIMIT 1", type, code, news?.id || null).first();
+      let dispatched = false, dispatchError;
+      try {
+        dispatched = await dispatch(env);
+      } catch (e) {
+        dispatchError = e.message || "GitHub \u9023\u7DDA\u5931\u6557";
+      }
+      return reply({ job: queued, news, dispatched, dispatchError }, 202);
+    }
+    if (path === "/jobs") {
+      const j = await sql("SELECT j.* FROM jobs j JOIN watchlists w ON w.company_code=j.company_code WHERE j.id=? AND w.user_id=?", url.searchParams.get("id"), user.id).first();
+      if (!j) return reply({ error: "Job not found" }, 404);
+      return reply({ job: j, news: j.news_id ? await sql("SELECT * FROM news WHERE id=?", j.news_id).first() : void 0 });
+    }
+    return reply({ error: "Not found" }, 404);
+  } catch (e) {
+    console.error(e.message);
+    return reply({ error: "\u670D\u52D9\u66AB\u6642\u7121\u6CD5\u4F7F\u7528\uFF0C\u8ACB\u6AA2\u67E5\u5F8C\u7AEF\u8A2D\u5B9A" }, 500);
+  }
+} };
+export {
+  checkedArticleURL,
+  companyMention,
+  curateNews,
+  index_default as default,
+  duplicateNews,
+  extractArticleBody,
+  hash,
+  isGeneratedAnswer,
+  normalizeArticleURL,
+  parsePreview,
+  randomToken,
+  readArticleURL,
+  resolveArticleURL,
+  sourceDomain,
+  trustedSource,
+  verifyGoogle
+};
