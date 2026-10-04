@@ -58,3 +58,16 @@ test('one click completes missing ranges before summarizing a partial transcript
 test('a stalled transcription times out instead of hanging indefinitely',async()=>{
  let calls=0;await assert.rejects(transcribePodcast(config,new Blob(['audio']),'whisper-1',{requestTimeoutMs:10,fetcher:async(url,{signal})=>{calls++;return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(new DOMException('aborted','AbortError')),{once:true}));}}),/停止等待/);assert.equal(calls,2);
 });
+
+ test('long podcast keeps correction policy and uncertainty through final merge',async()=>{
+ const {default:rules}=await import('../shared/podcast-summary-rules.json',{with:{type:'json'}});
+ const text='台積電的先進支程。'.repeat(6000),prompts=[];
+ const answer=await summarizePodcast(config,{title:'EP',date:'2026-10-04'},text,{partial:true,fetcher:async(url,options)=>{
+  const prompt=JSON.parse(options.body).messages.at(-1).content;prompts.push(prompt);
+  return {ok:true,json:async()=>({choices:[{message:{content:'先進製程；數字待確認'}}]})};
+ }});
+ assert.equal(prompts.length,3);
+ for(const prompt of prompts){assert.ok(prompt.includes(rules));assert.ok(prompt.includes('部分逐字稿'));}
+ assert.ok(prompts.at(-1).includes('先進製程；數字待確認'));
+ assert.equal(answer,'先進製程；數字待確認');
+ });

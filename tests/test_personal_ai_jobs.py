@@ -16,6 +16,21 @@ class PersonalJobs(unittest.TestCase):
   with patch.object(jobs,'api',side_effect=fake_api),patch.object(jobs,'update'),patch.object(jobs,'summarize',return_value='summary') as summary:
    jobs.process_news({'title':'Daily'},{},{'rows':rows},output)
    self.assertEqual(len(output['articles']),1);self.assertTrue(output['partial']);self.assertEqual(len(output['failures']),1);self.assertNotIn('bad',summary.call_args.args[1])
+ def test_podcast_correction_rules_reach_chunks_and_merge_without_changing_source(self):
+  source='台積電的先進支程。'*3000
+  output={'text':source}
+  with patch.object(jobs,'update'),patch.object(jobs,'call_provider',return_value='校正摘要；待確認數字') as provider:
+   jobs.summarize({},source,'EP',True,{},output,podcast=True)
+   self.assertEqual(provider.call_count,3)
+   for call in provider.call_args_list:
+    self.assertIn(jobs.PODCAST_SUMMARY_RULES,call.kwargs['prompt'])
+    self.assertIn('僅提供部分內容',call.kwargs['prompt'])
+   self.assertIn('校正摘要；待確認數字',provider.call_args.kwargs['prompt'])
+   self.assertEqual(output['text'],source)
+ def test_news_does_not_use_podcast_correction_rules(self):
+  with patch.object(jobs,'update'),patch.object(jobs,'call_provider',return_value='新聞摘要') as provider:
+   jobs.summarize({},'新聞內文','News',False,{}, {})
+   self.assertNotIn(jobs.PODCAST_SUMMARY_RULES,provider.call_args.kwargs['prompt'])
  def test_missing_backend_does_not_break_legacy_collector(self):
   response=jobs.requests.Response();response.status_code=404
   with patch.object(jobs,'api',side_effect=jobs.requests.HTTPError(response=response)):jobs.main()
