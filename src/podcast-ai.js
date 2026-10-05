@@ -1,5 +1,6 @@
 import podcastSummaryRules from '../shared/podcast-summary-rules.json' with {type:'json'};
 import {aiRequest,requestAI,localBridgeOrigin,pairLocalBridge} from './local-ai.js';
+import {cachedSummary} from './summary-cache.js';
 export function transcriptionRequest(config,blob,model){
  const checked=aiRequest(config,'驗證設定');
  if(!model?.trim())throw Error('請填語音轉文字模型／Azure 語音部署名稱。');
@@ -46,15 +47,17 @@ export async function transcribePodcast(config,blob,model,{fetcher=globalThis.fe
  for(let i=0;i<ranges.length;i++){if(signal?.aborted)throw Error('已取消。');const [start,end]=ranges[i];onProgress(`音訊轉文字 ${i+1} / ${ranges.length} 段（${Math.floor(start/60)}～${Math.ceil(end/60)} 分鐘），已完成段落不重送`);try{kept.push({start,end,text:await resilientChunk(config,monoWav(buffer,start,end),model,{fetcher,signal,onProgress,timeoutMs:requestTimeoutMs})});}catch(e){if(signal?.aborted)throw e;if([401,404].includes(e.status)||e.code==='insufficient_quota'){onCheckpoint(result());throw e;}failed.push(`${Math.floor(start/60)}～${Math.ceil(end/60)} 分鐘：${e instanceof TypeError?'網路請求失敗（無法由此判定是網路、CORS 或手機暫停）':e.message}`);}onCheckpoint(result());}
  if(!kept.length)throw Error('全部音訊分段轉錄失敗：\n'+failed.join('\n'));return result();
 }
-export async function summarizePodcast(config,episode,text,{fetcher=globalThis.fetch,signal,onProgress=()=>{},partial=false}={}){
+export async function summarizePodcast(config,episode,text,{fetcher=globalThis.fetch,signal,onProgress=()=>{},partial=false,shared=false}={}){
+ const cachedRequest=(config,text,options)=>cachedSummary(config,text,()=>requestAI(config,text,options),{shared,signal,onProgress});
  if(!text?.trim()||text.length<80)throw Error('請先取得足夠的逐字稿內容。');if(text.length>300000)throw Error('逐字稿超過 300,000 字元，請分集整理。');
  const prompt=podcastSummaryRules+(partial?'這是部分逐字稿，請在開頭明確標示內容不完整。':'')+'\n節目：'+episode.title+'\n發布日期：'+episode.date+'\n';
- if(text.length<=50000)return requestAI(config,prompt+text,{fetcher,signal});
- const parts=[];for(let at=0;at<text.length;at+=45000){onProgress(`逐段整理逐字稿 ${parts.length+1} / ${Math.ceil(text.length/45000)}…`);parts.push(await requestAI(config,prompt+'以下為其中一段，保留重要事實供最後整合：\n'+text.slice(at,at+45000),{fetcher,signal}));}
- if(parts.join('\n').length>50000)throw Error('分段摘要合計超出整合上限。');return requestAI(config,prompt+'以下是全部已讀取片段的摘要，請整合並避免重複：\n'+parts.join('\n\n'),{fetcher,signal});
+ if(text.length<=50000)return cachedRequest(config,prompt+text,{fetcher,signal});
+ const parts=[];for(let at=0;at<text.length;at+=45000){onProgress(`逐段整理逐字稿 ${parts.length+1} / ${Math.ceil(text.length/45000)}…`);parts.push(await cachedRequest(config,prompt+'以下為其中一段，保留重要事實供最後整合：\n'+text.slice(at,at+45000),{fetcher,signal}));}
+ if(parts.join('\n').length>50000)throw Error('分段摘要合計超出整合上限。');return cachedRequest(config,prompt+'以下是全部已讀取片段的摘要，請整合並避免重複：\n'+parts.join('\n\n'),{fetcher,signal});
 }
 
 export async function generatePodcastHighlights(config,episode,{text='',model='whisper-1',partial=false,segments=[],failures=[],fetchAudio,fetcher=globalThis.fetch,signal,onProgress=()=>{},onTranscript=()=>{}}={}){
+ const publicFresh=!text.trim()&&!segments.length&&/^https:\/\//.test(episode.audio_url||'');
  aiRequest(config,'驗證設定');let failed=[...failures];
  const retained=segments.length?segments:transcriptSegments(text);
  if(!text.trim()||(partial&&retained.length)){
@@ -66,5 +69,5 @@ export async function generatePodcastHighlights(config,episode,{text='',model='w
   onTranscript({text,failed,partial,segments:result.segments});
  }else onProgress('使用已取得的逐字稿，略過下載與轉錄。');
  if(signal?.aborted)throw Error('已取消。');onProgress('步驟 3 / 3：依上下文校正並整理本集重點…');
- const answer=await summarizePodcast(config,episode,text,{fetcher,signal,onProgress,partial});return {answer,text,failed,partial};
+ const answer=await summarizePodcast(config,episode,text,{fetcher,signal,onProgress,partial,shared:publicFresh&&!partial});return {answer,text,failed,partial};
 }

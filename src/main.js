@@ -39,6 +39,7 @@ app.innerHTML=`<header><div class="brand"><span class="logo">股</span><div><str
 if(state.selected){const heading=app.querySelector('.page-heading>div');if(heading){const clear=document.createElement('button');clear.id='clear-company-filter';clear.className='secondary';clear.textContent='顯示全部追蹤公司';heading.append(clear);}}
 app.querySelector('#ranking')?.remove();
 app.querySelector('.podcast-daily > .articles').before(app.querySelector('#podcast-filter'));
+app.querySelector('.detail:not(.podcast-daily)')?.remove();
 if(state.user){
  const workspace=app.querySelector('.workspace'),newsPanel=document.createElement('section');
  newsPanel.id='news-tab-panel';newsPanel.setAttribute('role','tabpanel');newsPanel.setAttribute('aria-labelledby','news-tab');
@@ -68,8 +69,8 @@ app.querySelectorAll('[data-podcast-date]').forEach(b=>b.onclick=()=>{state.date
 app.querySelectorAll('[data-podcast-episode]').forEach(b=>b.onclick=()=>openPodcastEpisode(podcast.episodes.find(e=>e.id===b.dataset.podcastEpisode),{userId:state.user?.id||'guest'}));
 app.querySelector('#open-ai-settings').onclick=()=>openAIWindow();
 app.querySelector('#clear-company-filter')?.addEventListener('click',()=>{state.preview=[];state.previewCompany=null;state.selected='';state.message='已顯示全部追蹤公司的新聞。';render();});
-app.querySelector('#view-ai-settings').onclick=()=>openAIWindow();
-app.querySelector('#ai-daily').onclick=()=>openAINews({rows:daily,date:state.date});
+app.querySelector('#view-ai-settings')?.addEventListener('click',()=>openAIWindow());
+app.querySelector('#ai-daily')?.addEventListener('click',()=>openAINews({rows:daily,date:state.date}));
 app.querySelectorAll('[data-local-ai]').forEach(b=>b.onclick=()=>openAINews({article:filtered[Number(b.dataset.localAi)]}));
 app.querySelector('#open-holdings')?.addEventListener('click',openHoldings);
 if(holdingsDetail&&state.user){app.insertAdjacentHTML('beforeend',holdingsWindow({...holdingsDetail,busy:state.busy},esc,state.companies,state.busy));bindHoldings();}

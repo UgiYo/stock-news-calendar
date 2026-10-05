@@ -91,6 +91,37 @@ async function aiJobsRoute(req, env, { user, admin = false, reply, dispatch: dis
   return reply({ error: "Not found" }, 404);
 }
 
+// worker/summary-cache.js
+async function summaryCacheRoute(req, { sql, reply, user, randomToken: randomToken2 }) {
+  if (req.method !== "POST") return reply({ error: "Method not allowed" }, 405);
+  const raw = await req.text();
+  if (raw.length > 65e3) return reply({ error: "Too large" }, 413);
+  let b;
+  try {
+    b = JSON.parse(raw);
+  } catch {
+    return reply({ error: "Invalid JSON" }, 400);
+  }
+  if (!b || Object.keys(b).some((k) => !["key", "action", "lease", "answer"].includes(k)) || !/^[a-f0-9]{64}$/.test(b.key) || !["claim", "save", "release"].includes(b.action)) return reply({ error: "Invalid cache request" }, 400);
+  await sql("CREATE TABLE IF NOT EXISTS summary_cache(key TEXT PRIMARY KEY,answer TEXT,owner TEXT,lease TEXT,expires INTEGER NOT NULL)").run();
+  const now = Date.now();
+  if (b.action === "claim") {
+    await sql("DELETE FROM summary_cache WHERE expires<?", now).run();
+    const lease = randomToken2();
+    await sql("INSERT INTO summary_cache(key,owner,lease,expires) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET answer=NULL,owner=excluded.owner,lease=excluded.lease,expires=excluded.expires WHERE summary_cache.expires<?", b.key, user.id, lease, now + 10 * 6e4, now).run();
+    const row2 = await sql("SELECT answer,lease FROM summary_cache WHERE key=?", b.key).first();
+    return reply(row2.answer ? { answer: row2.answer, cached: true } : row2.lease === lease ? { lease } : { pending: true });
+  }
+  if (typeof b.lease !== "string") return reply({ error: "Missing lease" }, 400);
+  if (b.action === "release") {
+    await sql("DELETE FROM summary_cache WHERE key=? AND owner=? AND lease=? AND answer IS NULL", b.key, user.id, b.lease).run();
+    return reply({ ok: true });
+  }
+  if (typeof b.answer !== "string" || !b.answer.trim() || b.answer.length > 6e4) return reply({ error: "Invalid summary" }, 400);
+  const row = await sql("UPDATE summary_cache SET answer=?,owner=NULL,lease=NULL,expires=? WHERE key=? AND owner=? AND lease=? AND expires>? RETURNING key", b.answer, now + 30 * 864e5, b.key, user.id, b.lease, now).first();
+  return row ? reply({ ok: true }) : reply({ error: "Cache lease expired" }, 409);
+}
+
 // worker/index.js
 function companyMention(title, company, conflicts = []) {
   const text = String(title || "").normalize("NFKC");
@@ -565,6 +596,7 @@ var index_default = { async fetch(req, env) {
         if (!/^\d{4,6}$/.test(code || "") || !/^\d{4}-\d{2}-\d{2}$/.test(date || "")) return reply({ error: "Invalid probe range" }, 400);
         return reply({ news: (await sql("SELECT id,title,url,article_url FROM news WHERE company_code=? AND news_date=? AND source IN ('MoneyDJ','MoneyDJ\u7406\u8CA1\u7DB2','\u9245\u4EA8\u7DB2','news.cnyes.com','\u4E2D\u592E\u793E') ORDER BY id LIMIT 10", code, date).all()).results });
       }
+      if (path === "/admin/summary-cache") return summaryCacheRoute(req, { sql, reply, user: { id: "collector" }, randomToken });
       if (path === "/admin/article") return reply({ news: await sql("SELECT * FROM news WHERE id=?", url.searchParams.get("id")).first() });
       if (path === "/admin/summary" && req.method === "POST") {
         const b = await req.json();
@@ -694,6 +726,7 @@ var index_default = { async fetch(req, env) {
     }
     const personal = await aiJobsRoute(req, env, { user, reply, dispatch, readArticleURL });
     if (personal) return personal;
+    if (path === "/summary-cache") return summaryCacheRoute(req, { sql, reply, user, randomToken });
     if (path === "/me") return reply({ user });
     if (path === "/logout" && req.method === "POST") {
       await sql("DELETE FROM sessions WHERE token_hash=?", await hash(token)).run();

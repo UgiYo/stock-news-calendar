@@ -1,4 +1,5 @@
 import {aiJobsRoute} from './ai-jobs.js';
+import {summaryCacheRoute} from './summary-cache.js';
 export function companyMention(title,company,conflicts=[]){const text=String(title||'').normalize('NFKC');if(new RegExp('(?<!\\d)'+company.code+'(?!\\d)').test(text))return true;let cleaned=text;const names=[...conflicts,...(company.code==='2303'?['台聯電']:[])];for(const name of [...new Set(names)].sort((a,b)=>b.length-a.length))if(name&&name!==company.name)cleaned=cleaned.split(name).join(' ');return [company.name,company.full_name].filter(n=>n&&n.length>=2).some(n=>cleaned.includes(n));}
 export function trustedSource(source){const key=String(source||'').normalize('NFKC').replace(/\s/g,'').toLowerCase();return ({'中央社':'中央社','中央社cna':'中央社','cna':'中央社','moneydj':'MoneyDJ','moneydj理財網':'MoneyDJ','鉅亨網':'鉅亨網','鉅亨':'鉅亨網','anue鉅亨':'鉅亨網','anue鉅亨網':'鉅亨網'})[key]||null;}
 export function sourceDomain(value){try{const h=new URL(value).hostname.toLowerCase();return ({'www.cna.com.tw':'中央社','cna.com.tw':'中央社','www.moneydj.com':'MoneyDJ','moneydj.com':'MoneyDJ','news.cnyes.com':'鉅亨網'})[h]||null;}catch{return null;}}
@@ -131,6 +132,7 @@ export default {async fetch(req,env){
  const code=url.searchParams.get('code'),date=url.searchParams.get('date');if(!/^\d{4,6}$/.test(code||'')||!/^\d{4}-\d{2}-\d{2}$/.test(date||''))return reply({error:'Invalid probe range'},400);
  return reply({news:(await sql("SELECT id,title,url,article_url FROM news WHERE company_code=? AND news_date=? AND source IN ('MoneyDJ','MoneyDJ理財網','鉅亨網','news.cnyes.com','中央社') ORDER BY id LIMIT 10",code,date).all()).results});
  }
+ if(path==='/admin/summary-cache')return summaryCacheRoute(req,{sql,reply,user:{id:'collector'},randomToken});
  if(path==='/admin/article')return reply({news:await sql('SELECT * FROM news WHERE id=?',url.searchParams.get('id')).first()});
  if(path==='/admin/summary'&&req.method==='POST'){const b=await req.json();await sql('UPDATE news SET article_summary=?,summary_status=?,summary_method=?,summary_error=?,summary_updated_at=?,article_url=COALESCE(?,article_url) WHERE id=?',b.article_summary||null,b.article_summary?'ready':'unavailable',b.summary_method||null,b.summary_error||null,new Date().toISOString(),b.article_url||null,b.id).run();return reply({ok:true});}
  return reply({error:'Not found'},404);
@@ -148,6 +150,7 @@ export default {async fetch(req,env){
  try{const saved=await sql('SELECT article_url FROM news WHERE url=? AND article_url IS NOT NULL LIMIT 1',b.url).first();return reply(await readArticleURL(saved?.article_url||b.url));}catch(e){return reply({error:e.message||'無法讀取完整新聞內文'},422);}
  }
  const personal=await aiJobsRoute(req,env,{user,reply,dispatch,readArticleURL});if(personal)return personal;
+ if(path==='/summary-cache')return summaryCacheRoute(req,{sql,reply,user,randomToken});
  if(path==='/me')return reply({user});
  if(path==='/logout'&&req.method==='POST'){await sql('DELETE FROM sessions WHERE token_hash=?',await hash(token)).run();return reply({ok:true});}
  if(path==='/companies'){const q=(url.searchParams.get('q')||'').trim().slice(0,60);return reply({companies:(await sql("SELECT * FROM companies WHERE code=? OR instr(name,?)>0 OR instr(full_name,?)>0 ORDER BY code LIMIT 20",q,q,q).all()).results});}

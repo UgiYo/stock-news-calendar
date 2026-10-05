@@ -24,6 +24,21 @@ class ProviderError(ValueError):
   self.fatal=status in (400,401,403,404) or code=='insufficient_quota'
   super().__init__('AI HTTP '+str(status)+'：'+{'insufficient_quota':'額度不足','invalid_api_key':'Key 無效','model_not_found':'模型無法使用'}.get(code,{400:'請求格式或模型不支援',401:'Key 無效',403:'權限不足',404:'端點或模型不存在',429:'額度或速率限制'}.get(status,'服務暫時失敗')))
 def call_provider(config,audio=None,model=None,prompt=None):
+ if audio is not None or not config.get('share_summary') or config.get('provider')!='openai':return uncached_provider(config,audio,model,prompt)
+ key=hashlib.sha256(json.dumps(['cloud-summary-v1',config['provider'],config['endpoint'],config['model'],prompt],ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
+ claim=api('/admin/summary-cache',{'key':key,'action':'claim'})
+ if claim.get('answer'):return claim['answer']
+ if not claim.get('lease'):raise ValueError('相同內容正在整理，請稍後重試以使用共用摘要')
+ try:
+  answer=uncached_provider(config,audio,model,prompt)
+  try:api('/admin/summary-cache',{'key':key,'action':'save','lease':claim['lease'],'answer':answer})
+  except requests.RequestException:pass
+  return answer
+ except Exception:
+  try:api('/admin/summary-cache',{'key':key,'action':'release','lease':claim['lease']})
+  except requests.RequestException:pass
+  raise
+def uncached_provider(config,audio=None,model=None,prompt=None):
  url,headers=provider_request(config,audio is not None,model)
  for attempt in range(2):
   try:
@@ -57,6 +72,7 @@ def summarize(config,text,title,partial,task,output,podcast=False):
  if len(combined)>60000:raise ValueError('分段摘要超出整合上限')
  return call_provider(config,prompt=prefix+'以下是所有已讀取段落的摘要，整合並保留重要資訊：\n'+combined)
 def process_news(task,config,input,output):
+ config={**config,'share_summary':True}
  rows=input.get('rows',[])
  if not isinstance(rows,list) or not 1<=len(rows)<=100:raise ValueError('新聞篇數需介於 1–100')
  articles=[];failures=[]
@@ -88,6 +104,7 @@ def download_audio(url,path):
   r.close();return
  raise ValueError('音訊轉址次數過多')
 def process_podcast(task,config,input,output):
+ config={**config,'share_summary':not input.get('text','').strip() and not input.get('segments') and not input.get('local_only')}
  episode=input['episode'];model=input.get('model','').strip();text=input.get('text','');segments=input.get('segments') or []
  output.update(episode={k:episode.get(k) for k in ('id','title','date','audio_url','url','channel_name')},text=text,segments=segments,partial=bool(input.get('partial')),failures=[])
  if not text.strip() or (output['partial'] and segments):
