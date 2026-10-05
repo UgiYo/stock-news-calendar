@@ -78,6 +78,14 @@ export default {async fetch(req,env){
  if(req.method==='OPTIONS')return new Response(null,{headers});
  if(req.headers.get('Origin')&&req.headers.get('Origin')!==origin)return reply({error:'Origin not allowed'},403);
  if(path==='/health'){const missing=['DB','GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET','COLLECTOR_SECRET'].filter(k=>!env[k]);return reply({ok:missing.length===0,missing},missing.length?503:200);}
+ if(path==='/podcasts/rss'&&req.method==='GET'){
+  let feed;try{feed=new URL(url.searchParams.get('url')||'');}catch{return reply({error:'RSS 網址格式錯誤'},400);}
+  if(feed.protocol!=='https:'||feed.username||feed.password||feed.search||feed.hash)return reply({error:'RSS 必須是沒有帳密與查詢參數的 HTTPS 網址'},400);
+  const response=await fetch(feed.href,{redirect:'error',headers:{'User-Agent':'StockNewsCalendar/2.0','Accept':'application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9'},signal:AbortSignal.timeout(20000)});
+  if(!response.ok)return reply({error:'RSS 來源 HTTP '+response.status},502);
+  const reader=response.body?.getReader();if(!reader)return new Response(await response.text(),{headers:{...headers,'Content-Type':'application/xml; charset=utf-8'}});
+  const chunks=[];let size=0;while(true){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>3000000){await reader.cancel();return reply({error:'RSS 超過 3 MB'},413);}chunks.push(part.value);}const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}return new Response(bytes,{headers:{...headers,'Content-Type':'application/xml; charset=utf-8'}});
+ }
  if(path==='/auth/start'){
  const state=randomToken(),verifier=randomToken();await sql('DELETE FROM oauth_states WHERE expires_at<?',Date.now()).run();
  await sql('INSERT INTO oauth_states VALUES(?,?,?)',state,verifier,Date.now()+600000).run();
