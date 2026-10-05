@@ -94,3 +94,13 @@ test('personal background tasks require consent, isolate users, encrypt keys and
  }finally{globalThis.fetch=original;db.close();}
 });
 test('cloud tasks reject private endpoints and unauthenticated clients',async()=>{const {cloudConfig,encryptTask}=await import('../worker/ai-jobs.js');assert.throws(()=>cloudConfig({provider:'azure',endpoint:'https://127.0.0.1',key:'key',model:'model'}));const id='task';const encrypted=await encryptTask({config:{key:'private-key'}},'secret',id),key=await crypto.subtle.importKey('raw',await crypto.subtle.digest('SHA-256',new TextEncoder().encode('personal-ai-jobs-v1:secret')),{name:'AES-GCM'},false,['decrypt']);const plaintext=await crypto.subtle.decrypt({name:'AES-GCM',iv:Buffer.from(encrypted.iv,'base64'),additionalData:new TextEncoder().encode(id)},key,Buffer.from(encrypted.data,'base64'));assert.equal(JSON.parse(new TextDecoder().decode(plaintext)).config.key,'private-key');await assert.rejects(crypto.subtle.decrypt({name:'AES-GCM',iv:Buffer.from(encrypted.iv,'base64'),additionalData:new TextEncoder().encode('different-task')},key,Buffer.from(encrypted.data,'base64')));const {env,db}=setup();assert.equal((await call(env,'/ai-jobs')).status,401);db.close();});
+
+test('Podcast RSS proxy accepts large real-world feeds and enforces its size limit',async()=>{
+ const {db,env}=setup(),original=globalThis.fetch;let bytes=4400000;
+ globalThis.fetch=async()=>new Response('x'.repeat(bytes));
+ try{
+  const path='/podcasts/rss?url='+encodeURIComponent('https://feeds.soundon.fm/podcasts/example.xml');
+  const response=await call(env,path);assert.equal(response.status,200);assert.equal((await response.text()).length,bytes);
+  bytes=12000001;const large=await call(env,path);assert.equal(large.status,413);
+ }finally{globalThis.fetch=original;db.close();}
+});
