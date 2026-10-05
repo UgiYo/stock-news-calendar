@@ -261,3 +261,28 @@ Cloud background mode is opt-in per task and requires login. It accepts public O
 **Rollout:** deploy the updated Worker (including `worker/ai-jobs.js`) with the existing DB binding, COLLECTOR_SECRET, GITHUB_DISPATCH_TOKEN and GITHUB_REPO. The new table is created automatically. The existing `news.yml` workflow installs cryptography and ffmpeg and runs the personal job processor before the news collector; it safely skips if the Worker still returns 404. No new secret values are needed. The frontend shows a clear error when the background API is not deployed. Cloud tasks cannot reach company-only endpoints.
 
 Cloud result deletion cancels future checkpoints and removes its stored credentials. A provider request already in progress may still finish and incur API usage. Worker code can be bundled for Cloudflare dashboard upload using `node_modules/esbuild/bin/esbuild worker/index.js --bundle --format=esm --outfile=worker-bundle.js`; retain the existing Worker settings/bindings when updating it.
+
+
+### Company LiteLLM isolation and optional local background jobs (v5)
+
+Existing browser-direct LiteLLM connections remain supported: enter the company gateway URL,
+model and gateway key as before. No Python installation or company-side configuration is required.
+The cloud background checkbox is hidden/disabled for LiteLLM, and `submitCloudTask` rejects LiteLLM,
+Python transport and locally marked content **before any cloud capability request or upload**.
+The key may be a company-issued proxy key; it is still never sent to Cloudflare/GitHub AI jobs.
+Direct mode requires the browser to stay open. Its existing optional local browser storage remains.
+Public-news retrieval may still send the public article URL (only) to the article reader; company keys,
+transcripts and generated answers are not included. The configured company gateway controls downstream routing.
+
+For users who opt into LiteLLM + Python, update the local ZIP to v5. The loopback-only authenticated
+`/local-jobs` API queues work independently of the page, retains keys only in memory and checkpoints
+results in `~/.stock-news-local-ai/results.sqlite3` (override with `--data-dir`). Re-pair/apply settings
+after reopening the page to load local results in the result center, or use the local homepage.
+A restart requires re-entering the key and explicitly resuming interrupted work. No cloud fallback exists.
+News/text summaries need Python standard library only; background audio downloading/transcription needs
+company-approved ffmpeg/ffprobe on PATH. Already imported transcripts need no audio tools. File-input
+transcription remains device-controlled and explicitly requires the page open. Public audio/news GETs
+carry no gateway credentials or private task payload. The computer/Python must stay awake/running.
+Local results are scoped to the OS user and pairing token, not a cloud account. Cancellation/deletion
+prevents subsequent checkpoints; an in-flight provider request may still finish. No Worker/D1 update
+is needed for this change. GitHub Pages deploys the frontend and the updated optional tool ZIP.

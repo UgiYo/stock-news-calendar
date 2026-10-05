@@ -21,3 +21,6 @@ try{
  const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);if(overflow){await page.screenshot({path:'podcast-mobile.png',fullPage:true});throw Error('Mobile page overflows viewport: '+JSON.stringify(await page.evaluate(()=>[...document.querySelectorAll('body *')].map(e=>({tag:e.tagName,id:e.id,class:e.className,right:e.getBoundingClientRect().right,width:e.getBoundingClientRect().width})).filter(e=>e.right>innerWidth+1))));}if(errors.length)throw Error(errors.join('\n'));
  await page.screenshot({path:'podcast-mobile.png',fullPage:true});console.log(JSON.stringify({notificationDeepLink:true,readStatusRetained:true,classifiedResults:true,compactToast:true,backgroundCompletion:true,persistedResult:true,interruptedTaskRecovered:true,guestFilter:true,multiChannelImport:true,resumedOnlyMissing:true,horizontalOverflow:false,pageErrors:errors.length,downloads,transcriptions,summaries}));
 }finally{await browser.close();}
+
+// Also exercise company-only routing and the optional local result controls.
+await import('./check_company_ai_ui.mjs');
