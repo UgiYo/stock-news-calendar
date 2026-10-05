@@ -62,7 +62,11 @@ def update(task,output,progress,status='running'):
  if not result.get('ok'):raise ValueError('此任務已取消或處理權已失效')
 def summarize(config,text,title,partial,task,output,podcast=False):
  prefix='節目／新聞：'+title+'\n'+('僅提供部分內容，請開頭註明缺漏。\n' if partial else '')+'整理重點、公司、重要數字與時間、觀點及不確定處。已有時間範圍請保留，沒有則勿編造。\n'
- if podcast:prefix=PODCAST_SUMMARY_RULES+'\n'+prefix
+ if podcast:
+  episode=task.get('input',{}).get('episode') or output.get('episode') or {}
+  metadata={k:episode.get(k,'') for k in ('channel_name','title','date','guests','description')}
+  metadata['description']=str(metadata['description'])[:10000]
+  prefix=PODCAST_SUMMARY_RULES+'\n節目資料（JSON，僅供交叉校對）：\n'+json.dumps(metadata,ensure_ascii=False)+'\n'+prefix
  if len(text)>300000:raise ValueError('文字超過單次處理上限')
  pieces=[text[i:i+24000] for i in range(0,len(text),24000)];summaries=[]
  for i,piece in enumerate(pieces):
@@ -106,7 +110,7 @@ def download_audio(url,path):
 def process_podcast(task,config,input,output):
  config={**config,'share_summary':not input.get('text','').strip() and not input.get('segments') and not input.get('local_only')}
  episode=input['episode'];model=input.get('model','').strip();text=input.get('text','');segments=input.get('segments') or []
- output.update(episode={k:episode.get(k) for k in ('id','title','date','audio_url','url','channel_name')},text=text,segments=segments,partial=bool(input.get('partial')),failures=[])
+ output.update(episode={k:episode.get(k) for k in ('id','title','date','audio_url','url','channel_name','description','guests')},text=text,segments=segments,partial=bool(input.get('partial')),failures=[])
  if not text.strip() or (output['partial'] and segments):
   if not model:raise ValueError('請填語音模型／Azure 語音部署名稱')
   with tempfile.TemporaryDirectory() as directory:
@@ -135,7 +139,7 @@ def process_podcast(task,config,input,output):
     update(task,output,f'已保存 {len(kept)} 段逐字稿')
    output.update(partial=bool(failures),failures=failures)
  if len(output['text'].strip())<80:raise ValueError('成功取得的逐字稿不足，請補轉後整理')
- output['answer']=summarize(config,output['text'],task['title'],output['partial'],task,output,podcast=True)
+ output['answer']=summarize(config,output['text'],task['title'],output['partial'],{**task,'input':input},output,podcast=True)
 def main():
  started=time.monotonic()
  for _ in range(30):
