@@ -4,7 +4,7 @@ on:
     branches: [main]
   workflow_dispatch:
   workflow_run:
-    workflows: [Update Podcast RSS]
+    workflows: [Update Podcast RSS, Update Value Chains]
     types: [completed]
     branches: [main]
 permissions:
