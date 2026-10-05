@@ -18,7 +18,7 @@ const now=new Date(),state={user:null,preview:[],previewCompany:null,companies:[
 const app=document.querySelector('#app');
 const monthCache=createMonthCache();
 let podcast={...podcastPreferences(),episodes:[],updated_at:'',error:'',loading:false};
-async function loadPodcasts(refresh=false){if(podcast.loading)return;podcast.loading=true;podcast.error='';render();try{const data=await fetchPodcastEpisodes({refresh,previousEpisodes:podcast.episodes,previousUpdatedAt:podcast.updated_at,shared:!!state.user});Object.assign(podcast,data);}catch(e){podcast.error=e.message;}finally{podcast.loading=false;render();}}
+async function loadPodcasts(refresh=false){if(podcast.loading)return;const owner=state.user?.id||null;podcast.loading=true;podcast.error='';render();try{const data=await fetchPodcastEpisodes({refresh,previousEpisodes:podcast.episodes,previousUpdatedAt:podcast.updated_at,shared:!!state.user});if(owner===(state.user?.id||null))Object.assign(podcast,data);}catch(e){if(owner===(state.user?.id||null))podcast.error=e.message;}finally{podcast.loading=false;render();}}
 
 let holdingsDetail=null;
 function openHoldings(){holdingsDetail={records:loadHoldings(state.user.id),broker:'sinopac',unit:'share',text:'',quotes:{}};render();app.querySelector('#close-holdings')?.focus();refreshHoldingsQuotes();}
