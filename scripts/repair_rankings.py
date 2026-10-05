@@ -30,7 +30,10 @@ def repair():
         saved[date]={'date':date,'previousDate':prior}
         print('Restored',date,'previousDate',prior,'stocks',len(rows),flush=True)
     # Keep within the backend retention window; do not endlessly extend its oldest baseline.
-    targets=sorted(saved)[-30:]
+    # Audit only the recent window; older history was already imported by the
+    # monthly backfill job and should not make the daily job depend on dozens
+    # of external calendar requests.
+    targets=sorted(saved)[-10:]
     for date in targets:
         prior=previous(date)
         print('Audit',date,'stored',saved[date].get('previousDate'),'official',prior,'baselineSaved',prior in saved,flush=True)
