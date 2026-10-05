@@ -114,4 +114,4 @@ export function openAINews({rows=[],date='',article=null,title=''}={}){
  wrap.onkeydown=e=>{if(e.key==='Escape')close();if(e.key==='Tab'){const nodes=[...wrap.querySelectorAll('button:not(:disabled),a[href]')].filter(n=>!n.hidden&&!n.closest('details:not([open])'));const first=nodes[0],last=nodes.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}}};el('close-ai-news').focus();
 }
 
-if(typeof window!=='undefined')window.addEventListener('resume-local-ai',async e=>{try{if(!companyMode(settings)||settings.transport!=='python')throw Error('請在 AI 設定選擇 LiteLLM／本機 Python，配對並輸入公司 Key 後續做。');await localResultAction(e.detail,'resume',settings);}catch(error){alert(error.message);}});
+if(typeof window!=='undefined')window.addEventListener('resume-local-ai',async e=>{try{await requireAISession();if(!companyMode(settings)||settings.transport!=='python')throw Error('請在 AI 設定選擇 LiteLLM／本機 Python，配對並輸入公司 Key 後續做。');await localResultAction(e.detail,'resume',settings);}catch(error){alert(error.message);}});
