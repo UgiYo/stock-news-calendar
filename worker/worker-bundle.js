@@ -421,7 +421,8 @@ var index_default = { async fetch(req, env) {
         return reply({ error: "RSS \u7DB2\u5740\u683C\u5F0F\u932F\u8AA4" }, 400);
       }
       if (feed.protocol !== "https:" || feed.username || feed.password || feed.search || feed.hash) return reply({ error: "RSS \u5FC5\u9808\u662F\u6C92\u6709\u5E33\u5BC6\u8207\u67E5\u8A62\u53C3\u6578\u7684 HTTPS \u7DB2\u5740" }, 400);
-      const response = await fetch(feed.href, { redirect: "error", headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9" }, signal: AbortSignal.timeout(2e4) });
+      const soundOnFeed = feed.hostname === "feeds.soundon.fm" && /^\/podcasts\/[0-9a-f-]+\.xml$/.test(feed.pathname);
+      const response = await fetch(feed.href, { redirect: soundOnFeed ? "follow" : "error", headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9" }, signal: AbortSignal.timeout(2e4) });
       if (!response.ok) return reply({ error: "RSS \u4F86\u6E90 HTTP " + response.status }, 502);
       const reader = response.body?.getReader();
       if (!reader) return new Response(await response.text(), { headers: { ...headers, "Content-Type": "application/xml; charset=utf-8" } });
