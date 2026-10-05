@@ -264,6 +264,8 @@ Cloud background mode is opt-in per task and requires login. It accepts public O
 
 Cloud result deletion cancels future checkpoints and removes its stored credentials. A provider request already in progress may still finish and incur API usage. Worker code can be bundled for Cloudflare dashboard upload using `node_modules/esbuild/bin/esbuild worker/index.js --bundle --format=esm --outfile=worker-bundle.js`; retain the existing Worker settings/bindings when updating it.
 
+Podcast RSS 匯入會先由瀏覽器直接讀取；若 RSS 來源（例如部分 SoundCloud Feed）未開放 CORS，前端會改呼叫 `GET /podcasts/rss?url=...` 由 Worker 代理讀取。此端點只接受公開 HTTPS RSS、限制 3 MB，且不接收 AI 設定、API Key、音訊或逐字稿。修改 Worker 後需重新部署，否則仍會看到 `Failed to fetch`。
+
 
 ### Company LiteLLM isolation and optional local background jobs (v5)
 
