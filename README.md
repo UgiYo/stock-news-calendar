@@ -233,7 +233,7 @@ AI 設定中的「本機 Python」提供三步引導：下載 ZIP → 完整解�
 
 ## Podcast 月曆與個人 AI 整理
 
-已接入「兆華與股惑仔」Spotify 頻道與 SoundOn 公開 RSS。左側 Podcast 頻道可啟用、更新或匯入；每集以台灣時間發布日期顯示於月曆及當日 Podcast 區塊，不套用個股篩選。GitHub Actions `Update podcast episodes` 每天台灣時間 18:00 刷新最近 100 日、最多 150 集的共用 JSON，並啟動 Pages 部署。集數不寫入 D1；不保存音訊。
+已接入「兆華與股惑仔」Spotify 頻道與 SoundOn 公開 RSS。左側 Podcast 頻道可啟用、更新或匯入；每集以台灣時間發布日期顯示於月曆及當日 Podcast 區塊，不套用個股篩選。GitHub Actions `Update podcast episodes` 每天台灣時間 18:00 刷新最近 100 日、最多 150 集的共用 JSON，並啟動 Pages 部署。內建頻道使用共用 JSON；登入者匯入的頻道與集數保存在共用 D1，不保存音訊。
 
 目前官方 RSS 沒有逐字稿。點「逐字稿・AI 整理」後，可下載原集並轉文字、選取音訊檔，或貼上／匯入 TXT、SRT、VTT。語音模型與文字模型分開指定（例如 OpenAI 的 `whisper-1`；Azure 填語音部署名稱；LiteLLM 必須有語音模型與 `/audio/transcriptions` 支援）。使用上方已套用的個人 AI Key，先取得逐字稿，再按「生成內容整理」。節目簡介不替代整集逐字稿。
 
@@ -249,7 +249,7 @@ Podcast 長音訊改為每段 2 分鐘（16 kHz 單聲道 WAV），暫時網路�
 
 已接入第二個頻道「Gooaye 股癌」：可貼上 Spotify show/1zWxx5pKk0XBEzMupVC7UZ 匯入。官方 SoundOn RSS 同樣每天台灣時間 18:00 更新最近 100 日（涵蓋三個月），每頻道最多 150 集。月曆上方可選擇頻道，再依來賓篩選；來賓未標示不猜測。不同頻道單集 ID 分開，原有成果不變。
 
-Podcast 匯入也支援任何公開 HTTPS RSS Feed。從 Podcast 平台複製 RSS Feed 網址貼入「匯入 Podcast 頻道」即可；頻道與最近最多 150 集保存在該瀏覽器，更新時會重新讀取 RSS。任意 Spotify 節目頁不一定包含 RSS，若貼 Spotify 網址無法取得集數，請改貼節目的 RSS Feed；RSS 來源必須允許瀏覽器跨網域讀取（CORS）。自訂 RSS 僅在本機保存，不會寫入共享 D1。
+Podcast 匯入也支援任何公開 HTTPS RSS Feed。從 Podcast 平台複製 RSS Feed 網址貼入「匯入 Podcast 頻道」即可；登入後匯入的頻道與最近最多 150 集會保存到共用 D1，所有登入者均可查看。每天台灣時間 18:00 自動同步，立即更新也會保存至共用資料。既有瀏覽器的本機 RSS 頻道會在登入後自動同步，成功後移除本機清單項目，失敗則保留並提示。任意 Spotify 節目頁不一定包含 RSS，若貼 Spotify 網址無法取得集數，請改貼節目的 RSS Feed；RSS 可透過既有代理讀取；共用清單與集數 API 必須登入才能存取。同一 RSS 重複匯入不重建頻道，更新失敗保留原有集數。
 
 手機離開 App 不保證背景運作。從任務建立（包含下載尚未完成）起，進度會保存於同一裝置／瀏覽器；重新開啟後，沒有執行中的任務會標為中斷，成果中心可繼續任務，保留成功音訊段落。未登入時的本機成果也會在登入後顯示，其他已登入帳號的成果不混用。記錄只包含節目來源、逐字稿、成果與進度，沒有 API Key。
 
