@@ -30,8 +30,11 @@ async function resolveSpotifyPodcast(value, fetcher = globalThis.fetch) {
     if (!r.ok) throw Error("\u641C\u5C0B\u670D\u52D9\u66AB\u6642\u7121\u6CD5\u4F7F\u7528\uFF0C\u8ACB\u7A0D\u5F8C\u91CD\u8A66\u3002");
     return r.json();
   };
-  const meta = await read("https://open.spotify.com/oembed?url=" + encodeURIComponent(url));
-  const title = String(meta.title || "").trim();
+  const page = await fetcher(url, { redirect: "error", signal: AbortSignal.timeout(1e4), headers: { Accept: "text/html", "User-Agent": "Mozilla/5.0" } });
+  if (!page.ok) throw Error("Spotify \u7BC0\u76EE\u9801\u66AB\u6642\u7121\u6CD5\u8B80\u53D6\uFF0C\u8ACB\u7A0D\u5F8C\u91CD\u8A66\u3002");
+  const html = await page.text();
+  const decode = (v) => v.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)));
+  const title = decode(html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i)?.[1] || "").trim();
   if (!title || title.length > 500) throw Error("\u7121\u6CD5\u53D6\u5F97 Spotify \u7BC0\u76EE\u540D\u7A31\u3002");
   const results = await read("https://itunes.apple.com/search?media=podcast&entity=podcast&country=TW&limit=25&term=" + encodeURIComponent(title));
   const normalize = (v) => String(v || "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
