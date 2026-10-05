@@ -128,7 +128,7 @@ npx wrangler dev --config worker/wrangler.toml
 
 點選排行榜的產業 Tag，顯示該日全市場同產業股票，按成交金額排序；點股票可預覽新聞，不會自動加入追蹤。提供最近保存 60 個交易日切換，歷史從首次執行起累積，不回填既往排行榜。排行共享保存 D1 rankings 表，一日一份，相同 payload 不重寫，自動刪除超過 60 份的舊排行；沒有使用者重複記錄。表由驗證密鑰的 admin endpoint 自動建立。
 
-GitHub Actions `Update daily turnover ranking and industry tags` 步驟執行 `scripts/ranking.py`，可手動 queued 初始化。上市／上櫃日期必須相同，上市 OpenAPI 延遲時改查當日 TWSE MI_INDEX；仍不同或来源不完整则步驟失敗，保留原排行，畫面日期呈現實際資料日，不標成今日。日期為官方來源，不用程式執行日冒充。
+GitHub Actions `Update daily turnover ranking` 每日台灣時間 20:00 執行 `scripts/ranking.py`，也可在 Actions 手動執行。新聞流程仍維持原本早上排程，不會因排行榜改時而延後。上市／上櫃日期必須相同，上市 OpenAPI 延遲時改查當日 TWSE MI_INDEX；仍不同或来源不完整则步驟失敗，保留原排行，畫面日期呈現實際資料日，不標成今日。日期為官方來源，不用程式執行日冒充。
 
 ### 新進成交值前十與族群延續
 
