@@ -382,6 +382,38 @@ var index_default = { async fetch(req, env) {
       const missing = ["DB", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "COLLECTOR_SECRET"].filter((k) => !env[k]);
       return reply({ ok: missing.length === 0, missing }, missing.length ? 503 : 200);
     }
+    if (path === "/podcasts/rss" && req.method === "GET") {
+      let feed;
+      try {
+        feed = new URL(url.searchParams.get("url") || "");
+      } catch {
+        return reply({ error: "RSS \u7DB2\u5740\u683C\u5F0F\u932F\u8AA4" }, 400);
+      }
+      if (feed.protocol !== "https:" || feed.username || feed.password || feed.search || feed.hash) return reply({ error: "RSS \u5FC5\u9808\u662F\u6C92\u6709\u5E33\u5BC6\u8207\u67E5\u8A62\u53C3\u6578\u7684 HTTPS \u7DB2\u5740" }, 400);
+      const response = await fetch(feed.href, { redirect: "error", headers: { "User-Agent": "StockNewsCalendar/2.0", "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9" }, signal: AbortSignal.timeout(2e4) });
+      if (!response.ok) return reply({ error: "RSS \u4F86\u6E90 HTTP " + response.status }, 502);
+      const reader = response.body?.getReader();
+      if (!reader) return new Response(await response.text(), { headers: { ...headers, "Content-Type": "application/xml; charset=utf-8" } });
+      const chunks = [];
+      let size = 0;
+      while (true) {
+        const part = await reader.read();
+        if (part.done) break;
+        size += part.value.byteLength;
+        if (size > 3e6) {
+          await reader.cancel();
+          return reply({ error: "RSS \u8D85\u904E 3 MB" }, 413);
+        }
+        chunks.push(part.value);
+      }
+      const bytes = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return new Response(bytes, { headers: { ...headers, "Content-Type": "application/xml; charset=utf-8" } });
+    }
     if (path === "/auth/start") {
       const state = randomToken(), verifier = randomToken();
       await sql("DELETE FROM oauth_states WHERE expires_at<?", Date.now()).run();
