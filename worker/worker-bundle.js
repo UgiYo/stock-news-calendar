@@ -26,11 +26,11 @@ async function resolveSpotifyPodcast(value, fetcher = globalThis.fetch) {
   if (u.protocol !== "https:" || u.hostname !== "open.spotify.com" || u.username || u.password || u.port || !/^\/(?:intl-[a-z]+\/)?show\/[A-Za-z0-9]{22}\/?$/.test(u.pathname)) throw Error("\u8ACB\u8CBC\u4E0A Spotify \u7BC0\u76EE\u9023\u7D50\uFF08show\uFF09\uFF0C\u4E0D\u662F\u55AE\u96C6\u9023\u7D50\u3002");
   const show = u.pathname.split("/").filter(Boolean).at(-1), url = "https://open.spotify.com/show/" + show;
   const read = async (endpoint) => {
-    const r = await fetcher(endpoint, { redirect: "error", signal: AbortSignal.timeout(1e4), headers: { Accept: "application/json" } });
+    const r = await fetcher(endpoint, { redirect: "manual", signal: AbortSignal.timeout(1e4), headers: { Accept: "application/json" } });
     if (!r.ok) throw Error("\u641C\u5C0B\u670D\u52D9\u66AB\u6642\u7121\u6CD5\u4F7F\u7528\uFF0C\u8ACB\u7A0D\u5F8C\u91CD\u8A66\u3002");
     return r.json();
   };
-  const page = await fetcher(url, { redirect: "error", signal: AbortSignal.timeout(1e4), headers: { Accept: "text/html", "User-Agent": "Mozilla/5.0" } });
+  const page = await fetcher(url, { redirect: "manual", signal: AbortSignal.timeout(1e4), headers: { Accept: "text/html", "User-Agent": "Mozilla/5.0" } });
   if (!page.ok) throw Error("Spotify \u7BC0\u76EE\u9801\u66AB\u6642\u7121\u6CD5\u8B80\u53D6\uFF0C\u8ACB\u7A0D\u5F8C\u91CD\u8A66\u3002");
   const html = await page.text();
   const decode = (v) => v.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)));
@@ -541,7 +541,7 @@ var index_default = { async fetch(req, env) {
       }
       if (feed.protocol !== "https:" || feed.username || feed.password || feed.search || feed.hash) return reply({ error: "RSS \u5FC5\u9808\u662F\u6C92\u6709\u5E33\u5BC6\u8207\u67E5\u8A62\u53C3\u6578\u7684 HTTPS \u7DB2\u5740" }, 400);
       const soundOnFeed = feed.hostname === "feeds.soundon.fm" && /^\/podcasts\/[0-9a-f-]+\.xml$/.test(feed.pathname);
-      const response = await fetch(feed.href, { redirect: soundOnFeed ? "follow" : "error", headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9" }, signal: AbortSignal.timeout(2e4) });
+      const response = await fetch(feed.href, { redirect: soundOnFeed ? "follow" : "manual", headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9" }, signal: AbortSignal.timeout(2e4) });
       if (!response.ok) return reply({ error: "RSS \u4F86\u6E90 HTTP " + response.status }, 502);
       const reader = response.body?.getReader();
       if (!reader) return new Response(await response.text(), { headers: { ...headers, "Content-Type": "application/xml; charset=utf-8" } });
