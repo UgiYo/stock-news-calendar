@@ -290,3 +290,7 @@ carry no gateway credentials or private task payload. The computer/Python must s
 Local results are scoped to the OS user and pairing token, not a cloud account. Cancellation/deletion
 prevents subsequent checkpoints; an in-flight provider request may still finish. No Worker/D1 update
 is needed for this change. GitHub Pages deploys the frontend and the updated optional tool ZIP.
+
+成交值排行新增櫃買中心產業價值鏈細項分類。`public/data/value-chains.json` 由 `scripts/sync_value_chains.py` 擷取官方公司名單，每月 1 日台灣時間 10:30 由 Update Value Chains 更新，也可手動執行；全部成功後才覆寫快照。不同細項可重複包含同一公司，占比不可加總。歷史分析採目前分類，不推定過去公司業務相同。
+
+追蹤股「高關聯・成交集中」需同細項其他成員的成交值占全市場比例至少 2%，較前一交易日增加至少 0.3 個百分點，且個股與同細項其他成員的每日成交占比變化 Pearson 相關係數至少 0.6。使用選定日期以前最多 31 日資料、至少 15 組相鄰交易日變化；排除個股自身成交值，資料不足不標高關聯。這是成交活躍度同步估計，不能視為資金淨流入、因果關係或未來漲跌預測。
