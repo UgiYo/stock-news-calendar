@@ -421,7 +421,7 @@ var index_default = { async fetch(req, env) {
         return reply({ error: "RSS \u7DB2\u5740\u683C\u5F0F\u932F\u8AA4" }, 400);
       }
       if (feed.protocol !== "https:" || feed.username || feed.password || feed.search || feed.hash) return reply({ error: "RSS \u5FC5\u9808\u662F\u6C92\u6709\u5E33\u5BC6\u8207\u67E5\u8A62\u53C3\u6578\u7684 HTTPS \u7DB2\u5740" }, 400);
-      const response = await fetch(feed.href, { redirect: "error", headers: { "User-Agent": "StockNewsCalendar/2.0", "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9" }, signal: AbortSignal.timeout(2e4) });
+      const response = await fetch(feed.href, { redirect: "error", headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9" }, signal: AbortSignal.timeout(2e4) });
       if (!response.ok) return reply({ error: "RSS \u4F86\u6E90 HTTP " + response.status }, 502);
       const reader = response.body?.getReader();
       if (!reader) return new Response(await response.text(), { headers: { ...headers, "Content-Type": "application/xml; charset=utf-8" } });
@@ -431,9 +431,9 @@ var index_default = { async fetch(req, env) {
         const part = await reader.read();
         if (part.done) break;
         size += part.value.byteLength;
-        if (size > 3e6) {
+        if (size > 12e6) {
           await reader.cancel();
-          return reply({ error: "RSS \u8D85\u904E 3 MB" }, 413);
+          return reply({ error: "RSS \u8D85\u904E 12 MB" }, 413);
         }
         chunks.push(part.value);
       }
