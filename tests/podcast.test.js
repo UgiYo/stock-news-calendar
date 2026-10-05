@@ -78,3 +78,13 @@ test('a stalled transcription times out instead of hanging indefinitely',async()
  assert.ok(prompts.at(-1).includes('先進製程；數字待確認'));
  assert.equal(answer,'先進製程；數字待確認');
  });
+
+test('manual refresh reads live built-in feeds and retains a failed channel',async()=>{
+ const old=globalThis.DOMParser;
+ globalThis.DOMParser=class{parseFromString(){const item={querySelector:s=>({textContent:s==='title'?'New episode':s==='guid, id'?'latest-guid':'Mon, 05 Oct 2026 10:00:00 GMT',getAttribute:()=>''})};return {querySelector:s=>s==='parsererror'?null:s==='feed'?null:{querySelector:()=>({textContent:'Live Show'}),querySelectorAll:()=>[item]}};}};
+ const calls=[],storage={getItem:()=>null};
+ try{
+  const result=await fetchPodcastEpisodes({refresh:true,storage,previousUpdatedAt:'2026-10-04T10:00:00Z',previousEpisodes:[{id:'gooaye::saved',channel_id:'gooaye',published_at:'2026-10-04T10:00:00Z',title:'Saved'}],fetcher:async(url,options)=>{calls.push(url);assert.equal(options.cache,'no-store');assert.ok(options.signal);if(url.includes('954689a5'))throw Error('Feed unavailable');return {ok:true,text:async()=>'<rss/>'};}});
+  assert.equal(calls.length,2);assert.ok(calls.every(url=>url.startsWith('https://feeds.soundon.fm/')));assert.equal(result.episodes[0].id,'latest-guid');assert.equal(result.episodes[1].id,'gooaye::saved');assert.match(result.error,/Feed unavailable/);assert.equal(result.updated_at,'2026-10-04T10:00:00Z');
+ }finally{globalThis.DOMParser=old;}
+});
