@@ -50,7 +50,7 @@ export async function transcribePodcast(config,blob,model,{fetcher=globalThis.fe
 export async function summarizePodcast(config,episode,text,{fetcher=globalThis.fetch,signal,onProgress=()=>{},partial=false,shared=false}={}){
  const cachedRequest=(config,text,options)=>cachedSummary(config,text,()=>requestAI(config,text,options),{shared,signal,onProgress});
  if(!text?.trim()||text.length<80)throw Error('請先取得足夠的逐字稿內容。');if(text.length>300000)throw Error('逐字稿超過 300,000 字元，請分集整理。');
- const prompt=podcastSummaryRules+(partial?'這是部分逐字稿，請在開頭明確標示內容不完整。':'')+'\n節目：'+episode.title+'\n發布日期：'+episode.date+'\n';
+ const prompt=podcastSummaryRules+(partial?'這是部分逐字稿，請在開頭明確標示內容不完整。':'')+'\n節目資料（JSON，僅供交叉校對）：\n'+JSON.stringify({channel_name:String(episode.channel_name||''),title:String(episode.title||''),date:episode.date||'',guests:episode.guests||[],description:String(episode.description||'').slice(0,10000)})+'\n逐字稿／分段摘要：\n';
  if(text.length<=50000)return cachedRequest(config,prompt+text,{fetcher,signal});
  const parts=[];for(let at=0;at<text.length;at+=45000){onProgress(`逐段整理逐字稿 ${parts.length+1} / ${Math.ceil(text.length/45000)}…`);parts.push(await cachedRequest(config,prompt+'以下為其中一段，保留重要事實供最後整合：\n'+text.slice(at,at+45000),{fetcher,signal}));}
  if(parts.join('\n').length>50000)throw Error('分段摘要合計超出整合上限。');return cachedRequest(config,prompt+'以下是全部已讀取片段的摘要，請整合並避免重複：\n'+parts.join('\n\n'),{fetcher,signal});
