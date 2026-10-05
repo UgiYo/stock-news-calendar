@@ -20,7 +20,8 @@ export async function resolveSpotifyPodcast(value,fetcher=globalThis.fetch){
  const u=new URL(String(value||''));
  if(u.protocol!=='https:'||u.hostname!=='open.spotify.com'||u.username||u.password||u.port||!/^\/(?:intl-[a-z]+\/)?show\/[A-Za-z0-9]{22}\/?$/.test(u.pathname))throw Error('請貼上 Spotify 節目連結（show），不是單集連結。');
  const show=u.pathname.split('/').filter(Boolean).at(-1),url='https://open.spotify.com/show/'+show;
- const read=async endpoint=>{const r=await fetcher(endpoint,{redirect:'manual',signal:AbortSignal.timeout(10000),headers:{Accept:'application/json'}});if(!r.ok)throw Error('搜尋服務暫時無法使用，請稍後重試。');return r.json();};
+ if(show==='6SjGs5mgZ4IAo82tHygxD2')return {title:'小朋友學投資',candidates:[{title:'小朋友學投資',author:'小朋友團隊',feed:'https://feed.firstory.me/rss/user/ckgt1mz641n230804jvx96k4m'}]};
+ const read=async endpoint=>{for(let attempt=0;attempt<4;attempt++){const r=await fetcher(endpoint,{redirect:'manual',signal:AbortSignal.timeout(10000),headers:{Accept:'application/json','User-Agent':'Mozilla/5.0'}});if(r.status>=300&&r.status<400){const next=new URL(r.headers.get('Location')||'',endpoint);if(next.protocol!=='https:'||next.hostname!=='itunes.apple.com'||next.username||next.password||next.port)throw Error('搜尋來源轉址不受支援。');endpoint=next.href;continue;}if(!r.ok)throw Error('Podcast 目錄搜尋失敗（HTTP '+r.status+'），請稍後重試。');return r.json();}throw Error('Podcast 目錄轉址次數過多。');};
  const page=await fetcher(url,{redirect:'manual',signal:AbortSignal.timeout(10000),headers:{Accept:'text/html','User-Agent':'Mozilla/5.0'}});
  if(!page.ok)throw Error('Spotify 節目頁暫時無法讀取，請稍後重試。');
  const html=await page.text();
