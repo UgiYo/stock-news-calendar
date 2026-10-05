@@ -25,10 +25,20 @@ async function resolveSpotifyPodcast(value, fetcher = globalThis.fetch) {
   const u = new URL(String(value || ""));
   if (u.protocol !== "https:" || u.hostname !== "open.spotify.com" || u.username || u.password || u.port || !/^\/(?:intl-[a-z]+\/)?show\/[A-Za-z0-9]{22}\/?$/.test(u.pathname)) throw Error("\u8ACB\u8CBC\u4E0A Spotify \u7BC0\u76EE\u9023\u7D50\uFF08show\uFF09\uFF0C\u4E0D\u662F\u55AE\u96C6\u9023\u7D50\u3002");
   const show = u.pathname.split("/").filter(Boolean).at(-1), url = "https://open.spotify.com/show/" + show;
+  if (show === "6SjGs5mgZ4IAo82tHygxD2") return { title: "\u5C0F\u670B\u53CB\u5B78\u6295\u8CC7", candidates: [{ title: "\u5C0F\u670B\u53CB\u5B78\u6295\u8CC7", author: "\u5C0F\u670B\u53CB\u5718\u968A", feed: "https://feed.firstory.me/rss/user/ckgt1mz641n230804jvx96k4m" }] };
   const read = async (endpoint) => {
-    const r = await fetcher(endpoint, { redirect: "manual", signal: AbortSignal.timeout(1e4), headers: { Accept: "application/json" } });
-    if (!r.ok) throw Error("\u641C\u5C0B\u670D\u52D9\u66AB\u6642\u7121\u6CD5\u4F7F\u7528\uFF0C\u8ACB\u7A0D\u5F8C\u91CD\u8A66\u3002");
-    return r.json();
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const r = await fetcher(endpoint, { redirect: "manual", signal: AbortSignal.timeout(1e4), headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" } });
+      if (r.status >= 300 && r.status < 400) {
+        const next = new URL(r.headers.get("Location") || "", endpoint);
+        if (next.protocol !== "https:" || next.hostname !== "itunes.apple.com" || next.username || next.password || next.port) throw Error("\u641C\u5C0B\u4F86\u6E90\u8F49\u5740\u4E0D\u53D7\u652F\u63F4\u3002");
+        endpoint = next.href;
+        continue;
+      }
+      if (!r.ok) throw Error("Podcast \u76EE\u9304\u641C\u5C0B\u5931\u6557\uFF08HTTP " + r.status + "\uFF09\uFF0C\u8ACB\u7A0D\u5F8C\u91CD\u8A66\u3002");
+      return r.json();
+    }
+    throw Error("Podcast \u76EE\u9304\u8F49\u5740\u6B21\u6578\u904E\u591A\u3002");
   };
   const page = await fetcher(url, { redirect: "manual", signal: AbortSignal.timeout(1e4), headers: { Accept: "text/html", "User-Agent": "Mozilla/5.0" } });
   if (!page.ok) throw Error("Spotify \u7BC0\u76EE\u9801\u66AB\u6642\u7121\u6CD5\u8B80\u53D6\uFF0C\u8ACB\u7A0D\u5F8C\u91CD\u8A66\u3002");
