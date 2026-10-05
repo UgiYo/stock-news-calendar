@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {podcastDay,normalizeEpisodes,validPodcastLink,episodeGuests,filterPodcastEpisodes,podcastChannelLink,fetchPodcastEpisodes} from '../src/podcasts.js';
+import {podcastDay,normalizeEpisodes,validPodcastLink,episodeGuests,filterPodcastEpisodes,podcastChannelLink,fetchPodcastEpisodes,parsePodcastRSS,importPodcastRSS,podcastChannels} from '../src/podcasts.js';
 import {transcriptionRequest,monoWav,transcribePodcast,summarizePodcast,generatePodcastHighlights,transcriptSegments,missingAudioRanges} from '../src/podcast-ai.js';
 const config={provider:'openai',endpoint:'https://api.openai.com/v1',model:'gpt-4.1-mini',key:'device-only',transport:'direct'};
 test('Podcast dates use Taiwan publication time, GUID deduplication and HTTPS links',()=>{
@@ -40,6 +40,13 @@ test('resume only uploads uncovered audio; old five-minute text can be reused',a
 test('transient network failure retries once',async()=>{let calls=0;const result=await transcribePodcast(config,new Blob(['audio']),'whisper-1',{fetcher:async()=>{if(++calls===1)throw new TypeError('Failed to fetch');return {ok:true,json:async()=>({text:'recovered'})};}});assert.equal(calls,2);assert.equal(result.text,'recovered');});
 
 test('second channel import preserves identity and separates episode ids',async()=>{const channel=podcastChannelLink('https://open.spotify.com/show/1zWxx5pKk0XBEzMupVC7UZ?si=tracking');assert.equal(channel.id,'gooaye');assert.equal(validPodcastLink('https://evil.example/show/1zWxx5pKk0XBEzMupVC7UZ'),false);const episode={id:'same',title:'EP',published_at:'2026-10-01T08:00:00Z'};const a=normalizeEpisodes({id:'zhaohua',title:'兆華',episodes:[episode]}),b=normalizeEpisodes({id:'gooaye',title:'股癌',spotify:channel.spotify,episodes:[episode]});assert.notEqual(a[0].id,b[0].id);assert.equal(b[0].channel_name,'股癌');assert.equal(b[0].url,channel.spotify);const data=await fetchPodcastEpisodes({fetcher:async url=>url.includes('gooaye')?{ok:false}:{ok:true,json:async()=>({id:'zhaohua',episodes:[episode]})}});assert.equal(data.episodes.length,1);assert.match(data.error,/股癌/);});
+test('imports arbitrary public RSS feeds and keeps them as local channels',async()=>{
+ const old=globalThis.DOMParser;globalThis.DOMParser=class{parseFromString(){return {querySelector(sel){if(sel==='parsererror')return null;if(sel==='channel')return {querySelector:()=>({textContent:'Custom Show'}),querySelectorAll:()=>[]};return null;},};}};
+ // Use the real parser when available; Node test runtime may not expose DOMParser.
+ if(old){globalThis.DOMParser=old;const xml='<rss><channel><title>Custom Show</title><item><guid>x1</guid><title>Episode 1</title><pubDate>Thu, 01 Oct 2026 16:05:00 GMT</pubDate><link>https://example.com/ep1</link><enclosure url="https://cdn.example.com/ep1.mp3" type="audio/mpeg"/></item></channel></rss>';const data=parsePodcastRSS(xml,{id:'custom-1',feed:'https://example.com/feed.xml'});assert.equal(data.title,'Custom Show');assert.equal(data.episodes[0].audio_url,'https://cdn.example.com/ep1.mp3');}
+ const values=new Map(),storage={getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v)};const fakeXml='<rss><channel><title>Any Channel</title><item><guid>x</guid><title>One</title><pubDate>Thu, 01 Oct 2026 16:05:00 GMT</pubDate><enclosure url="https://cdn.example.com/one.mp3"/></item></channel></rss>';globalThis.DOMParser=class{parseFromString(){const item={querySelector:s=>({textContent:s==='title'?'One':'Thu, 01 Oct 2026 16:05:00 GMT',getAttribute:k=>k==='url'?'https://cdn.example.com/one.mp3':''}),};return {querySelector:s=>s==='parsererror'?null:{querySelector:s=>({textContent:'Any Channel'}),querySelectorAll:()=>[item]}};}};
+ const data=await importPodcastRSS('https://example.com/feed.xml',{storage,fetcher:async()=>({ok:true,text:async()=>fakeXml})});assert.equal(data.title,'Any Channel');assert.equal(podcastChannels(storage).some(c=>c.feed==='https://example.com/feed.xml'),true);globalThis.DOMParser=old;
+});
 
 
 test('provider error preserves actionable details, redacts keys and does not retry exhausted quota',async()=>{
