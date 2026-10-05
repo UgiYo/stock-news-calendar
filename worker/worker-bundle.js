@@ -653,12 +653,10 @@ var index_default = { async fetch(req, env) {
       const requested = url.searchParams.get("date");
       if (requested && !/^\d{4}-\d{2}-\d{2}$/.test(requested)) return reply({ error: "Invalid date" }, 400);
       try {
-        const dates = (await sql("SELECT date FROM rankings ORDER BY date DESC LIMIT 60").all()).results.map((r) => r.date), date = requested || dates[0];
-        const saved = (await sql("SELECT date,payload FROM rankings WHERE date>=COALESCE((SELECT date FROM rankings WHERE date<? ORDER BY date DESC LIMIT 1 OFFSET 5),(SELECT MIN(date) FROM rankings)) ORDER BY date LIMIT 28", date || "").all()).results.map((r) => {
+        const snapshots = (await sql("SELECT date,payload FROM rankings ORDER BY date DESC LIMIT 60").all()).results, rows = snapshots.map((r) => {
           const p = JSON.parse(r.payload);
           return { date: r.date, stocks: Array.isArray(p) ? p : p.stocks, previousDate: Array.isArray(p) ? null : p.previousDate };
-        }), row = saved.find((r) => r.date === date), previous = saved.find((r) => r.date === row?.previousDate);
-        const history = saved.map((r) => {
+        }), dates = rows.map((r) => r.date), date = requested || dates[0], row = rows.find((r) => r.date === date), previous = row?.previousDate ? rows.find((r) => r.date === row.previousDate) : null, history = rows.slice().reverse().map((r) => {
           const total = r.stocks.reduce((sum, x) => sum + x.amount, 0), sectors = {};
           for (const x of r.stocks) {
             sectors[x.tag] ??= { amount: 0, count: 0, topCount: 0 };
@@ -668,7 +666,7 @@ var index_default = { async fetch(req, env) {
           for (const x of [...r.stocks].sort((a, b) => b.amount - a.amount || a.code.localeCompare(b.code)).slice(0, 10)) sectors[x.tag].topCount++;
           return { date: r.date, previousDate: r.previousDate, total, sectors };
         });
-        return reply({ date: date || null, dates, stocks: row?.stocks || [], previousDate: row?.previousDate || null, previousStocks: previous?.stocks || null, history });
+        return reply({ date: date || null, dates, stocks: row?.stocks || [], previousDate: previous?.date || row?.previousDate || null, previousStocks: previous?.stocks || null, history });
       } catch (e) {
         if (String(e.message).includes("no such table")) return reply({ date: null, dates: [], stocks: [], history: [] });
         throw e;
