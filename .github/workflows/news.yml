@@ -43,6 +43,3 @@ jobs:
       - name: Update shared daily stock prices
         if: always()
         run: python scripts/market_prices.py
-      - name: Update daily turnover ranking and industry tags
-        if: always()
-        run: python scripts/ranking.py
