@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {chainFlows,watchChainSignals,pearson} from '../src/value-chains.js';
+const catalog={groups:[{id:'a',industry:'半導體',name:'IC設計',codes:['1111','2222','3333']},{id:'b',industry:'半導體',name:'設備',codes:['1111','4444']}]};
+test('overlapping memberships count stock once in each segment and use full market denominator',()=>{const rows=[{code:'1111',amount:10},{code:'2222',amount:20},{code:'9999',amount:70}];const f=chainFlows(catalog,rows,null);assert.equal(f[0].share,30);assert.equal(f[1].share,10);assert.equal(f[0].change,null);});
+test('constant or short series never produce high correlation',()=>{assert.equal(pearson(Array(20).fill(1),Array(20).fill(1)),null);assert.equal(pearson([1,2],[1,2]),null);assert.ok(pearson(Array.from({length:20},(_,i)=>i),Array.from({length:20},(_,i)=>i*2))>0.99);});
+test('own turnover surge alone does not mark peers hot or highly related',()=>{const previous=[{code:'1111',amount:1},{code:'2222',amount:1},{code:'3333',amount:1},{code:'9999',amount:97}],rows=[{code:'1111',amount:70},{code:'2222',amount:1},{code:'3333',amount:1},{code:'9999',amount:28}];const s=watchChainSignals(catalog,rows,previous,[],[{code:'1111'}],'2026-10-05')[0];assert.equal(s.links[0].high,false);assert.equal(s.links[0].hot,false);assert.equal(s.links[0].peerChange,0);});
+test('missing or future history does not infer association',()=>{const s=watchChainSignals(catalog,[],null,[{date:'2099-01-01',turnover:[],total:10}],[{code:'1111'},{code:'8888'}],'2026-10-05');assert.equal(s[0].links.length,0);assert.equal(s[1].links.length,0);});
+test('high association requires hot peers and enough synchronized historical changes',()=>{
+ const history=Array.from({length:25},(_,i)=>{const date='2026-09-'+String(i+1).padStart(2,'0'),v=Math.sin(i)*2;return {date,previousDate:i?'2026-09-'+String(i).padStart(2,'0'):null,total:100,turnover:[['1111',10+v],['2222',15+v],['3333',15+v],['9999',60-3*v]]};});
+ const previous=[{code:'1111',amount:10},{code:'2222',amount:10},{code:'3333',amount:10},{code:'9999',amount:70}],rows=[{code:'1111',amount:12},{code:'2222',amount:15},{code:'3333',amount:15},{code:'9999',amount:58}];const result=watchChainSignals(catalog,rows,previous,history,[{code:'1111'}],'2026-10-05')[0].links[0];assert.equal(result.high,true);assert.equal(result.samples,24);assert.ok(result.correlation>0.99);
+});
