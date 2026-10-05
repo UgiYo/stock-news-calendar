@@ -94,3 +94,11 @@ test('summary cross-checks transcript with channel title guests and notes in eve
  await summarizePodcast(config,episode,'李照華討論市場。'.repeat(7000),{fetcher:async(url,options)=>{const prompt=JSON.parse(options.body).messages.at(-1).content;prompts.push(prompt);return {ok:true,json:async()=>({choices:[{message:{content:'經交叉校對的分段摘要'}}]})};}});
  assert.ok(prompts.length>1);for(const prompt of prompts){assert.ok(prompt.includes('兆華與股惑仔'));assert.ok(prompt.includes('本集討論台光電與聯茂'));assert.ok(prompt.includes('李兆華'));assert.ok(prompt.includes('股癌'));assert.ok(prompt.includes('逐字稿未確認'));}
 });
+
+
+test('authenticated Podcast listing loads shared metadata without fetching local RSS',async()=>{
+ const priorFetch=globalThis.fetch,priorStorage=globalThis.localStorage;const storage={getItem:key=>key==='stock-news-session'?'bob-session':null};globalThis.localStorage=storage;
+ globalThis.fetch=async(url,options)=>{assert.equal(options.headers.Authorization,'Bearer bob-session');return {ok:true,json:async()=>url==='/podcasts/channels'?{channels:[{id:'shared-test',feed:'https://example.com/rss',title:'Shared'}]}:{id:'shared-test',title:'Shared',updated_at:'2026-10-05T10:00:00Z',episodes:[{id:'ep',title:'Shared episode',published_at:'2026-10-05T10:00:00Z'}]}};};
+ try{const result=await fetchPodcastEpisodes({shared:true,storage,fetcher:async()=>({ok:true,json:async()=>({episodes:[]})})});assert.equal(result.episodes.length,1);assert.equal(result.episodes[0].id,'shared-test::ep');assert.equal(result.episodes[0].channel_id,'shared-test');}
+ finally{globalThis.fetch=priorFetch;globalThis.localStorage=priorStorage;}
+});
