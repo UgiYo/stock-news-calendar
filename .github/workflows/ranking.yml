@@ -1,6 +1,9 @@
 name: Update daily turnover ranking
 
 on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/ranking.yml, scripts/repair_rankings.py]
   schedule:
     # 12:00 UTC = 20:00 Asia/Taipei. Run after the Taiwan market data is available.
     - cron: '0 12 * * *'
@@ -30,3 +33,20 @@ jobs:
       - run: pip install -r scripts/requirements.txt
       - name: Update daily turnover ranking and industry tags
         run: python scripts/ranking.py
+      - name: Audit and repair preceding trading-day snapshots
+        if: always()
+        run: |
+          python - <<'PY'
+          import sys,time
+          sys.path.insert(0,'scripts')
+          from collect import api
+          for attempt in range(30):
+              try:
+                  api('/admin/ranking-audit')
+                  break
+              except Exception:
+                  if attempt == 29: raise
+                  time.sleep(10)
+          from repair_rankings import repair
+          repair()
+          PY

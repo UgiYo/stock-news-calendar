@@ -474,6 +474,26 @@ var index_default = { async fetch(req, env) {
       if (!env.COLLECTOR_SECRET || await hash(provided) !== await hash("Bearer " + env.COLLECTOR_SECRET)) return reply({ error: "Forbidden" }, 403);
       const personal2 = await aiJobsRoute(req, env, { admin: true, reply, dispatch, readArticleURL });
       if (personal2) return personal2;
+      if (path === "/admin/ranking-audit") {
+        try {
+          return reply({ snapshots: (await sql("SELECT date,payload FROM rankings ORDER BY date DESC LIMIT 60").all()).results.map((r) => {
+            const p = JSON.parse(r.payload);
+            return { date: r.date, previousDate: Array.isArray(p) ? null : p.previousDate };
+          }) });
+        } catch (e) {
+          if (String(e.message).includes("no such table")) return reply({ snapshots: [] });
+          throw e;
+        }
+      }
+      if (path === "/admin/ranking-link" && req.method === "POST") {
+        const b = await req.json();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(b.date || "") || !/^\d{4}-\d{2}-\d{2}$/.test(b.previousDate || "") || b.previousDate >= b.date) return reply({ error: "Invalid dates" }, 400);
+        const row = await sql("SELECT payload FROM rankings WHERE date=?", b.date).first(), prior = await sql("SELECT date FROM rankings WHERE date=?", b.previousDate).first();
+        if (!row || !prior) return reply({ error: "Missing snapshot" }, 409);
+        const p = JSON.parse(row.payload);
+        await sql("UPDATE rankings SET payload=? WHERE date=?", JSON.stringify({ stocks: Array.isArray(p) ? p : p.stocks, previousDate: b.previousDate }), b.date).run();
+        return reply({ ok: true });
+      }
       if (path === "/admin/chart-codes") {
         const codes = new Set((await sql("SELECT DISTINCT company_code AS code FROM watchlists").all()).results.map((r) => r.code));
         try {
