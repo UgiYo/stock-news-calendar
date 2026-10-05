@@ -850,7 +850,7 @@ var index_default = { async fetch(req, env) {
             sectors[x.tag].count++;
           }
           for (const x of [...r.stocks].sort((a, b) => b.amount - a.amount || a.code.localeCompare(b.code)).slice(0, 10)) sectors[x.tag].topCount++;
-          return { date: r.date, previousDate: r.previousDate, total, sectors };
+          return { date: r.date, previousDate: r.previousDate, total, sectors, turnover: r.stocks.map((x) => [x.code, x.amount]) };
         });
         return reply({ date: date || null, dates, stocks: row?.stocks || [], previousDate: previous?.date || row?.previousDate || null, previousStocks: previous?.stocks || null, history });
       } catch (e) {
