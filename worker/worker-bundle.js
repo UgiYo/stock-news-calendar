@@ -21,10 +21,48 @@ function payload(data, id, feed) {
   if (new TextEncoder().encode(JSON.stringify(result)).length > 15e5) throw Error("Podcast \u8CC7\u6599\u8D85\u51FA\u5927\u5C0F\u4E0A\u9650");
   return result;
 }
+async function resolveSpotifyPodcast(value, fetcher = globalThis.fetch) {
+  const u = new URL(String(value || ""));
+  if (u.protocol !== "https:" || u.hostname !== "open.spotify.com" || u.username || u.password || u.port || !/^\/(?:intl-[a-z]+\/)?show\/[A-Za-z0-9]{22}\/?$/.test(u.pathname)) throw Error("\u8ACB\u8CBC\u4E0A Spotify \u7BC0\u76EE\u9023\u7D50\uFF08show\uFF09\uFF0C\u4E0D\u662F\u55AE\u96C6\u9023\u7D50\u3002");
+  const show = u.pathname.split("/").filter(Boolean).at(-1), url = "https://open.spotify.com/show/" + show;
+  const read = async (endpoint) => {
+    const r = await fetcher(endpoint, { redirect: "error", signal: AbortSignal.timeout(1e4), headers: { Accept: "application/json" } });
+    if (!r.ok) throw Error("\u641C\u5C0B\u670D\u52D9\u66AB\u6642\u7121\u6CD5\u4F7F\u7528\uFF0C\u8ACB\u7A0D\u5F8C\u91CD\u8A66\u3002");
+    return r.json();
+  };
+  const meta = await read("https://open.spotify.com/oembed?url=" + encodeURIComponent(url));
+  const title = String(meta.title || "").trim();
+  if (!title || title.length > 500) throw Error("\u7121\u6CD5\u53D6\u5F97 Spotify \u7BC0\u76EE\u540D\u7A31\u3002");
+  const results = await read("https://itunes.apple.com/search?media=podcast&entity=podcast&country=TW&limit=25&term=" + encodeURIComponent(title));
+  const normalize = (v) => String(v || "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  const target = normalize(title), seen = /* @__PURE__ */ new Set(), candidates = [];
+  for (const row of results.results || []) {
+    const name = String(row.collectionName || row.trackName || ""), n = normalize(name);
+    if (!n || !(n === target || n.includes(target) || target.includes(n))) continue;
+    let feed;
+    try {
+      feed = podcastFeed(row.feedUrl);
+    } catch {
+      continue;
+    }
+    if (seen.has(feed)) continue;
+    seen.add(feed);
+    candidates.push({ title: name, author: String(row.artistName || ""), feed });
+  }
+  return { title, candidates: candidates.slice(0, 10) };
+}
 async function sharedPodcastsRoute(req, { sql, reply, user, admin = false, hash: hash2 }) {
   const u = new URL(req.url), path = u.pathname;
-  if (!["/podcasts/channels", "/podcasts/episodes", "/admin/podcasts/channels", "/admin/podcasts/update"].includes(path)) return null;
+  if (!["/podcasts/channels", "/podcasts/episodes", "/admin/podcasts/channels", "/admin/podcasts/update", "/podcasts/resolve"].includes(path)) return null;
   if (!admin && !user) return reply({ error: "\u8ACB\u5148\u767B\u5165" }, 401);
+  if (path === "/podcasts/resolve") {
+    if (req.method !== "POST") return reply({ error: "Method not allowed" }, 405);
+    try {
+      return reply(await resolveSpotifyPodcast((await req.json()).url));
+    } catch (e) {
+      return reply({ error: e.message }, 400);
+    }
+  }
   await sql("CREATE TABLE IF NOT EXISTS podcast_channels(id TEXT PRIMARY KEY,feed TEXT NOT NULL UNIQUE,title TEXT NOT NULL,payload TEXT NOT NULL,created_by TEXT NOT NULL,updated_at TEXT NOT NULL,last_error TEXT)").run();
   if ((path === "/podcasts/channels" || path === "/admin/podcasts/channels") && req.method === "GET") return reply({ channels: (await sql("SELECT id,feed,title,updated_at,last_error FROM podcast_channels ORDER BY title LIMIT 100").all()).results });
   if (path === "/podcasts/episodes" && req.method === "GET") {
