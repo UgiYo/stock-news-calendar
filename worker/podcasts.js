@@ -16,10 +16,24 @@ function payload(data,id,feed){
  if(new TextEncoder().encode(JSON.stringify(result)).length>1500000)throw Error('Podcast 資料超出大小上限');
  return result;
 }
+export async function resolveSpotifyPodcast(value,fetcher=globalThis.fetch){
+ const u=new URL(String(value||''));
+ if(u.protocol!=='https:'||u.hostname!=='open.spotify.com'||u.username||u.password||u.port||!/^\/(?:intl-[a-z]+\/)?show\/[A-Za-z0-9]{22}\/?$/.test(u.pathname))throw Error('請貼上 Spotify 節目連結（show），不是單集連結。');
+ const show=u.pathname.split('/').filter(Boolean).at(-1),url='https://open.spotify.com/show/'+show;
+ const read=async endpoint=>{const r=await fetcher(endpoint,{redirect:'error',signal:AbortSignal.timeout(10000),headers:{Accept:'application/json'}});if(!r.ok)throw Error('搜尋服務暫時無法使用，請稍後重試。');return r.json();};
+ const meta=await read('https://open.spotify.com/oembed?url='+encodeURIComponent(url));
+ const title=String(meta.title||'').trim();if(!title||title.length>500)throw Error('無法取得 Spotify 節目名稱。');
+ const results=await read('https://itunes.apple.com/search?media=podcast&entity=podcast&country=TW&limit=25&term='+encodeURIComponent(title));
+ const normalize=v=>String(v||'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
+ const target=normalize(title),seen=new Set(),candidates=[];
+ for(const row of results.results||[]){const name=String(row.collectionName||row.trackName||''),n=normalize(name);if(!n||!(n===target||n.includes(target)||target.includes(n)))continue;let feed;try{feed=podcastFeed(row.feedUrl);}catch{continue;}if(seen.has(feed))continue;seen.add(feed);candidates.push({title:name,author:String(row.artistName||''),feed});}
+ return {title,candidates:candidates.slice(0,10)};
+}
 export async function sharedPodcastsRoute(req,{sql,reply,user,admin=false,hash}){
  const u=new URL(req.url),path=u.pathname;
- if(!['/podcasts/channels','/podcasts/episodes','/admin/podcasts/channels','/admin/podcasts/update'].includes(path))return null;
+ if(!['/podcasts/channels','/podcasts/episodes','/admin/podcasts/channels','/admin/podcasts/update','/podcasts/resolve'].includes(path))return null;
  if(!admin&&!user)return reply({error:'請先登入'},401);
+ if(path==='/podcasts/resolve'){if(req.method!=='POST')return reply({error:'Method not allowed'},405);try{return reply(await resolveSpotifyPodcast((await req.json()).url));}catch(e){return reply({error:e.message},400);}}
  await sql('CREATE TABLE IF NOT EXISTS podcast_channels(id TEXT PRIMARY KEY,feed TEXT NOT NULL UNIQUE,title TEXT NOT NULL,payload TEXT NOT NULL,created_by TEXT NOT NULL,updated_at TEXT NOT NULL,last_error TEXT)').run();
  if((path==='/podcasts/channels'||path==='/admin/podcasts/channels')&&req.method==='GET')return reply({channels:(await sql('SELECT id,feed,title,updated_at,last_error FROM podcast_channels ORDER BY title LIMIT 100').all()).results});
  if(path==='/podcasts/episodes'&&req.method==='GET'){
