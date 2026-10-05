@@ -21,8 +21,11 @@ export async function resolveSpotifyPodcast(value,fetcher=globalThis.fetch){
  if(u.protocol!=='https:'||u.hostname!=='open.spotify.com'||u.username||u.password||u.port||!/^\/(?:intl-[a-z]+\/)?show\/[A-Za-z0-9]{22}\/?$/.test(u.pathname))throw Error('請貼上 Spotify 節目連結（show），不是單集連結。');
  const show=u.pathname.split('/').filter(Boolean).at(-1),url='https://open.spotify.com/show/'+show;
  const read=async endpoint=>{const r=await fetcher(endpoint,{redirect:'error',signal:AbortSignal.timeout(10000),headers:{Accept:'application/json'}});if(!r.ok)throw Error('搜尋服務暫時無法使用，請稍後重試。');return r.json();};
- const meta=await read('https://open.spotify.com/oembed?url='+encodeURIComponent(url));
- const title=String(meta.title||'').trim();if(!title||title.length>500)throw Error('無法取得 Spotify 節目名稱。');
+ const page=await fetcher(url,{redirect:'error',signal:AbortSignal.timeout(10000),headers:{Accept:'text/html','User-Agent':'Mozilla/5.0'}});
+ if(!page.ok)throw Error('Spotify 節目頁暫時無法讀取，請稍後重試。');
+ const html=await page.text();
+ const decode=v=>v.replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&#(\d+);/g,(_,n)=>String.fromCodePoint(Number(n)));
+ const title=decode(html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i)?.[1]||'').trim();if(!title||title.length>500)throw Error('無法取得 Spotify 節目名稱。');
  const results=await read('https://itunes.apple.com/search?media=podcast&entity=podcast&country=TW&limit=25&term='+encodeURIComponent(title));
  const normalize=v=>String(v||'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
  const target=normalize(title),seen=new Set(),candidates=[];
