@@ -66,7 +66,7 @@ def sync_source(source):
 def admin_api(path,data=None):
  base=os.environ.get('WORKER_API_URL','').rstrip('/');secret=os.environ.get('COLLECTOR_SECRET','')
  if not base or not secret:raise RuntimeError('Shared podcast sync requires collector settings')
- request=urllib.request.Request(base+path,data=json.dumps(data,ensure_ascii=False).encode() if data is not None else None,headers={'Authorization':'Bearer '+secret,'Content-Type':'application/json'})
+ request=urllib.request.Request(base+path,data=json.dumps(data,ensure_ascii=False).encode() if data is not None else None,headers={'Authorization':'Bearer '+secret,'Content-Type':'application/json','User-Agent':'StockNewsCalendar/2.0','Accept':'application/json'})
  with urllib.request.urlopen(request,timeout=45) as response:return json.load(response)
 def main():
  errors=[];sources=list(CHANNELS)
