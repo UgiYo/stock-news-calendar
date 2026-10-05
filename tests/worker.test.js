@@ -104,3 +104,21 @@ test('Podcast RSS proxy accepts large real-world feeds and enforces its size lim
   bytes=12000001;const large=await call(env,path);assert.equal(large.status,413);
  }finally{globalThis.fetch=original;db.close();}
 });
+
+test('imported Podcasts are shared by logged-in users, deduplicated and refreshed',async()=>{
+ const {db,env}=setup();for(const id of ['alice','bob']){db.prepare('INSERT INTO users VALUES(?,?)').run(id,id+'@example.com');db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(await hash(id),id,Date.now()+60000);}
+ const data={id:'local-id',feed:'https://feeds.example.com/show.xml',title:'Shared Show',episodes:[{id:'episode-1',title:'First',published_at:'2026-10-05T10:00:00Z',url:'https://example.com/first',audio_url:'https://example.com/first.mp3'}]};
+ try{
+  assert.equal((await call(env,'/podcasts/channels')).status,401);
+  const a=await (await call(env,'/podcasts/channels','alice',data)).json();assert.match(a.channel.id,/^shared-/);
+  const b=await (await call(env,'/podcasts/channels','bob',data)).json();assert.equal(a.channel.id,b.channel.id);
+  const listing=await (await call(env,'/podcasts/channels','bob')).json();assert.equal(listing.channels.length,1);assert.equal(listing.channels[0].title,'Shared Show');assert.equal(listing.channels[0].created_by,undefined);
+  const path='/podcasts/episodes?id='+a.channel.id;assert.equal((await call(env,path)).status,401);assert.equal((await (await call(env,path,'bob')).json()).episodes[0].title,'First');
+  assert.equal((await call(env,path,'bob',{...data,episodes:[{...data.episodes[0],title:'Updated'}]})).status,200);
+  assert.equal((await (await call(env,path,'alice')).json()).episodes[0].title,'Updated');
+  assert.equal((await call(env,'/admin/podcasts/channels','alice')).status,403);
+  assert.equal((await call(env,'/admin/podcasts/update','secret',{id:a.channel.id,error:'RSS unavailable'})).status,200);
+  const retained=await (await call(env,path,'bob')).json();assert.equal(retained.episodes[0].title,'Updated');assert.equal(retained.error,'RSS unavailable');
+  assert.equal((await call(env,'/podcasts/channels','alice',{...data,feed:'https://127.0.0.1/feed'})).status,400);
+ }finally{db.close();}
+});
