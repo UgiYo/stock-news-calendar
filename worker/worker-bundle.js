@@ -1,3 +1,81 @@
+// worker/podcasts.js
+var fields = ["id", "title", "published_at", "date", "url", "audio_url", "description", "duration", "transcript_url"];
+function podcastFeed(value) {
+  const u = new URL(String(value || "").trim());
+  const h = u.hostname.toLowerCase();
+  if (u.protocol !== "https:" || u.username || u.password || u.search || u.hash || u.port || !h.includes(".") || /^[\d.]+$/.test(h) || h.includes(":") || /(^|\.)(localhost|local|internal|test|invalid)$/.test(h)) throw Error("\u8ACB\u4F7F\u7528\u516C\u958B HTTPS Podcast RSS \u7DB2\u5740");
+  return u.href;
+}
+function payload(data, id, feed) {
+  if (!data || typeof data.title !== "string" || !data.title.trim() || data.title.length > 500 || !Array.isArray(data.episodes) || !data.episodes.length || data.episodes.length > 150) throw Error("Podcast \u96C6\u6578\u8CC7\u6599\u683C\u5F0F\u932F\u8AA4");
+  const episodes = data.episodes.map((e) => {
+    if (!e.id || !e.title || !Number.isFinite(Date.parse(e.published_at))) throw Error("Podcast \u96C6\u6578\u8CC7\u6599\u683C\u5F0F\u932F\u8AA4");
+    const row = Object.fromEntries(fields.map((k) => [k, String(e[k] || "").slice(0, k === "description" ? 1e4 : 2e3)]));
+    for (const k of ["url", "audio_url", "transcript_url"]) if (row[k]) {
+      const u = new URL(row[k]);
+      if (u.protocol !== "https:" || u.username || u.password) throw Error("Podcast \u9023\u7D50\u5FC5\u9808\u662F HTTPS");
+    }
+    return row;
+  });
+  const result = { id, feed, title: data.title.trim(), spotify: "", updated_at: (/* @__PURE__ */ new Date()).toISOString(), episodes };
+  if (new TextEncoder().encode(JSON.stringify(result)).length > 15e5) throw Error("Podcast \u8CC7\u6599\u8D85\u51FA\u5927\u5C0F\u4E0A\u9650");
+  return result;
+}
+async function sharedPodcastsRoute(req, { sql, reply, user, admin = false, hash: hash2 }) {
+  const u = new URL(req.url), path = u.pathname;
+  if (!["/podcasts/channels", "/podcasts/episodes", "/admin/podcasts/channels", "/admin/podcasts/update"].includes(path)) return null;
+  if (!admin && !user) return reply({ error: "\u8ACB\u5148\u767B\u5165" }, 401);
+  await sql("CREATE TABLE IF NOT EXISTS podcast_channels(id TEXT PRIMARY KEY,feed TEXT NOT NULL UNIQUE,title TEXT NOT NULL,payload TEXT NOT NULL,created_by TEXT NOT NULL,updated_at TEXT NOT NULL,last_error TEXT)").run();
+  if ((path === "/podcasts/channels" || path === "/admin/podcasts/channels") && req.method === "GET") return reply({ channels: (await sql("SELECT id,feed,title,updated_at,last_error FROM podcast_channels ORDER BY title LIMIT 100").all()).results });
+  if (path === "/podcasts/episodes" && req.method === "GET") {
+    const row = await sql("SELECT payload,last_error FROM podcast_channels WHERE id=?", u.searchParams.get("id")).first();
+    return row ? reply({ ...JSON.parse(row.payload), error: row.last_error || "" }) : reply({ error: "\u627E\u4E0D\u5230\u983B\u9053" }, 404);
+  }
+  if (path === "/podcasts/episodes" && req.method === "POST") {
+    const row = await sql("SELECT id,feed FROM podcast_channels WHERE id=?", u.searchParams.get("id")).first();
+    if (!row) return reply({ error: "\u627E\u4E0D\u5230\u983B\u9053" }, 404);
+    try {
+      const data = await req.json();
+      if (podcastFeed(data.feed) !== row.feed) throw Error("Feed mismatch");
+      const saved = payload(data, row.id, row.feed);
+      await sql("UPDATE podcast_channels SET title=?,payload=?,updated_at=?,last_error=NULL WHERE id=?", saved.title, JSON.stringify(saved), saved.updated_at, row.id).run();
+      return reply(saved);
+    } catch {
+      return reply({ error: "Podcast \u66F4\u65B0\u8CC7\u6599\u683C\u5F0F\u932F\u8AA4" }, 400);
+    }
+  }
+  if (path === "/podcasts/channels" && req.method === "POST") {
+    try {
+      const data = await req.json(), feed = podcastFeed(data.feed), id = "shared-" + (await hash2(feed)).slice(0, 24), existing = await sql("SELECT payload FROM podcast_channels WHERE feed=?", feed).first();
+      if (existing) return reply({ channel: JSON.parse(existing.payload), existing: true });
+      const count = await sql("SELECT COUNT(*) AS total FROM podcast_channels").first();
+      if (count.total >= 100) return reply({ error: "\u5171\u7528\u983B\u9053\u5DF2\u9054 100 \u500B\u4E0A\u9650" }, 409);
+      const saved = payload(data, id, feed);
+      await sql("INSERT INTO podcast_channels(id,feed,title,payload,created_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(feed) DO NOTHING", id, feed, saved.title, JSON.stringify(saved), user.id, saved.updated_at).run();
+      const row = await sql("SELECT payload FROM podcast_channels WHERE feed=?", feed).first();
+      return reply({ channel: JSON.parse(row.payload) });
+    } catch {
+      return reply({ error: "\u532F\u5165\u5931\u6557\uFF1A\u8ACB\u78BA\u8A8D\u516C\u958B HTTPS RSS \u8207\u96C6\u6578\u5167\u5BB9" }, 400);
+    }
+  }
+  if (path === "/admin/podcasts/update" && req.method === "POST") {
+    const data = await req.json(), row = await sql("SELECT * FROM podcast_channels WHERE id=?", data.id).first();
+    if (!row) return reply({ error: "\u627E\u4E0D\u5230\u983B\u9053" }, 404);
+    if (data.error) {
+      await sql("UPDATE podcast_channels SET last_error=? WHERE id=?", String(data.error).slice(0, 500), row.id).run();
+      return reply({ ok: true });
+    }
+    try {
+      const saved = payload(data, row.id, row.feed);
+      await sql("UPDATE podcast_channels SET title=?,payload=?,updated_at=?,last_error=NULL WHERE id=?", saved.title, JSON.stringify(saved), saved.updated_at, row.id).run();
+      return reply({ ok: true });
+    } catch {
+      return reply({ error: "Podcast \u96C6\u6578\u8CC7\u6599\u683C\u5F0F\u932F\u8AA4" }, 400);
+    }
+  }
+  return reply({ error: "Method not allowed" }, 405);
+}
+
 // worker/ai-jobs.js
 var enc = new TextEncoder();
 var b64 = (bytes) => {
@@ -342,8 +420,8 @@ async function resolveArticleURL(value, includePage = false) {
       try {
         for (const item of JSON.parse(line)) {
           if (item?.[1] === "Fbv4je") {
-            const payload = JSON.parse(item[2]);
-            if (payload[0] === "garturlres") resolved = payload[1];
+            const payload2 = JSON.parse(item[2]);
+            if (payload2[0] === "garturlres") resolved = payload2[1];
           }
         }
       } catch {
@@ -473,6 +551,8 @@ var index_default = { async fetch(req, env) {
     if (path.startsWith("/admin/")) {
       const provided = req.headers.get("Authorization") || "";
       if (!env.COLLECTOR_SECRET || await hash(provided) !== await hash("Bearer " + env.COLLECTOR_SECRET)) return reply({ error: "Forbidden" }, 403);
+      const podcasts2 = await sharedPodcastsRoute(req, { sql, reply, admin: true, hash });
+      if (podcasts2) return podcasts2;
       const personal2 = await aiJobsRoute(req, env, { admin: true, reply, dispatch, readArticleURL });
       if (personal2) return personal2;
       if (path === "/admin/ranking-audit") {
@@ -630,6 +710,8 @@ var index_default = { async fetch(req, env) {
     if (!token) return reply({ error: "\u8ACB\u5148\u767B\u5165" }, 401);
     const user = await sql("SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?", await hash(token), Date.now()).first();
     if (!user) return reply({ error: "\u767B\u5165\u5DF2\u904E\u671F\uFF0C\u8ACB\u91CD\u65B0\u767B\u5165" }, 401);
+    const podcasts = await sharedPodcastsRoute(req, { sql, reply, user, hash });
+    if (podcasts) return podcasts;
     if (path === "/portfolio-quotes") {
       const codes = [...new Set((url.searchParams.get("codes") || "").split(",").filter(Boolean))];
       if (!codes.length) return reply({ quotes: [] });
