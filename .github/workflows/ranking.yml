@@ -31,7 +31,7 @@ jobs:
           cache: pip
           cache-dependency-path: scripts/requirements.txt
       - run: pip install -r scripts/requirements.txt
-      - name: Update daily turnover ranking and industry tags
+      - name: Update turnover, industry tags and market-cap leaders
         run: python scripts/ranking.py
       - name: Audit and repair preceding trading-day snapshots
         if: always()

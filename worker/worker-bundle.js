@@ -297,6 +297,24 @@ async function fetchDailyBars(company) {
   if (rows.length) return { rows, source: otc ? "\u6AC3\u8CB7\u4E2D\u5FC3" : "\u81FA\u7063\u8B49\u5238\u4EA4\u6613\u6240" };
   throw Error("\u884C\u60C5\u4F86\u6E90\u66AB\u6642\u7121\u6CD5\u8B80\u53D6\uFF0C\u8ACB\u7A0D\u5F8C\u518D\u6309\u300C\u66F4\u65B0 K \u7DDA\u300D\u3002");
 }
+function parseCompanyProfile(html, code) {
+  const plain = (value) => xmlText(value.replace(/&nbsp;/gi, " ").replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
+  const heading = plain(html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1] || "");
+  if (!new RegExp("(?:^|\\D)" + code + "(?:\\D|$)").test(heading)) throw Error("\u8CA1\u5831\u72D7\u9801\u9762\u8207\u80A1\u7968\u4EE3\u865F\u4E0D\u7B26");
+  const metrics = [];
+  for (const match of html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const cells = [...match[1].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((m) => plain(m[1]));
+    if (cells.length < 2 || !/(?:本益比|殖利率|股價淨值比|營收\s*YOY|近\s*4\s*季\s*(?:EPS|ROE))/i.test(cells[0])) continue;
+    if (!/^-?\d[\d,]*(?:\.\d+)?%?$/.test(cells[1])) continue;
+    metrics.push({ label: cells[0], value: cells[1] });
+  }
+  const section = html.match(/公司簡介[\s\S]*?(?=<h[1-4]\b|$)/i)?.[0] || "";
+  const paragraphs = [...section.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)].map((m) => plain(m[1])).filter((t) => t.length > 15 && !/^(交易所|產業類別|公司網址)/.test(t));
+  const business = section.match(/<div\b[^>]*class=["'][^"']*\bm-0\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i)?.[1];
+  const introduction = (business ? plain(business) : paragraphs.at(-1) || "").slice(0, 400);
+  if (!metrics.length && !introduction) throw Error("\u8CA1\u5831\u72D7\u516C\u958B\u9801\u9762\u672A\u63D0\u4F9B\u53EF\u8B80\u53D6\u7684\u516C\u53F8\u6216\u8CA1\u52D9\u8CC7\u6599");
+  return { code, heading, introduction, metrics: metrics.slice(0, 8), source: "\u8CA1\u5831\u72D7", url: "https://statementdog.com/analysis/" + code, fetchedAt: (/* @__PURE__ */ new Date()).toISOString() };
+}
 function companyMention(title, company, conflicts = []) {
   const text = String(title || "").normalize("NFKC");
   if (new RegExp("(?<!\\d)" + company.code + "(?!\\d)").test(text)) return true;
@@ -851,6 +869,32 @@ var index_default = { async fetch(req, env) {
       if (cache) await cache.put(key, Response.json(data, { headers: { "Cache-Control": "public, max-age=180" } }));
       return reply(data);
     }
+    if (path === "/company-profile") {
+      const code = url.searchParams.get("code");
+      if (!/^[1-9]\d{3}$/.test(code || "")) return reply({ error: "Invalid stock code" }, 400);
+      if (!await sql("SELECT code FROM companies WHERE code=?", code).first()) return reply({ error: "\u516C\u53F8\u4E0D\u5B58\u5728" }, 404);
+      const key = new Request(url.origin + "/cache/company-profile/" + code), cache = globalThis.caches?.default, cached = await cache?.match(key);
+      if (req.method !== "POST" && cached) return reply({ profile: await cached.json() });
+      try {
+        let target = "https://statementdog.com/analysis/" + code, response;
+        for (let i = 0; i < 3; i++) {
+          response = await fetch(target, { redirect: "manual", headers: { "User-Agent": "Mozilla/5.0", "Accept": "text/html" }, signal: AbortSignal.timeout(1e4) });
+          if (![301, 302, 303, 307, 308].includes(response.status)) break;
+          const next = new URL(response.headers.get("Location") || "", target);
+          if (next.protocol !== "https:" || !["statementdog.com", "www.statementdog.com"].includes(next.hostname) || next.username || next.password || next.port) throw Error("\u8CA1\u5831\u72D7\u4F86\u6E90\u8F49\u5740\u4E0D\u7B26");
+          target = next.href;
+        }
+        if (!response?.ok) throw Error("\u8CA1\u5831\u72D7\u516C\u958B\u8CC7\u8A0A\u66AB\u6642\u7121\u6CD5\u8B80\u53D6");
+        const html = await response.text();
+        if (html.length > 2e6) throw Error("\u8CA1\u5831\u72D7\u9801\u9762\u8D85\u904E\u8B80\u53D6\u4E0A\u9650");
+        const profile = parseCompanyProfile(html, code);
+        if (cache) await cache.put(key, Response.json(profile, { headers: { "Cache-Control": "public, max-age=86400" } }));
+        return reply({ profile });
+      } catch (e) {
+        if (cached) return reply({ profile: await cached.json(), warning: e.message });
+        return reply({ error: e.message }, 502);
+      }
+    }
     if (path === "/chart-prices") {
       const code = url.searchParams.get("code");
       if (!/^[1-9]\d{3}$/.test(code || "")) return reply({ error: "Invalid stock code" }, 400);
@@ -920,7 +964,9 @@ var index_default = { async fetch(req, env) {
           for (const x of [...r.stocks].sort((a, b) => b.amount - a.amount || a.code.localeCompare(b.code)).slice(0, 10)) sectors[x.tag].topCount++;
           return { date: r.date, previousDate: r.previousDate, total, sectors, turnover: r.stocks.map((x) => [x.code, x.amount]) };
         });
-        return reply({ date: date || null, dates, stocks: row?.stocks || [], previousDate: previous?.date || row?.previousDate || null, previousStocks: previous?.stocks || null, history });
+        const capSnapshot = rows.find((r) => r.stocks.some((s) => Number.isFinite(s.marketCap) && s.marketCap > 0));
+        const marketCaps = capSnapshot ? { date: capSnapshot.date, stocks: capSnapshot.stocks.filter((s) => Number.isFinite(s.marketCap) && s.marketCap > 0).map((s) => ({ code: s.code, name: s.name, value: s.marketCap })) } : null;
+        return reply({ date: date || null, dates, stocks: row?.stocks || [], previousDate: previous?.date || row?.previousDate || null, previousStocks: previous?.stocks || null, history, marketCaps });
       } catch (e) {
         if (String(e.message).includes("no such table")) return reply({ date: null, dates: [], stocks: [], history: [] });
         throw e;
@@ -1049,6 +1095,7 @@ export {
   hash,
   isGeneratedAnswer,
   normalizeArticleURL,
+  parseCompanyProfile,
   parsePreview,
   randomToken,
   readArticleURL,

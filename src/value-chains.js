@@ -8,3 +8,13 @@ export function watchChainSignals(catalog,rows,previous,history,tracked,date){
  const flows=chainFlows(catalog,rows,previous),byCode=new Map(rows.map(r=>[r.code,r]));
  return tracked.map(stock=>{const matching=flows.filter(g=>g.codes.includes(stock.code));const links=matching.map(g=>{const points=(history||[]).filter(h=>h.date<=date&&h.turnover).sort((a,b)=>a.date.localeCompare(b.date)).slice(-31),values=[];for(const h of points){const map=new Map(h.turnover),own=map.get(stock.code),total=h.total;if(own==null||!total)continue;const peers=g.codes.filter(c=>c!==stock.code&&map.has(c));if(peers.length<2)continue;values.push({date:h.date,prior:h.previousDate,own:own/total*100,peers:peers.reduce((s,c)=>s+map.get(c),0)/total*100});}const a=[],b=[];for(let i=1;i<values.length;i++)if(values[i].prior===values[i-1].date){a.push(values[i].own-values[i-1].own);b.push(values[i].peers-values[i-1].peers);}const correlation=pearson(a,b),peerCount=g.members.filter(r=>r.code!==stock.code).length,currentTotal=rows.reduce((s,r)=>s+r.amount,0),priorTotal=previous?.reduce((s,r)=>s+r.amount,0),ownAmount=byCode.get(stock.code)?.amount||0,priorOwn=previous?.find(r=>r.code===stock.code)?.amount||0,peerShare=currentTotal?(g.amount-ownAmount)/currentTotal*100:0,peerChange=g.change==null||!priorTotal?null:g.change-ownAmount/currentTotal*100+priorOwn/priorTotal*100,hot=peerShare>=2&&peerChange!=null&&peerChange>=0.3&&peerCount>=2;return {...g,peerShare,peerChange,correlation,samples:a.length,hot,high:hot&&correlation!=null&&correlation>=0.6};}).sort((a,b)=>Number(b.high)-Number(a.high)||Number(b.hot)-Number(a.hot)||b.amount-a.amount);return {...stock,amount:byCode.get(stock.code)?.amount??null,links};});
 }
+
+export function capRanking(codes,stocks,marketCaps){
+ const universe=new Set(stocks.filter(s=>codes.includes(s.code)).map(s=>s.code)),caps=new Map((marketCaps?.stocks||[]).map(s=>[s.code,s]));
+ const members=[...universe].map(code=>caps.get(code)).filter(s=>s&&Number.isFinite(s.value)&&s.value>0).sort((a,b)=>b.value-a.value||a.code.localeCompare(b.code));
+ return {date:marketCaps?.date,members,covered:members.length,total:universe.size,leaders:members.slice(0,3).map((s,i)=>({...s,rank:i+1,role:['市值龍頭','市值老二','市值老三'][i]}))};
+}
+export function industryCatalog(catalog){
+ const groups=new Map();for(const g of catalog?.groups||[]){if(!groups.has(g.industry))groups.set(g.industry,{id:'industry:'+g.industry,industry:g.industry,name:'全產業',codes:[]});groups.get(g.industry).codes.push(...g.codes);}
+ return {groups:[...groups.values()].map(g=>({...g,codes:[...new Set(g.codes)]}))};
+}
