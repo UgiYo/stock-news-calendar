@@ -116,3 +116,5 @@ html{scrollbar-gutter:stable}body.modal-open{overflow:hidden}button,input,select
 .watch-chain-stocks article .trend-badge{margin:6px}
 
 .ranking-recent-news{margin:16px 0;padding:16px;border:1px solid #c9dedf;border-radius:12px;background:#f5fbfa}.ranking-recent-news .articles{max-height:420px;overflow:auto}.ranking-recent-news article{overflow-wrap:anywhere}
+
+.watch-chain-list{list-style:none;padding:0;margin:8px 0 0}.watch-chain-list>li{padding:8px 0;border-top:1px solid #e2e8f0}.watch-chain-list>li>div{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.watch-chain-links{margin:4px 0 0;font-size:.9em}.watch-chain-links summary{color:#526572}.watch-chain-links button{margin:4px}.watch-chain-method{margin:8px 0;font-size:.9em}
