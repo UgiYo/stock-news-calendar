@@ -252,6 +252,51 @@ async function summaryCacheRoute(req, { sql, reply, user, randomToken: randomTok
 }
 
 // worker/index.js
+function dailyBars(result, code) {
+  const quote = result.indicators?.quote?.[0], rows = [];
+  for (const [i, t] of (result.timestamp || []).entries()) {
+    const [open, high, low, close] = ["open", "high", "low", "close"].map((k) => quote?.[k]?.[i]);
+    if (![open, high, low, close].every((v) => Number.isFinite(v) && v > 0) || low > Math.min(open, close) || high < Math.max(open, close)) continue;
+    rows.push({ code, date: new Date(t * 1e3 + 8 * 36e5).toISOString().slice(0, 10), open, high, low, close, volume: Number.isFinite(quote?.volume?.[i]) ? quote.volume[i] : null });
+  }
+  return rows;
+}
+async function fetchDailyBars(company) {
+  const symbol = company.code + (company.market === "\u4E0A\u6AC3" ? ".TWO" : ".TW");
+  for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
+    try {
+      const r = await fetch(`https://${host}/v8/finance/chart/${symbol}?interval=1d&range=6mo&includePrePost=false`, { headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" }, signal: AbortSignal.timeout(7e3) });
+      if (!r.ok) continue;
+      const result = (await r.json()).chart?.result?.[0];
+      if (result?.meta?.symbol !== symbol) continue;
+      const rows2 = dailyBars(result, company.code);
+      if (rows2.length) return { rows: rows2, source: "Yahoo Finance" };
+    } catch {
+    }
+  }
+  const now = new Date(Date.now() + 8 * 36e5), otc = company.market === "\u4E0A\u6AC3";
+  const months = await Promise.all(Array.from({ length: 5 }, async (_, i) => {
+    try {
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)), month = d.toISOString().slice(0, 7), date = month.replace("-", "") + "01";
+      const u = otc ? `https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock?response=json&date=${month.replace("-", "/")}/01&code=${company.code}` : `https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date=${date}&stockNo=${company.code}`;
+      const r = await fetch(u, { signal: AbortSignal.timeout(7e3) });
+      if (!r.ok) return [];
+      const data = await r.json(), records = otc ? data.tables?.[0]?.data : data.data;
+      return (records || []).flatMap((row) => {
+        const [y, m, day] = String(row[0]).split("/").map(Number), key = `${y + 1911}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        const n = (v) => Number(String(v).replaceAll(",", ""));
+        const [open, high, low, close] = row.slice(3, 7).map(n), volume = n(row[1]) * (otc ? 1e3 : 1);
+        if (key.slice(0, 7) !== month || ![open, high, low, close].every((v) => Number.isFinite(v) && v > 0) || low > Math.min(open, close) || high < Math.max(open, close)) return [];
+        return [{ code: company.code, date: key, open, high, low, close, volume: Number.isFinite(volume) ? volume : null }];
+      });
+    } catch {
+      return [];
+    }
+  }));
+  const rows = months.flat().sort((a, b) => a.date.localeCompare(b.date));
+  if (rows.length) return { rows, source: otc ? "\u6AC3\u8CB7\u4E2D\u5FC3" : "\u81FA\u7063\u8B49\u5238\u4EA4\u6613\u6240" };
+  throw Error("\u884C\u60C5\u4F86\u6E90\u66AB\u6642\u7121\u6CD5\u8B80\u53D6\uFF0C\u8ACB\u7A0D\u5F8C\u518D\u6309\u300C\u66F4\u65B0 K \u7DDA\u300D\u3002");
+}
 function companyMention(title, company, conflicts = []) {
   const text = String(title || "").normalize("NFKC");
   if (new RegExp("(?<!\\d)" + company.code + "(?!\\d)").test(text)) return true;
@@ -780,7 +825,7 @@ var index_default = { async fetch(req, env) {
       const company = await sql("SELECT * FROM companies WHERE code=?", code).first();
       if (!company) return reply({ error: "\u516C\u53F8\u4E0D\u5B58\u5728" }, 404);
       const symbol = code + (company.market === "\u4E0A\u6AC3" ? ".TWO" : ".TW"), key = new Request(url.origin + "/cache/intraday/" + symbol + "/" + interval), cache = globalThis.caches?.default;
-      const cached = await cache?.match(key);
+      const cached = url.searchParams.get("refresh") === "1" ? null : await cache?.match(key);
       if (cached) return reply(await cached.json());
       let result;
       for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
@@ -809,12 +854,27 @@ var index_default = { async fetch(req, env) {
     if (path === "/chart-prices") {
       const code = url.searchParams.get("code");
       if (!/^[1-9]\d{3}$/.test(code || "")) return reply({ error: "Invalid stock code" }, 400);
+      let prices = [];
       try {
-        return reply({ prices: (await sql("SELECT * FROM prices WHERE code=? AND date>=date('now','-180 days') ORDER BY date", code).all()).results });
+        prices = (await sql("SELECT * FROM prices WHERE code=? AND date>=date('now','-180 days') ORDER BY date", code).all()).results;
       } catch (e) {
-        if (String(e.message).includes("no such table")) return reply({ prices: [] });
-        throw e;
+        if (!String(e.message).includes("no such table")) throw e;
       }
+      const usable = prices.filter((p) => [p.open, p.high, p.low, p.close].every((v) => Number.isFinite(v) && v > 0) && p.low <= Math.min(p.open, p.close) && p.high >= Math.max(p.open, p.close));
+      if (req.method === "POST" || !usable.length) {
+        try {
+          const company = await sql("SELECT * FROM companies WHERE code=?", code).first();
+          if (!company) return reply({ error: "\u516C\u53F8\u4E0D\u5B58\u5728" }, 404);
+          const { rows, source } = await fetchDailyBars(company);
+          await sql("CREATE TABLE IF NOT EXISTS prices(code TEXT NOT NULL,date TEXT NOT NULL,open REAL,high REAL,low REAL,close REAL NOT NULL,volume REAL,PRIMARY KEY(code,date))").run();
+          for (let i = 0; i < rows.length; i += 50) await env.DB.batch(rows.slice(i, i + 50).map((p) => sql("INSERT INTO prices(code,date,open,high,low,close,volume) VALUES(?,?,?,?,?,?,?) ON CONFLICT(code,date) DO UPDATE SET open=excluded.open,high=excluded.high,low=excluded.low,close=excluded.close,volume=excluded.volume", p.code, p.date, p.open, p.high, p.low, p.close, p.volume)));
+          return reply({ prices: (await sql("SELECT * FROM prices WHERE code=? AND date>=date('now','-180 days') ORDER BY date", code).all()).results, source, refreshed: true });
+        } catch (e) {
+          if (!usable.length) return reply({ error: e.message }, 502);
+          return reply({ prices, refreshed: false, warning: e.message });
+        }
+      }
+      return reply({ prices, refreshed: false });
     }
     if (path === "/ranking-stock") {
       const code = url.searchParams.get("code");
@@ -974,6 +1034,7 @@ export {
   checkedArticleURL,
   companyMention,
   curateNews,
+  dailyBars,
   index_default as default,
   duplicateNews,
   extractArticleBody,
