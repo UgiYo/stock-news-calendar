@@ -1,3 +1,4 @@
+import {rankingReturns} from './ranking-returns.js';
 import {technicalPrompt} from './technical-analysis.js';
 import {observationCandidates} from './observation-stocks.js';
 import {observationTechnical} from './observation-technicals.js';
@@ -58,6 +59,15 @@ async function loadObservationTechnicals(data,request,owner){
  }
  data.observationLoading=false;if(ranking===data)render();
 }
+async function loadRankingReturns(data,request,owner){
+ data.priceReturns={};data.priceReturnsLoading=true;render();
+ const stocks=[...(data.stocks||[])].sort((a,b)=>b.amount-a.amount||a.code.localeCompare(b.code)).slice(0,10);
+ await Promise.allSettled(stocks.map(async stock=>{
+  try{const result=await api('/chart-prices?code='+encodeURIComponent(stock.code));if(ranking===data&&request===observationRequest&&owner===state.user?.id){data.priceReturns[stock.code]=rankingReturns(result.prices,data.date,data.dates);}}
+  catch{if(ranking===data&&request===observationRequest&&owner===state.user?.id)data.priceReturns[stock.code]=rankingReturns([],data.date,data.dates);}
+ }));
+ if(ranking===data&&request===observationRequest&&owner===state.user?.id){data.priceReturnsLoading=false;render();}
+}
 async function loadRanking(date=''){
  const request=++observationRequest,owner=state.user?.id;
  try{
@@ -66,6 +76,7 @@ async function loadRanking(date=''){
   if(data.date&&!data.previousStocks){const index=data.dates?.indexOf(data.date),previousDate=data.previousDate||data.dates?.[index+1];if(previousDate){try{const previous=await api('/ranking?date='+encodeURIComponent(previousDate));data={...data,previousDate:previous.date,previousStocks:previous.stocks};}catch{}}}
   if(request!==observationRequest||owner!==state.user?.id)return;
   ranking=data;rankingDate=data.date||'';rankingTag='';rankingError='';
+  loadRankingReturns(data,request,owner);
   loadObservationTechnicals(data,request,owner).catch(()=>{if(ranking===data&&request===observationRequest){data.observationLoading=false;data.observationError='技術條件讀取失敗，請重新選擇交易日期重試';render();}});
  }catch(e){if(request===observationRequest)rankingError=e.message;}render();
 }
