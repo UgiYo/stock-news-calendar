@@ -137,3 +137,12 @@ test('untracked ranking stock gets missing OHLCV and manual refresh fetches agai
   const fallback=await (await call(env,'/chart-prices?code=8150','alice',{})).json();assert.equal(fallback.prices.length,1);assert.equal(fallback.refreshed,false);assert.ok(fallback.warning);
  }finally{globalThis.fetch=original;db.close();}
 });
+
+test('chart history keeps two years and collector reports populated months',async()=>{
+ const {db,env}=setup();db.exec("INSERT INTO companies(code,name,full_name,market) VALUES('8150','南茂','南茂科技','上市');INSERT INTO users VALUES('alice','a@example.com');INSERT INTO watchlists VALUES('alice','8150','now');");
+ db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(await hash('alice'),'alice',Date.now()+60000);
+ const dates=[1,2,3,4,5,6,7,8,9,10].map(i=>new Date(Date.now()-(690+i)*86400000).toISOString().slice(0,10));
+ const rows=dates.map(date=>({code:'8150',date,open:10,high:12,low:9,close:11,volume:100}));
+ await call(env,'/admin/prices','secret',{prices:rows});const chart=await (await call(env,'/chart-prices?code=8150','alice')).json();assert.equal(chart.prices.length,10);
+ const catalog=await (await call(env,'/admin/chart-codes','secret')).json();assert.equal(catalog.companies[0].code,'8150');assert.ok('price_months' in catalog.companies[0]);db.close();
+});
