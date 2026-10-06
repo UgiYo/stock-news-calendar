@@ -2,3 +2,11 @@ import test from 'node:test';import assert from 'node:assert/strict';import {sto
 const history=[{date:'2026-09-29',rank:12,amount:1e8},{date:'2026-09-30',previousDate:'2026-09-29',rank:3,amount:3e8},{date:'2026-10-01',previousDate:'2026-09-30',rank:5,amount:2e8},{date:'2026-10-02',previousDate:'2026-10-01',rank:null,amount:null}];
 test('stock history distinguishes new entry, continuing, outside and missing',()=>{assert.deepEqual(stockStats(history),{sessions:3,appearances:2,best:3});assert.equal(entryStatus(history[0],history),'榜外');assert.equal(entryStatus(history[1],history),'新進前十');assert.equal(entryStatus(history[2],history),'持續前十');assert.equal(entryStatus(history[3],history),'無資料');});
 test('charts handle missing and empty series without invalid SVG coordinates',()=>{for(const kind of ['rank','amount']){const svg=chartSVG(history,kind);assert.doesNotMatch(svg,/NaN|Infinity/);assert.match(svg,/2026-09-29/);assert.equal((svg.match(/<circle /g)||[]).length,3);assert.doesNotMatch(chartSVG([],kind),/NaN|Infinity/);}});
+test('financial retry remains available while unrelated price history is loading',async()=>{
+ const {companyProfilePanel}=await import('../src/stock-ranking.js');
+ const html=companyProfilePanel({code:'2330',loading:true,profileLoading:false,profileError:'來源暫未回傳'},s=>s);
+ assert.match(html,/<button id="refresh-company-profile" >重試財務參考<\/button>/);
+ assert.match(html,/<button id="analyze-company-profile" disabled>/);
+ const pending=companyProfilePanel({code:'2330',profileLoading:true},s=>s);
+ assert.match(pending,/<button id="refresh-company-profile" disabled>讀取中…/);
+});
