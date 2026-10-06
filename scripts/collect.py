@@ -6,8 +6,19 @@ BASE=os.environ['WORKER_API_URL'].rstrip('/')
 SECRET=os.environ['COLLECTOR_SECRET']
 UTC=datetime.timezone.utc
 TW=datetime.timezone(datetime.timedelta(hours=8))
+class CollectorQuotaError(RuntimeError):
+ def __init__(self,code,reset_at):
+  kind='read' if code=='D1_READ_QUOTA' else 'write'
+  try:reset=datetime.datetime.fromisoformat(reset_at.replace('Z','+00:00')).astimezone(TW).strftime('%Y-%m-%d %H:%M')
+  except (ValueError,AttributeError):reset='08:00 Taiwan time'
+  super().__init__('D1 daily '+kind+' quota exhausted; reset at '+reset+' Taiwan time. Morning recovery will retry after reset.')
 def api(path,body=None):
  r=requests.request('GET' if body is None else 'POST',BASE+path,json=body,headers={'Authorization':'Bearer '+SECRET,'User-Agent':'StockNewsCalendar/2.0','Accept':'application/json'},timeout=60)
+ if not r.ok:
+  try:error=r.json()
+  except ValueError:error={}
+  if error.get('code') in ('D1_READ_QUOTA','D1_WRITE_QUOTA'):
+   raise CollectorQuotaError(error['code'],error.get('reset_at'))
  r.raise_for_status();return r.json()
 def previous_month(now):
  y,m=now.year,now.month-1
@@ -129,6 +140,7 @@ def main():
  if os.environ.get('RUN_MODE','daily')=='daily':
   for c in companies:
    try:collect(c)
+   except CollectorQuotaError:raise
    except Exception as e:
     failed.append(c['code']);api('/admin/company',{'code':c['code'],'error':'新聞更新失敗，請重試'});print('Collection failed',c['code'],type(e).__name__)
  processed=0
@@ -143,10 +155,15 @@ def main():
     else:
      news=api('/admin/article?id='+str(job['news_id']))['news']
      if news and (not news['article_summary'] or news.get('summary_method')!='ai'):summarize(news)
+   except CollectorQuotaError:raise
    except Exception as e:
     error=str(e) if isinstance(e,ValueError) else '新聞來源或摘要服務暫時無法讀取'
     if job['type']=='summarize':api('/admin/summary',{'id':job['news_id'],'summary_error':error})
     else:api('/admin/company',{'code':job['company_code'],'error':error})
    api('/admin/job',{'id':job['id'],'error':error})
  if failed:raise SystemExit('Failed companies: '+','.join(failed))
-if __name__=='__main__':main()
+if __name__=='__main__':
+ try:main()
+ except CollectorQuotaError as e:
+  print('::error::'+str(e),flush=True);raise SystemExit(1)
+
