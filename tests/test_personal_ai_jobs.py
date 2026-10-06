@@ -27,6 +27,22 @@ class PersonalJobs(unittest.TestCase):
     self.assertIn('僅提供部分內容',call.kwargs['prompt'])
    self.assertIn('校正摘要；待確認數字',provider.call_args.kwargs['prompt'])
    self.assertEqual(output['text'],source)
+ def test_finance_hints_reach_audio_service_and_summary_model_is_not_source_evidence(self):
+  import tempfile
+  from pathlib import Path
+  config={'provider':'openai','endpoint':'https://api.openai.com/v1','key':'private','model':'chat'}
+  response=jobs.requests.Response();response.status_code=200;response._content=b'{"text":"transcript"}'
+  with tempfile.TemporaryDirectory() as folder:
+   audio=Path(folder)/'segment.wav';audio.write_bytes(b'audio')
+   with patch.object(jobs.requests,'post',return_value=response) as post:
+    self.assertEqual(jobs.uncached_provider(config,audio=audio,model='whisper-1'),'transcript')
+    self.assertIn('毛利率',post.call_args.kwargs['data']['prompt'])
+    self.assertNotIn('private',post.call_args.kwargs['data']['prompt'])
+  with patch.object(jobs,'update'),patch.object(jobs,'call_provider',return_value='summary') as provider:
+   jobs.summarize(config,'原始逐字稿','EP',False,{}, {'transcription_model':'whisper-1'},podcast=True)
+   self.assertIn('"transcription_model": "whisper-1"',provider.call_args.kwargs['prompt'])
+   self.assertIn('提到的族群／產業',provider.call_args.kwargs['prompt'])
+   self.assertIn('待確認／需回聽',provider.call_args.kwargs['prompt'])
  def test_news_does_not_use_podcast_correction_rules(self):
   with patch.object(jobs,'update'),patch.object(jobs,'call_provider',return_value='新聞摘要') as provider:
    jobs.summarize({},'新聞內文','News',False,{}, {})

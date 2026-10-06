@@ -10,3 +10,5 @@ with zipfile.ZipFile(folder / 'local-ai-windows.zip', 'w', zipfile.ZIP_DEFLATED)
         archive.write(root / 'tools' / name, 'local-ai/' + name)
 
     archive.write(root / 'shared' / 'podcast-summary-rules.json', 'local-ai/podcast-summary-rules.json')
+
+    archive.write(root / 'shared' / 'podcast-transcription-prompt.json', 'local-ai/podcast-transcription-prompt.json')

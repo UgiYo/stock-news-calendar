@@ -86,6 +86,7 @@ class LocalJobs:
         episode = source.get('episode') or {}
         row['episode'] = {k: str(episode.get(k, ''))[:2000] for k in ('id', 'title', 'date', 'audio_url', 'url', 'channel_name', 'description', 'guests')}
         row['model'] = str(source.get('model', ''))[:200]
+        row['transcription_model'] = str(source.get('transcription_model', ''))[:200]
         row['action'] = source.get('action', 'generate')
         if row['action'] not in ('generate', 'summarize', 'transcribe'):
             raise ValueError('任務操作錯誤')
@@ -192,6 +193,7 @@ class LocalJobs:
             episode = row.get('episode') or {}
             metadata = {k: episode.get(k, '') for k in ('channel_name', 'title', 'date', 'guests', 'description')}
             metadata['description'] = str(metadata['description'])[:10000]
+            metadata.update(transcription_model=row.get('transcription_model') or '未記錄（不能由目前設定推定）', summary_model=config.get('model', ''))
             prefix += '節目資料（JSON，僅供交叉校對）：\n' + json.dumps(metadata, ensure_ascii=False) + '\n'
         if row['partial']:
             prefix += '這是部分內容，請開頭明確標示缺漏，不補寫未取得的內容。\n'
@@ -271,6 +273,7 @@ class LocalJobs:
                     if not math.isfinite(duration) or not 0 < duration <= 7200:
                         raise ValueError('音訊長度錯誤')
                     segments = sorted([s for s in row['segments'] if s['end'] <= duration], key=lambda s:s['start'])
+                    had_existing_segments = bool(segments)
                     ranges, at = [], 0
                     for s in segments:
                         while at < s['start']:
@@ -282,6 +285,7 @@ class LocalJobs:
                         self.checkpoint(row, '本機轉錄 %s / %s 段' % (i+1, len(ranges)))
                         subprocess.run(['ffmpeg', '-nostdin', '-y', '-v', 'error', '-ss', str(start), '-i', str(original), '-t', str(end-start), '-ac', '1', '-ar', '16000', str(part)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
                         text = self.transcribe(config, part.read_bytes(), row['model'])
+                        row['transcription_model'] = ('混合來源（既有段落＋'+row['model']+'補轉）') if had_existing_segments else row['model']
                         segments.append(dict(start=start, end=end, text=text))
                         segments.sort(key=lambda s:s['start'])
                         row.update(segments=segments, text='\n\n'.join('[%g～%g 分鐘]\n%s' % (s['start']/60, s['end']/60, s['text']) for s in segments), partial=True)

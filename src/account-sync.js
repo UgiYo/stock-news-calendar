@@ -34,5 +34,5 @@ export async function deviceRequest(path,options,remote){
 // Only completed public-mode output is shared. Request/config/token data never leaves the device.
 export function syncResultPayload(row){
  if(!row||row.local_only||row.local_id||row.cloud_id||row.state!=='complete')return null;
- return {id:row.id,title:row.title,kind:row.kind,date:row.date||'',updated_at:row.updated_at,answer:String(row.answer||''),text:String(row.text||''),partial:!!row.partial,failures:(row.failures||[]).map(String)};
+ return {id:row.id,title:row.title,kind:row.kind,date:row.date||'',updated_at:row.updated_at,answer:String(row.answer||''),text:String(row.text||''),transcription_model:String(row.transcription_model||''),partial:!!row.partial,failures:(row.failures||[]).map(String)};
 }

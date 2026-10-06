@@ -102,3 +102,15 @@ test('authenticated Podcast listing loads shared metadata without fetching local
  try{const result=await fetchPodcastEpisodes({shared:true,storage,fetcher:async()=>({ok:true,json:async()=>({episodes:[]})})});assert.equal(result.episodes.length,1);assert.equal(result.episodes[0].id,'shared-test::ep');assert.equal(result.episodes[0].channel_id,'shared-test');}
  finally{globalThis.fetch=priorFetch;globalThis.localStorage=priorStorage;}
 });
+
+test('financial transcription guidance reaches speech model without invented company hints',()=>{
+ const request=transcriptionRequest(config,new Blob(['audio']),'whisper-1');const prompt=request.options.body.get('prompt');
+ assert.match(prompt,/毛利率/);assert.match(prompt,/CoWoS/);assert.match(prompt,/CCL/);assert.ok(!prompt.includes(config.key));assert.ok(!prompt.includes('台積電'));
+ assert.equal(transcriptionRequest(config,new Blob(['audio']),'gpt-4o-transcribe-diarize').options.body.get('prompt'),null);
+});
+test('summary compares original finance terms with provenance and requires sector target correction evidence',async()=>{
+ const original='台積電的先進支程與獲利討論，數字不確定。'.repeat(10);let prompt;
+ await summarizePodcast(config,{title:'本集',channel_name:'財經節目'},original,{transcriptionModel:'whisper-1',fetcher:async(url,options)=>{prompt=JSON.parse(options.body).messages.at(-1).content;return {ok:true,json:async()=>({choices:[{message:{content:'整理結果'}}]})};}});
+ assert.ok(prompt.includes(original));assert.ok(prompt.includes('"transcription_model":"whisper-1"'));for(const required of ['提到的族群／產業','提到的標的','重要校正對照','待確認／需回聽','模型名稱或轉錄時提供的詞彙提示都不是音訊證據'])assert.ok(prompt.includes(required));
+ await summarizePodcast(config,{title:'貼上逐字稿'},original,{fetcher:async(url,options)=>{assert.match(JSON.parse(options.body).messages.at(-1).content,/不能由目前設定推定/);return {ok:true,json:async()=>({choices:[{message:{content:'summary'}}]})};}});
+});

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Local-only AI bridge. Python 3.8+, standard library, no saved keys."""
 import argparse
+from pathlib import Path
 import json
 import secrets
 import ssl
@@ -78,13 +79,20 @@ def local_chat(config, text, ca_file=None):
     return answer
 
 
+def finance_transcription_prompt():
+    path = Path(__file__).with_name('podcast-transcription-prompt.json')
+    if not path.exists():
+        path = Path(__file__).resolve().parents[1]/'shared/podcast-transcription-prompt.json'
+    return json.loads(path.read_text(encoding='utf-8'))
+
+
 def local_transcribe(config, audio, model, ca_file=None):
     checked = target_request(config, 'validate')
     if not audio or len(audio) > 24000000 or not model or any(c in model for c in ('\r', '\n')):
         raise ValueError('Invalid transcription request')
     boundary = 'local-' + secrets.token_hex(16)
     body = bytearray()
-    for name, value in [('model', model), ('language', 'zh'), ('response_format', 'json')]:
+    for name, value in [('model', model), ('language', 'zh'), ('response_format', 'json')] + ([] if 'diariz' in model.lower() else [('prompt', finance_transcription_prompt())]):
         body.extend(('--' + boundary + '\r\nContent-Disposition: form-data; name="' + name + '"\r\n\r\n' + value + '\r\n').encode())
     body.extend(('--' + boundary + '\r\nContent-Disposition: form-data; name="file"; filename="segment.wav"\r\nContent-Type: audio/wav\r\n\r\n').encode())
     body.extend(audio)
@@ -361,7 +369,7 @@ class Handler(BaseHTTPRequestHandler):
                 extension = 'wav' if 'wav' in mime else 'm4a' if 'mp4' in mime else 'webm' if 'webm' in mime else 'mp3'
                 boundary = 'podcast-' + secrets.token_hex(16)
                 body = bytearray()
-                for name, value in [('model', model), ('language', 'zh'), ('response_format', 'json')]:
+                for name, value in [('model', model), ('language', 'zh'), ('response_format', 'json')] + ([] if 'diariz' in model.lower() else [('prompt', finance_transcription_prompt())]):
                     body.extend(('--' + boundary + '\r\nContent-Disposition: form-data; name="' + name + '"\r\n\r\n' + value + '\r\n').encode())
                 body.extend(('--' + boundary + '\r\nContent-Disposition: form-data; name="file"; filename="podcast.' + extension + '"\r\nContent-Type: ' + mime + '\r\n\r\n').encode())
                 body.extend(audio)

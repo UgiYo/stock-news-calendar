@@ -1,7 +1,7 @@
 // worker/account-results.js
-var fields = ["id", "title", "kind", "date", "updated_at", "answer", "text", "partial", "failures"];
+var fields = ["id", "title", "kind", "date", "updated_at", "answer", "text", "partial", "failures", "transcription_model"];
 function validAccountResult(row) {
-  return row && Object.keys(row).every((k) => fields.includes(k)) && typeof row.id === "string" && row.id.length > 0 && row.id.length <= 500 && typeof row.title === "string" && row.title.length <= 1e3 && ["news", "text", "podcast"].includes(row.kind) && typeof row.updated_at === "string" && /^\d{4}-\d\d-\d\dT/.test(row.updated_at) && Number.isFinite(Date.parse(row.updated_at)) && typeof row.answer === "string" && typeof row.text === "string" && typeof row.date === "string" && typeof row.partial === "boolean" && Array.isArray(row.failures) && row.failures.every((v) => typeof v === "string");
+  return row && Object.keys(row).every((k) => fields.includes(k)) && typeof row.id === "string" && row.id.length > 0 && row.id.length <= 500 && (row.transcription_model === void 0 || typeof row.transcription_model === "string" && row.transcription_model.length <= 200) && typeof row.title === "string" && row.title.length <= 1e3 && ["news", "text", "podcast"].includes(row.kind) && typeof row.updated_at === "string" && /^\d{4}-\d\d-\d\dT/.test(row.updated_at) && Number.isFinite(Date.parse(row.updated_at)) && typeof row.answer === "string" && typeof row.text === "string" && typeof row.date === "string" && typeof row.partial === "boolean" && Array.isArray(row.failures) && row.failures.every((v) => typeof v === "string");
 }
 async function accountResultsRoute(req, { sql, reply, user }) {
   const url = new URL(req.url);
@@ -223,7 +223,7 @@ async function aiJobsRoute(req, env, { user, admin = false, reply, dispatch: dis
       const b = await req.json();
       if (!["running", "done", "partial", "failed"].includes(b.status) || enc.encode(JSON.stringify(b.output || {})).length > 15e5) return reply({ error: "Invalid output" }, 400);
       const output = {};
-      for (const field of ["answer", "text", "partial", "failures", "segments", "articles", "episode", "total", "request"]) if (b.output?.[field] !== void 0) output[field] = b.output[field];
+      for (const field of ["answer", "text", "partial", "failures", "segments", "articles", "episode", "total", "request", "transcription_model"]) if (b.output?.[field] !== void 0) output[field] = b.output[field];
       const changed = await sql("UPDATE personal_ai_tasks SET status=?,progress=?,output=?,encrypted=CASE WHEN ?='running' THEN encrypted ELSE NULL END,updated_at=?,read_at=NULL,lease=CASE WHEN ?='running' THEN lease ELSE NULL END WHERE id=? AND lease=? AND status='running' RETURNING id", b.status, String(b.progress || "").slice(0, 1e3), JSON.stringify(output), b.status, now, b.status, b.id, b.lease).first();
       return reply({ ok: !!changed });
     }
