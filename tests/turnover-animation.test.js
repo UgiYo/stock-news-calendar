@@ -22,6 +22,8 @@ test('trend choices include the actual share series and comparison, escaping lab
  assert.ok(html.includes('8,35 80,7 152,21'));
  assert.ok(html.includes('2.00% → 3.00%（+1.00 個百分點）'));
  assert.ok(html.includes('aria-pressed="true"'));
+ assert.ok(html.includes('成交占比 4.00%'));
+ assert.ok(trendSpark({...t,dates:['2026-10-01','2026-10-02','2026-10-05']}).includes('2026-10-02：成交占比 4.00%'));
  assert.ok(html.includes('濾波器&lt;script&gt;'));
  assert.ok(!html.includes('<script>'));
  assert.ok(trendSpark({series:[3,3,3],delta:0}).includes('8,35 80,35 152,35'));

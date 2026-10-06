@@ -16,13 +16,13 @@ export function tenDayTrends(model){
   const latest=series.at(-1),recent=series.slice(-3),prior=series.slice(-6,-3),recentDelta=avg(recent.map(g=>g.share))-avg(prior.map(g=>g.share));
   let label='震盪／持平';if(delta>=0.3&&ups>=Math.ceil(valid.length*0.6)&&valid.length>=5)label='持續升溫';else if(delta<=-0.3&&downs>=Math.ceil(valid.length*0.6)&&valid.length>=5)label='持續降溫';else if(recentDelta>=0.3&&delta>-0.3)label='近期轉強';else if(recentDelta<=-0.3&&delta<0.3)label='近期轉弱';else if(delta>=0.3)label='整體升溫・有震盪';else if(delta<=-0.3)label='整體降溫・有震盪';
   const members=latest.codes.map(code=>{const values=series.map((g,i)=>{const row=g.members.find(r=>r.code===code);return row?{amount:row.amount,share:row.amount/frames[i].total*100}:null;});if(values.slice(0,3).some(v=>!v)||values.slice(-3).some(v=>!v))return null;const a=avg(values.slice(0,3).map(v=>v.share)),b=avg(values.slice(-3).map(v=>v.share)),amount=avg(values.slice(-3).map(v=>v.amount));return {code,before:a,after:b,delta:b-a,amount,contribution:avg(last.map(g=>g.amount))?amount/avg(last.map(g=>g.amount))*100:0};}).filter(Boolean).sort((a,b)=>b.amount-a.amount||a.code.localeCompare(b.code));
-  results.push({...latest,label,before,after,delta,recentDelta,ups,downs,comparisons:valid.length,series:series.map(g=>g.share),members});
+  results.push({...latest,label,before,after,delta,recentDelta,ups,downs,comparisons:valid.length,series:series.map(g=>g.share),dates:frames.map(f=>f.date),members});
  }return results.sort((a,b)=>Math.abs(b.delta)-Math.abs(a.delta)||b.amount-a.amount);
 }
 export function trendSpark(t,label='成交占比走勢'){
  if(!t?.series?.length)return '<span class="flow-picker-missing">資料不足</span>';
  const min=Math.min(...t.series),max=Math.max(...t.series),points=t.series.map((v,i)=>`${8+i*144/Math.max(1,t.series.length-1)},${35-(v-min)/(max-min||1)*28}`).join(' ');
- return `<svg viewBox="0 0 160 44" role="img" aria-label="${esc(label)}" class="flow-spark"><polyline points="${points}" fill="none" stroke="${t.delta>=0?'#087f8c':'#bd6222'}" stroke-width="2"/></svg>`;
+ return `<svg viewBox="0 0 160 44" role="img" aria-label="${esc(label)}" class="flow-spark"><polyline points="${points}" fill="none" stroke="${t.delta>=0?'#087f8c':'#bd6222'}" stroke-width="2"/>${t.series.map((v,i)=>`<circle cx="${8+i*144/Math.max(1,t.series.length-1)}" cy="${35-(v-min)/(max-min||1)*28}" r="5" fill="transparent" stroke="transparent"><title>${esc(t.dates?.[i]||'第 '+(i+1)+' 個交易日')}：成交占比 ${v.toFixed(2)}%</title></circle>`).join('')}</svg>`;
 }
 export function sortTrendChoices(choices){
  return [...choices].sort((a,b)=>{
