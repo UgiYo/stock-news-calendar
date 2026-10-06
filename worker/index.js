@@ -1,5 +1,5 @@
 import {accountResultsRoute} from './account-results.js';
-import {sharedPodcastsRoute} from './podcasts.js';
+import {sharedPodcastsRoute,publicPodcastTranscript} from './podcasts.js';
 import {aiJobsRoute} from './ai-jobs.js';
 import {summaryCacheRoute} from './summary-cache.js';
 export function dailyBars(result,code){
@@ -133,6 +133,7 @@ export default {async fetch(req,env){
  if(req.method==='OPTIONS')return new Response(null,{headers});
  if(req.headers.get('Origin')&&req.headers.get('Origin')!==origin)return reply({error:'Origin not allowed'},403);
  if(path==='/health'){const missing=['DB','GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET','COLLECTOR_SECRET'].filter(k=>!env[k]);return reply({ok:missing.length===0,missing},missing.length?503:200);}
+ if(path==='/podcasts/transcript'&&req.method==='GET'){try{const result=await publicPodcastTranscript(url.searchParams.get('url')||'');return new Response(result.bytes,{headers:{...headers,'Content-Type':result.type,'Cache-Control':'public, max-age=3600','X-Content-Type-Options':'nosniff'}});}catch(e){return reply({error:e.message},502);}}
  if(path==='/podcasts/rss'&&req.method==='GET'){
   let feed;try{feed=new URL(url.searchParams.get('url')||'');}catch{return reply({error:'RSS 網址格式錯誤'},400);}
   if(feed.protocol!=='https:'||feed.username||feed.password||feed.search||feed.hash)return reply({error:'RSS 必須是沒有帳密與查詢參數的 HTTPS 網址'},400);

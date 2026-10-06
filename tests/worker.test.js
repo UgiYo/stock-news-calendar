@@ -206,3 +206,6 @@ test('device news sync isolates accounts and accepts only public news fields',as
  assert.equal((await (await call(env,'/account-news','alice')).json()).news.length,1);
  assert.equal((await (await call(env,'/account-news','bob')).json()).news.length,0);db.close();
 });
+
+
+test('public transcript proxy serves text with CORS and rejects private redirects',async()=>{const {db,env}=setup(),original=globalThis.fetch;try{globalThis.fetch=async()=>new Response('台積電逐字稿',{headers:{'Content-Type':'text/plain; charset=utf-8'}});const path='/podcasts/transcript?url='+encodeURIComponent('https://example.com/episode.vtt');const response=await call(env,path);assert.equal(response.status,200);assert.match(await response.text(),/台積電/);globalThis.fetch=async()=>new Response(null,{status:302,headers:{Location:'https://127.0.0.1/private'}});const blocked=await call(env,path);assert.equal(blocked.status,502);}finally{globalThis.fetch=original;db.close();}});

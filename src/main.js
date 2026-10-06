@@ -1,4 +1,4 @@
-import {podcastMentionSources} from './podcasts.js';
+import {podcastMentionSources,acquirePodcastTranscripts} from './podcasts.js';
 import {setPodcastWatchlist,podcastMentionIndex} from './podcast-mentions.js';
 import {setSyncOwner,syncEnabled,setSyncEnabled,deviceData,saveDeviceData} from './account-sync.js';
 import {syncAccountResults} from './result-sync.js';
@@ -29,7 +29,7 @@ const app=document.querySelector('#app');
 const monthCache=createMonthCache();
 let podcastMentionDates=new Map();
 let podcast={...podcastPreferences(),episodes:[],updated_at:'',error:'',loading:false};
-async function loadPodcasts(refresh=false){if(podcast.loading)return;const owner=state.user?.id||null;podcast.loading=true;podcast.error='';render();try{const data=await fetchPodcastEpisodes({refresh,previousEpisodes:podcast.episodes,previousUpdatedAt:podcast.updated_at,shared:!!state.user});if(owner===(state.user?.id||null))Object.assign(podcast,data);}catch(e){if(owner===(state.user?.id||null))podcast.error=e.message;}finally{podcast.loading=false;render();}}
+async function loadPodcasts(refresh=false){if(podcast.loading)return;const owner=state.user?.id||null;podcast.loading=true;podcast.error='';render();try{const data=await fetchPodcastEpisodes({refresh,previousEpisodes:podcast.episodes,previousUpdatedAt:podcast.updated_at,shared:!!state.user});if(owner===(state.user?.id||null)){Object.assign(podcast,data);void acquirePodcastTranscripts(data.episodes,owner||'guest',{isCurrent:()=>owner===(state.user?.id||null)&&podcast.episodes===data.episodes,onUpdate:()=>render()});}}catch(e){if(owner===(state.user?.id||null))podcast.error=e.message;}finally{podcast.loading=false;render();}}
 
 let holdingsDetail=null;
 function openHoldings(){holdingsDetail={records:loadHoldings(state.user.id),broker:'sinopac',unit:'share',text:'',quotes:{}};render();app.querySelector('#close-holdings')?.focus();refreshHoldingsQuotes();}

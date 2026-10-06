@@ -34,7 +34,7 @@ export function podcastMentions(record,companies=watchlist){
  const signature=JSON.stringify(companies),key=record.owner+':'+record.id,prior=record.id?cache.get(key):null;if(prior&&prior.answer===record.answer&&prior.text===record.text&&prior.signature===signature&&prior.state===record.state)return prior.mentions;
  const passages=aligned?summaryPassages(record.answer):[],source=String(record.text);
  const mentions=companies.flatMap(c=>{const matched=passages.filter(p=>contains(p,c));const direct=contains(source,c),originals=aligned?correctedNames(record,c):[];if(!direct&&!(matched.length&&originals.length))return [];
-  const evidence=[];let time='';for(const line of source.split('\n')){if(/^\[.*分鐘\]/.test(line))time=line;if(contains(line,c)||originals.some(n=>normalize(line).includes(normalize(n))))evidence.push({time,text:line.slice(0,500)});}
+  const evidence=[];let time='';for(const line of source.split('\n')){if(/^\[.*分鐘\]/.test(line)||/^\d{1,2}:\d{2}(?::\d{2})?[.,]\d+\s*-->/.test(line))time=line;if(contains(line,c)||originals.some(n=>normalize(line).includes(normalize(n))))evidence.push({time,text:line.slice(0,500)});}
   return [{code:c.code,name:c.name,status:matched.length?(direct?'原稿與 AI 段落對齊':'AI 名稱校正，請核對原稿'):'逐字稿初步比對，尚未對齊 AI',passages:matched,evidence}];
  });
  if(record.id){if(cache.size>=100)cache.clear();cache.set(key,{answer:record.answer,text:record.text,state:record.state,signature,mentions});}return mentions;

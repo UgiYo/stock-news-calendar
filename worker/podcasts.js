@@ -64,3 +64,17 @@ export async function sharedPodcastsRoute(req,{sql,reply,user,admin=false,hash})
  }
  return reply({error:'Method not allowed'},405);
 }
+
+export async function publicPodcastTranscript(value,fetcher=globalThis.fetch){
+ const validate=v=>{const u=new URL(v),h=u.hostname.toLowerCase();if(u.protocol!=='https:'||u.username||u.password||u.port||!h.includes('.')||/^[\d.]+$/.test(h)||h.includes(':')||/(^|\.)(localhost|local|internal|test|invalid)$/.test(h))throw Error('逐字稿必須是公開 HTTPS 網址');return u;};
+ let target=validate(value);const signal=AbortSignal.timeout(20000);
+ for(let hop=0;hop<4;hop++){
+  const r=await fetcher(target.href,{redirect:'manual',signal,headers:{Accept:'text/plain, text/vtt, application/json, application/x-subrip','User-Agent':'Mozilla/5.0'}});
+  if(r.status>=300&&r.status<400){const location=r.headers.get('Location');if(!location)throw Error('逐字稿來源轉址缺少網址');target=validate(new URL(location,target).href);continue;}
+  if(!r.ok)throw Error('逐字稿來源 HTTP '+r.status);
+  const type=r.headers.get('Content-Type')||'text/plain';if(/html|audio|video|image/i.test(type))throw Error('來源不是可讀取的文字逐字稿');
+  const reader=r.body?.getReader();if(!reader)throw Error('逐字稿來源沒有內容');const chunks=[];let size=0;
+  while(true){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>1500000){await reader.cancel();throw Error('逐字稿超過 1.5 MB');}chunks.push(part.value);}
+  const bytes=new Uint8Array(size);let at=0;for(const c of chunks){bytes.set(c,at);at+=c.byteLength;}return {bytes,type};
+ }throw Error('逐字稿來源轉址過多');
+}

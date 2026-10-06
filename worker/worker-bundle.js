@@ -174,6 +174,49 @@ async function sharedPodcastsRoute(req, { sql, reply, user, admin = false, hash:
   }
   return reply({ error: "Method not allowed" }, 405);
 }
+async function publicPodcastTranscript(value, fetcher = globalThis.fetch) {
+  const validate = (v) => {
+    const u = new URL(v), h = u.hostname.toLowerCase();
+    if (u.protocol !== "https:" || u.username || u.password || u.port || !h.includes(".") || /^[\d.]+$/.test(h) || h.includes(":") || /(^|\.)(localhost|local|internal|test|invalid)$/.test(h)) throw Error("\u9010\u5B57\u7A3F\u5FC5\u9808\u662F\u516C\u958B HTTPS \u7DB2\u5740");
+    return u;
+  };
+  let target = validate(value);
+  const signal = AbortSignal.timeout(2e4);
+  for (let hop = 0; hop < 4; hop++) {
+    const r = await fetcher(target.href, { redirect: "manual", signal, headers: { Accept: "text/plain, text/vtt, application/json, application/x-subrip", "User-Agent": "Mozilla/5.0" } });
+    if (r.status >= 300 && r.status < 400) {
+      const location = r.headers.get("Location");
+      if (!location) throw Error("\u9010\u5B57\u7A3F\u4F86\u6E90\u8F49\u5740\u7F3A\u5C11\u7DB2\u5740");
+      target = validate(new URL(location, target).href);
+      continue;
+    }
+    if (!r.ok) throw Error("\u9010\u5B57\u7A3F\u4F86\u6E90 HTTP " + r.status);
+    const type = r.headers.get("Content-Type") || "text/plain";
+    if (/html|audio|video|image/i.test(type)) throw Error("\u4F86\u6E90\u4E0D\u662F\u53EF\u8B80\u53D6\u7684\u6587\u5B57\u9010\u5B57\u7A3F");
+    const reader = r.body?.getReader();
+    if (!reader) throw Error("\u9010\u5B57\u7A3F\u4F86\u6E90\u6C92\u6709\u5167\u5BB9");
+    const chunks = [];
+    let size = 0;
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      size += part.value.byteLength;
+      if (size > 15e5) {
+        await reader.cancel();
+        throw Error("\u9010\u5B57\u7A3F\u8D85\u904E 1.5 MB");
+      }
+      chunks.push(part.value);
+    }
+    const bytes = new Uint8Array(size);
+    let at = 0;
+    for (const c of chunks) {
+      bytes.set(c, at);
+      at += c.byteLength;
+    }
+    return { bytes, type };
+  }
+  throw Error("\u9010\u5B57\u7A3F\u4F86\u6E90\u8F49\u5740\u904E\u591A");
+}
 
 // worker/ai-jobs.js
 var enc = new TextEncoder();
@@ -657,6 +700,14 @@ var index_default = { async fetch(req, env) {
     if (path === "/health") {
       const missing = ["DB", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "COLLECTOR_SECRET"].filter((k) => !env[k]);
       return reply({ ok: missing.length === 0, missing }, missing.length ? 503 : 200);
+    }
+    if (path === "/podcasts/transcript" && req.method === "GET") {
+      try {
+        const result = await publicPodcastTranscript(url.searchParams.get("url") || "");
+        return new Response(result.bytes, { headers: { ...headers, "Content-Type": result.type, "Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff" } });
+      } catch (e) {
+        return reply({ error: e.message }, 502);
+      }
     }
     if (path === "/podcasts/rss" && req.method === "GET") {
       let feed;
