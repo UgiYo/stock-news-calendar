@@ -124,3 +124,7 @@ html{scrollbar-gutter:stable}body.modal-open{overflow:hidden}button,input,select
 .price-return{font-weight:700;white-space:nowrap}.price-up{color:#b42318}.price-down{color:#16703c}.price-flat,.price-missing{color:#526572}
 
 .candle-range-control{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0}.candle-range-control select{min-height:44px}.reference-price-list{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.reference-price{padding:5px 9px;border-radius:6px;font-weight:600}.reference-price.support{background:#e6f4ee;color:#087f5b}.reference-price.resistance{background:#fff0dc;color:#9a4800}
+
+.podcast-stock-mention{background:#ffdf89;color:#493100;border-radius:4px;padding:0 3px;font-weight:700}.podcast-mentioned-passage{border-left:3px solid #b77c00;padding-left:10px}.podcast-watch-badge{background:#fff0bf;color:#624200}.podcast-watch-mentions{border:1px solid #d9b65d;background:#fffdf4;border-radius:12px;padding:14px;margin:12px 0}.podcast-watch-mentions article{margin-top:12px}.podcast-watch-mentions small{display:block;color:#657078}.podcast-watch-mentions blockquote{margin:10px 0;padding:8px 12px;background:#f4f6f7;border-radius:8px}.podcast-watch-mentions p{overflow-wrap:anywhere}
+
+.podcast-stock-corrected{background:#e8dcff;color:#512b83}.podcast-highlight-legend{display:block;color:#70614a;margin-bottom:10px}
