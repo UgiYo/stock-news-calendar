@@ -12,3 +12,9 @@ binding = "DB"
 database_name = "stock-news-calendar"
 database_id = "REPLACE_WITH_D1_DATABASE_ID"
 migrations_dir = "migrations"
+
+
+# Company login is disabled until the internal bridge, keys and D1 migration are configured.
+# Set COMPANY_AUTH_ENABLED="true", COMPANY_LOGIN_URL, COMPANY_ISSUER,
+# COMPANY_REQUEST_KID as Worker variables.
+# Store COMPANY_REQUEST_PRIVATE_JWK and COMPANY_ASSERTION_JWKS as Worker secrets.

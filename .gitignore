@@ -9,3 +9,9 @@ worker/.dev.vars
 .wrangler/
 
 public/downloads/local-ai-windows.zip
+
+# Company authentication secrets
+internal-auth/.env
+internal-auth/secrets/
+*.sqlite
+__pycache__/

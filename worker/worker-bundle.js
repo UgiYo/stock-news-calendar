@@ -1,3 +1,91 @@
+// worker/company-auth.js
+var enc = new TextEncoder();
+var b64 = (b) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+var bytes = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+var alg = { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" };
+async function signCompanyJWT(claims, jwk, kid) {
+  const input = b64(enc.encode(JSON.stringify({ alg: "RS256", typ: "JWT", kid }))) + "." + b64(enc.encode(JSON.stringify(claims)));
+  const key = await crypto.subtle.importKey("jwk", jwk, alg, false, ["sign"]);
+  return input + "." + b64(await crypto.subtle.sign(alg, key, enc.encode(input)));
+}
+async function verifyCompanyJWT(token, jwks, issuer, audience) {
+  if (typeof token !== "string" || token.length > 8192) throw Error("Invalid assertion");
+  const parts = token.split(".");
+  if (parts.length !== 3) throw Error("Invalid assertion");
+  const header = JSON.parse(new TextDecoder().decode(bytes(parts[0])));
+  const jwk = jwks.keys?.find((k) => k.kid === header.kid && k.kty === "RSA" && !k.d);
+  if (header.alg !== "RS256" || header.typ !== "JWT" || !jwk) throw Error("Invalid signing key");
+  const key = await crypto.subtle.importKey("jwk", jwk, alg, false, ["verify"]);
+  if (!await crypto.subtle.verify(alg, key, bytes(parts[2]), enc.encode(parts[0] + "." + parts[1]))) throw Error("Invalid signature");
+  const c = JSON.parse(new TextDecoder().decode(bytes(parts[1]))), now = Math.floor(Date.now() / 1e3);
+  if (c.iss !== issuer || c.aud !== audience || !Number.isSafeInteger(c.iat) || !Number.isSafeInteger(c.exp) || c.iat > now + 5 || c.exp <= now || c.exp - c.iat > 60 || c.exp <= c.iat) throw Error("Invalid assertion claims");
+  return c;
+}
+function configured(env) {
+  try {
+    const u = new URL(env.COMPANY_LOGIN_URL);
+    return env.COMPANY_AUTH_ENABLED === "true" && u.protocol === "https:" && !u.username && !u.password && !u.search && !u.hash && !!env.COMPANY_REQUEST_PRIVATE_JWK && !!env.COMPANY_ASSERTION_JWKS && !!env.COMPANY_ISSUER && !!env.COMPANY_REQUEST_KID;
+  } catch {
+    return false;
+  }
+}
+var changes = (r) => r?.meta?.changes ?? r?.changes ?? 0;
+async function companyAuthRoute(req, env, { sql, reply, hash: hash2, randomToken: randomToken2, appURL }) {
+  const url = new URL(req.url), path = url.pathname;
+  if (!path.startsWith("/auth/company/")) return null;
+  if (path === "/auth/company/config" && req.method === "GET") return reply({ enabled: configured(env) });
+  if (!configured(env)) return reply({ error: "\u516C\u53F8\u767B\u5165\u5C1A\u672A\u5B8C\u6210\u90E8\u7F72\u8A2D\u5B9A" }, 503);
+  if (req.method !== "POST") return reply({ error: "Method not allowed" }, 405);
+  if (Number(req.headers.get("Content-Length") || 0) > 12e3) return reply({ error: "Request too large" }, 413);
+  let b;
+  try {
+    const text = await req.text();
+    if (text.length > 12e3) throw Error();
+    b = JSON.parse(text);
+  } catch {
+    return reply({ error: "Invalid request" }, 400);
+  }
+  const now = Date.now(), seconds = Math.floor(now / 1e3), aud = url.origin;
+  if (path === "/auth/company/start") {
+    if (Object.keys(b).some((k) => !["state", "challenge"].includes(k)) || !/^[-_A-Za-z0-9]{43}$/.test(b.state || "") || !/^[-_A-Za-z0-9]{43}$/.test(b.challenge || "")) return reply({ error: "Invalid login request" }, 400);
+    const ip = await hash2(req.headers.get("CF-Connecting-IP") || "unknown"), bucket = Math.floor(now / 6e4);
+    const quota = await sql("INSERT INTO company_auth_limits VALUES(?,?,1) ON CONFLICT(ip_hash,bucket) DO UPDATE SET count=count+1 RETURNING count", ip, bucket).first();
+    if (quota.count > 20) return reply({ error: "\u767B\u5165\u8ACB\u6C42\u904E\u65BC\u983B\u7E41\uFF0C\u8ACB\u7A0D\u5F8C\u91CD\u8A66" }, 429);
+    await sql("DELETE FROM company_auth_limits WHERE bucket<?", bucket - 10).run();
+    await sql("DELETE FROM company_auth_transactions WHERE expires_at<?", now).run();
+    const id = randomToken2();
+    await sql("INSERT INTO company_auth_transactions(id,state,challenge,expires_at) VALUES(?,?,?,?)", id, b.state, b.challenge, now + 3e5).run();
+    const request = await signCompanyJWT({ iss: aud, aud: env.COMPANY_ISSUER, iat: seconds, exp: seconds + 60, transaction: id, state: b.state, redirect_uri: appURL.href }, JSON.parse(env.COMPANY_REQUEST_PRIVATE_JWK), env.COMPANY_REQUEST_KID);
+    const target = new URL(env.COMPANY_LOGIN_URL);
+    target.searchParams.set("request", request);
+    return reply({ url: target.href });
+  }
+  if (path === "/auth/company/assertions") {
+    let c;
+    try {
+      if (Object.keys(b).some((k) => k !== "assertion")) throw Error();
+      c = await verifyCompanyJWT(b.assertion, JSON.parse(env.COMPANY_ASSERTION_JWKS), env.COMPANY_ISSUER, aud);
+      if (!/^[0-9a-f]{32}$/.test(c.sub || "") || !/^[-_A-Za-z0-9]{20,100}$/.test(c.transaction || "") || !/^[-_A-Za-z0-9]{20,100}$/.test(c.jti || "") || !Number.isSafeInteger(c.auth_time) || c.auth_time > seconds + 5 || c.auth_time < seconds - 60) throw Error();
+    } catch {
+      return reply({ error: "Invalid company assertion" }, 400);
+    }
+    const code = randomToken2(), id = "company:" + await hash2(c.iss + "\n" + c.sub);
+    const result = await sql("UPDATE company_auth_transactions SET status='verified',subject=?,label=?,jti=?,code_hash=?,code_expires_at=? WHERE id=? AND status='pending' AND expires_at>?", id, String(c.name || "\u516C\u53F8\u5E33\u865F").slice(0, 100), c.jti, await hash2(code), now + 6e4, c.transaction, now).run();
+    if (!changes(result)) return reply({ error: "\u767B\u5165\u4EA4\u6613\u5DF2\u904E\u671F\u6216\u5DF2\u4F7F\u7528" }, 409);
+    return reply({ code });
+  }
+  if (path === "/auth/company/exchange") {
+    if (Object.keys(b).some((k) => !["code", "verifier", "state"].includes(k)) || !/^[0-9a-f]{64}$/.test(b.code || "") || !/^[-_A-Za-z0-9]{43}$/.test(b.verifier || "") || !/^[-_A-Za-z0-9]{43}$/.test(b.state || "")) return reply({ error: "Invalid exchange" }, 400);
+    const challenge = b64(await crypto.subtle.digest("SHA-256", enc.encode(b.verifier)));
+    const row = await sql("UPDATE company_auth_transactions SET status='used' WHERE code_hash=? AND challenge=? AND state=? AND status='verified' AND code_expires_at>? AND expires_at>? RETURNING subject,label", await hash2(b.code), challenge, b.state, now, now).first();
+    if (!row) return reply({ error: "\u516C\u53F8\u767B\u5165\u5DF2\u904E\u671F\u6216\u7121\u6548\uFF0C\u8ACB\u91CD\u65B0\u767B\u5165" }, 400);
+    const token = randomToken2();
+    await env.DB.batch([sql("INSERT INTO users VALUES(?,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email", row.subject, row.label), sql("INSERT INTO sessions VALUES(?,?,?)", await hash2(token), row.subject, now + 36e5)]);
+    return reply({ session: token });
+  }
+  return reply({ error: "Not found" }, 404);
+}
+
 // worker/podcasts.js
 var fields = ["id", "title", "published_at", "date", "url", "audio_url", "description", "duration", "transcript_url"];
 function podcastFeed(value) {
@@ -128,17 +216,17 @@ async function sharedPodcastsRoute(req, { sql, reply, user, admin = false, hash:
 }
 
 // worker/ai-jobs.js
-var enc = new TextEncoder();
-var b64 = (bytes) => {
+var enc2 = new TextEncoder();
+var b642 = (bytes2) => {
   let value = "";
-  for (let i = 0; i < bytes.length; i += 16384) value += String.fromCharCode(...bytes.subarray(i, i + 16384));
+  for (let i = 0; i < bytes2.length; i += 16384) value += String.fromCharCode(...bytes2.subarray(i, i + 16384));
   return btoa(value);
 };
 async function encryptTask(value, secret, id) {
-  const key = await crypto.subtle.importKey("raw", await crypto.subtle.digest("SHA-256", enc.encode("personal-ai-jobs-v1:" + secret)), { name: "AES-GCM" }, false, ["encrypt"]);
+  const key = await crypto.subtle.importKey("raw", await crypto.subtle.digest("SHA-256", enc2.encode("personal-ai-jobs-v1:" + secret)), { name: "AES-GCM" }, false, ["encrypt"]);
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const bytes = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: enc.encode(id) }, key, enc.encode(JSON.stringify(value)));
-  return { iv: b64(iv), data: b64(new Uint8Array(bytes)) };
+  const bytes2 = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: enc2.encode(id) }, key, enc2.encode(JSON.stringify(value)));
+  return { iv: b642(iv), data: b642(new Uint8Array(bytes2)) };
 }
 function cloudConfig(config) {
   if (!["openai", "azure"].includes(config?.provider) || config.transport === "python") throw Error("\u96F2\u7AEF\u80CC\u666F\u76EE\u524D\u53EA\u652F\u63F4\u516C\u958B OpenAI\uFF0FAzure \u7AEF\u9EDE\uFF1B\u516C\u53F8\u5167\u7DB2\u8ACB\u7528\u88DD\u7F6E\u6A21\u5F0F\u3002");
@@ -173,7 +261,7 @@ async function aiJobsRoute(req, env, { user, admin = false, reply, dispatch: dis
     }
     if (path === "/admin/ai-jobs/update" && req.method === "POST") {
       const b = await req.json();
-      if (!["running", "done", "partial", "failed"].includes(b.status) || enc.encode(JSON.stringify(b.output || {})).length > 15e5) return reply({ error: "Invalid output" }, 400);
+      if (!["running", "done", "partial", "failed"].includes(b.status) || enc2.encode(JSON.stringify(b.output || {})).length > 15e5) return reply({ error: "Invalid output" }, 400);
       const output = {};
       for (const field of ["answer", "text", "partial", "failures", "segments", "articles", "episode", "total", "request"]) if (b.output?.[field] !== void 0) output[field] = b.output[field];
       const changed = await sql("UPDATE personal_ai_tasks SET status=?,progress=?,output=?,encrypted=CASE WHEN ?='running' THEN encrypted ELSE NULL END,updated_at=?,read_at=NULL,lease=CASE WHEN ?='running' THEN lease ELSE NULL END WHERE id=? AND lease=? AND status='running' RETURNING id", b.status, String(b.progress || "").slice(0, 1e3), JSON.stringify(output), b.status, now, b.status, b.id, b.lease).first();
@@ -196,7 +284,7 @@ async function aiJobsRoute(req, env, { user, admin = false, reply, dispatch: dis
     if (!env.COLLECTOR_SECRET || !env.GITHUB_DISPATCH_TOKEN) return reply({ error: "\u5F8C\u7AEF\u80CC\u666F\u4EFB\u52D9\u5C1A\u672A\u555F\u7528\u3002" }, 503);
     const b = await req.json();
     if (b.consent !== true) return reply({ error: "\u8ACB\u78BA\u8A8D\u672C\u6B21\u96F2\u7AEF\u80CC\u666F\u8655\u7406\u8207\u66AB\u5B58 Key \u8AAA\u660E\u3002" }, 400);
-    if (!["news", "podcast"].includes(b.kind) || typeof b.title !== "string" || b.title.length > 500 || enc.encode(JSON.stringify(b.input || {})).length > 9e5) return reply({ error: "Invalid task" }, 400);
+    if (!["news", "podcast"].includes(b.kind) || typeof b.title !== "string" || b.title.length > 500 || enc2.encode(JSON.stringify(b.input || {})).length > 9e5) return reply({ error: "Invalid task" }, 400);
     let config;
     try {
       config = cloudConfig(b.config);
@@ -504,13 +592,13 @@ async function fetchNewsPage(value, body) {
       }
       chunks.push(value2);
     }
-    const bytes = new Uint8Array(size);
+    const bytes2 = new Uint8Array(size);
     let offset = 0;
     for (const chunk of chunks) {
-      bytes.set(chunk, offset);
+      bytes2.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    return { url, html: new TextDecoder().decode(bytes) };
+    return { url, html: new TextDecoder().decode(bytes2) };
   }
   throw Error("\u4F86\u6E90\u8F49\u5740\u904E\u591A");
 }
@@ -520,8 +608,8 @@ async function resolveArticleURL(value, includePage = false) {
     const id = new URL(url).pathname.split("/").filter(Boolean).at(-1);
     let decoded;
     try {
-      const bytes = atob(id.replace(/-/g, "+").replace(/_/g, "/"));
-      const candidate = bytes.match(/https?:\/\/[^\x00-\x20\x7f-\xff]+/)?.[0];
+      const bytes2 = atob(id.replace(/-/g, "+").replace(/_/g, "/"));
+      const candidate = bytes2.match(/https?:\/\/[^\x00-\x20\x7f-\xff]+/)?.[0];
       if (candidate) decoded = normalizeArticleURL(candidate);
     } catch {
     }
@@ -565,18 +653,18 @@ var randomToken = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), (
 async function hash(value) {
   return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value))), (x) => x.toString(16).padStart(2, "0")).join("");
 }
-var b642 = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+var b643 = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
 async function verifyGoogle(token, clientID) {
   const [head, body, sig] = token.split(".");
   if (!head || !body || !sig) throw Error("Invalid identity token");
-  const header = JSON.parse(new TextDecoder().decode(b642(head))), claims = JSON.parse(new TextDecoder().decode(b642(body)));
+  const header = JSON.parse(new TextDecoder().decode(b643(head))), claims = JSON.parse(new TextDecoder().decode(b643(body)));
   if (header.alg !== "RS256" || !["accounts.google.com", "https://accounts.google.com"].includes(claims.iss) || claims.aud !== clientID || claims.exp <= Date.now() / 1e3 || !claims.sub || claims.email_verified !== true) throw Error("Invalid identity token");
   const response = await fetch("https://www.googleapis.com/oauth2/v3/certs", { signal: AbortSignal.timeout(1e4) });
   if (!response.ok) throw Error("Google identity unavailable");
   const jwk = (await response.json()).keys.find((k) => k.kid === header.kid);
   if (!jwk) throw Error("Invalid signing key");
   const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
-  if (!await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b642(sig), encoder.encode(head + "." + body))) throw Error("Invalid signature");
+  if (!await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b643(sig), encoder.encode(head + "." + body))) throw Error("Invalid signature");
   return claims;
 }
 async function dispatch(env, workflow = "news.yml") {
@@ -635,14 +723,16 @@ var index_default = { async fetch(req, env) {
         }
         chunks.push(part.value);
       }
-      const bytes = new Uint8Array(size);
+      const bytes2 = new Uint8Array(size);
       let offset = 0;
       for (const chunk of chunks) {
-        bytes.set(chunk, offset);
+        bytes2.set(chunk, offset);
         offset += chunk.byteLength;
       }
-      return new Response(bytes, { headers: { ...headers, "Content-Type": "application/xml; charset=utf-8" } });
+      return new Response(bytes2, { headers: { ...headers, "Content-Type": "application/xml; charset=utf-8" } });
     }
+    const companyLogin = await companyAuthRoute(req, env, { sql, reply, hash, randomToken, appURL });
+    if (companyLogin) return companyLogin;
     if (path === "/auth/start") {
       const state = randomToken(), verifier = randomToken();
       await sql("DELETE FROM oauth_states WHERE expires_at<?", Date.now()).run();
