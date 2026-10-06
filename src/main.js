@@ -1,3 +1,6 @@
+import {observationCandidates} from './observation-stocks.js';
+import {observationTechnical} from './observation-technicals.js';
+import {turnoverFrames,tenDayTrends} from './turnover-animation.js';
 import {renderMarkdown} from './markdown-preview.js';
 import {startCloudSync} from './cloud-ai.js';
 import {openResultsCenter,setResultOwner,refreshNotifications,openResultNotifications} from './ai-results.js';
@@ -25,11 +28,37 @@ let holdingsDetail=null;
 function openHoldings(){holdingsDetail={records:loadHoldings(state.user.id),broker:'sinopac',unit:'share',text:'',quotes:{}};render();app.querySelector('#close-holdings')?.focus();refreshHoldingsQuotes();}
 async function refreshHoldingsQuotes(){const detail=holdingsDetail,owner=state.user?.id;if(!detail)return;const rows=detail.records[detail.broker]?.rows||[];detail.quotes={};if(!rows.length){render();return;}detail.message='讀取已保存行情…';render();try{const data=await api('/portfolio-quotes?codes='+rows.map(r=>r.code).join(','));if(holdingsDetail===detail&&state.user?.id===owner){detail.quotes=Object.fromEntries(data.quotes.map(q=>[q.code,q]));detail.message=`取得 ${data.quotes.length} 檔已保存行情。`;}}catch(e){if(holdingsDetail===detail&&state.user?.id===owner)detail.error=e.message;}if(holdingsDetail===detail)render();}
 let maSettings=readMASettings();
-let chainCatalog=null,chainError='';let ranking=null,rankingTag='',rankingDate='',rankingError='',rankingDetail=null,rankingRequest=0;
+let chainCatalog=null,chainError='';let ranking=null,rankingTag='',rankingDate='',rankingError='',observationRequest=0,rankingDetail=null,rankingRequest=0;
 async function openRankingStock(code){const request=++rankingRequest,owner=state.user?.id;rankingDetail={...maSettings,code,stock:ranking?.stocks.find(r=>r.code===code)||state.companies.find(c=>c.code===code)||state.previewCompany,loading:true};render();app.querySelector('#close-stock-ranking')?.focus();rankingDetail.profileLoading=true;readCompanyProfile(code).then(result=>{if(request===rankingRequest&&owner===state.user?.id){rankingDetail.profile=result.profile;rankingDetail.profileError=result.warning||'';}}).catch(e=>{if(request===rankingRequest&&owner===state.user?.id)rankingDetail.profileError=e.message;}).finally(()=>{if(request===rankingRequest&&owner===state.user?.id){rankingDetail.profileLoading=false;render();}});try{const [data,chart]=await Promise.all([api('/ranking-stock?code='+encodeURIComponent(code)),api('/chart-prices?code='+encodeURIComponent(code))]);if(request===rankingRequest&&owner===state.user?.id)Object.assign(rankingDetail,{...data,stock:data.stock||state.companies.find(c=>c.code===code)||rankingDetail.stock,code,prices:chart.prices,candlePeriod:'day',...maSettings,loading:false});}catch(e){if(request===rankingRequest&&owner===state.user?.id)Object.assign(rankingDetail,{loading:false,error:e.message});}if(request===rankingRequest)render();}
 async function changeCandlePeriod(period,force=false){const detail=rankingDetail;if(!detail)return;detail.candlePeriod=period;if(!period.endsWith('m')){render();return;}if(detail.minuteData?.[period]&&!force){render();return;}detail.minuteLoading=true;detail.minuteError='';render();try{const result=await api(`/intraday?code=${detail.code}&interval=${period}${force?'&refresh=1':''}`);if(rankingDetail===detail){detail.minuteData??={};detail.minuteData[period]=result.prices;}}catch(e){if(rankingDetail===detail)detail.minuteError=e.message;}finally{if(rankingDetail===detail){detail.minuteLoading=false;render();}}}
 function closeRankingStock(){const code=rankingDetail?.code;rankingRequest++;rankingDetail=null;render();app.querySelector(`[data-stock="${code}"]`)?.focus();}
-async function loadRanking(date=''){try{if(!chainCatalog){try{const r=await fetch(import.meta.env.BASE_URL+'data/value-chains.json');if(!r.ok)throw Error('分類資料讀取失敗');chainCatalog=await r.json();chainError='';}catch(e){chainError=e.message;}}ranking=await api('/ranking'+(date?'?date='+encodeURIComponent(date):''));if(ranking.date&&!ranking.previousStocks){const index=ranking.dates?.indexOf(ranking.date),previousDate=ranking.previousDate||ranking.dates?.[index+1];if(previousDate){try{const previous=await api('/ranking?date='+encodeURIComponent(previousDate));ranking={...ranking,previousDate:previous.date,previousStocks:previous.stocks};}catch{}}}rankingDate=ranking.date||'';rankingTag='';rankingError='';}catch(e){rankingError=e.message;}render();}
+async function loadObservationTechnicals(data,request,owner){
+ if(!chainCatalog||!data.date)return;
+ const candidates=observationCandidates(tenDayTrends(turnoverFrames(chainCatalog,data.history,data.date)),data.stocks,state.companies);
+ data.observationTechnicals={};data.observationLoading=!!candidates.length;render();
+ for(let i=0;i<candidates.length;i+=4){
+  if(request!==observationRequest||owner!==state.user?.id)return;
+  const results=await Promise.allSettled(candidates.slice(i,i+4).map(async r=>{
+   const result=await api('/chart-prices?code='+encodeURIComponent(r.code));
+   return [r.code,observationTechnical(result.prices||[],data.date)];
+  }));
+  if(request!==observationRequest||owner!==state.user?.id)return;
+  results.forEach((r,j)=>{const code=candidates[i+j].code;data.observationTechnicals[code]=r.status==='fulfilled'?r.value[1]:{eligible:false,reason:'行情讀取失敗，請重試'};});
+ }
+ data.observationLoading=false;if(ranking===data)render();
+}
+async function loadRanking(date=''){
+ const request=++observationRequest,owner=state.user?.id;
+ try{
+  if(!chainCatalog){try{const r=await fetch(import.meta.env.BASE_URL+'data/value-chains.json');if(!r.ok)throw Error('分類資料讀取失敗');chainCatalog=await r.json();chainError='';}catch(e){chainError=e.message;}}
+  let data=await api('/ranking'+(date?'?date='+encodeURIComponent(date):''));
+  if(data.date&&!data.previousStocks){const index=data.dates?.indexOf(data.date),previousDate=data.previousDate||data.dates?.[index+1];if(previousDate){try{const previous=await api('/ranking?date='+encodeURIComponent(previousDate));data={...data,previousDate:previous.date,previousStocks:previous.stocks};}catch{}}}
+  if(request!==observationRequest||owner!==state.user?.id)return;
+  ranking=data;rankingDate=data.date||'';rankingTag='';rankingError='';
+  loadObservationTechnicals(data,request,owner).catch(()=>{if(ranking===data&&request===observationRequest){data.observationLoading=false;data.observationError='技術條件讀取失敗，請重新選擇交易日期重試';render();}});
+ }catch(e){if(request===observationRequest)rankingError=e.message;}render();
+}
+
 let marketPrices={},priceMessage={};
 async function loadPrices(code){if(!code||!state.user)return;try{marketPrices[code]=(await api(`/prices?code=${encodeURIComponent(code)}`)).prices;priceMessage[code]='';}catch(e){priceMessage[code]=e.message;}render();}
 function reactionPanel(news){const result=studyEvent(news,marketPrices[news.company_code]||[]),pct=v=>v==null?'—':`${v>=0?'+':''}${v.toFixed(2)}%`;if(!result)return `<small>股價反應：${esc(priceMessage[news.company_code]||'等待股價資料與前一交易日基準')}</small>`;return `<details class="reaction"><summary>${esc(result.category)} · 股價反應（事件交易日 ${result.date}）</summary><p>${esc(result.alignment)}。基準：${result.baseline} 收盤 ${result.baselineClose.toFixed(2)}；前 5 日 ${pct(result.before5)}</p><table><thead><tr><th>事件日起</th><th>截止日期</th><th>個股</th><th>大盤</th><th>相對差（百分點）</th></tr></thead><tbody>${result.returns.map(r=>`<tr><td>第 ${r.days} 交易日</td><td>${r.date||'等待資料'}</td><td>${pct(r.stock)}</td><td>${pct(r.market)}</td><td>${r.excess==null?'等待資料':r.excess.toFixed(2)}</td></tr>`).join('')}</tbody></table><small>第 1 交易日包含事件交易日本身；報酬＝截止日收盤 ÷ 基準收盤 − 1。同一檔同日盤中與盤後新聞的基準不同，因此數值可能不同。未還原股價，除權息會影響數值；相對差為個股減加權指數報酬，並非因果推論。同日可能有其他事件。</small></details>`;}

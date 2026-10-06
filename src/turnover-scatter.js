@@ -21,7 +21,7 @@ export function createTurnoverScatter(host,model,limit,onSelect){
  for(const [id,el] of elements){el.onclick=()=>select(id);el.onkeydown=e=>{if(['Enter',' '].includes(e.key)){e.preventDefault();select(id);}};}
  host.querySelectorAll('[data-scatter-choice]').forEach(b=>b.onclick=()=>select(b.dataset.scatterChoice));
  const paint=(id,p)=>{const el=elements.get(id);el.querySelector('circle').setAttribute('fill',scatterColor(p.heat));el.querySelector('circle').setAttribute('cx',p.x);el.querySelector('circle').setAttribute('cy',p.y);el.querySelector('circle').setAttribute('r',p.r);el.querySelector('text').setAttribute('x',p.x);el.querySelector('text').setAttribute('y',p.y);};
- return {update(frame,animate=false,onComplete=()=>{}){
+ return {update(frame,animate=false,onComplete=()=>{},onProgress=()=>{}){
   cancelAnimationFrame(animation);activeRows=new Map(frame.flows.filter(g=>ids.includes(g.id)&&Number.isFinite(g.change)&&Number.isFinite(g.share)).map(g=>[g.id,g]));
   const targets=new Map(),from=new Map(current);let missing=0;
   for(const [id,el] of elements){const g=activeRows.get(id);el.setAttribute('opacity',g?'0.88':'0');el.setAttribute('tabindex',g?'0':'-1');el.setAttribute('aria-hidden',g?'false':'true');el.style.pointerEvents=g?'auto':'none';if(!g){current.delete(id);missing++;continue;}
@@ -30,7 +30,7 @@ export function createTurnoverScatter(host,model,limit,onSelect){
   }
   host.querySelectorAll('[data-scatter-choice]').forEach(b=>{b.disabled=!activeRows.has(b.dataset.scatterChoice);});
   host.querySelector('[data-scatter-missing]').textContent=missing?`${missing} 個細項缺少當日或前日比較資料，暫不畫點。`:'';
-  const reduced=globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches,start=performance.now(),duration=animate&&!reduced?(typeof animate==='number'?animate:1800):0;
-  const tick=now=>{if(!host.isConnected)return;const t=duration?Math.min(1,(now-start)/duration):1,ease=typeof animate==='number'?t:t*t*(3-2*t);for(const [id,to] of targets){const a=from.get(id)||to,p=interpolateScatter(a,to,ease);current.set(id,p);paint(id,p);}if(t<1)animation=requestAnimationFrame(tick);else{animation=requestAnimationFrame(()=>{animation=0;if(host.isConnected)onComplete();});}};tick(start);
+  const reduced=globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches,start=performance.now(),duration=typeof animate==='number'?animate:(animate&&!reduced?700:0);
+  const tick=now=>{if(!host.isConnected)return;const t=duration?Math.min(1,(now-start)/duration):1,ease=typeof animate==='number'?t:t*t*(3-2*t);for(const [id,to] of targets){const a=from.get(id)||to,p=interpolateScatter(a,to,ease);current.set(id,p);paint(id,p);}onProgress(t);if(t<1)animation=requestAnimationFrame(tick);else{animation=requestAnimationFrame(()=>{animation=0;if(host.isConnected)onComplete();});}};tick(start);
  },pause(){cancelAnimationFrame(animation);animation=0;},destroy(){cancelAnimationFrame(animation);}};
 }
