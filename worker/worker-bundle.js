@@ -265,7 +265,7 @@ async function fetchDailyBars(company) {
   const symbol = company.code + (company.market === "\u4E0A\u6AC3" ? ".TWO" : ".TW");
   for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
     try {
-      const r = await fetch(`https://${host}/v8/finance/chart/${symbol}?interval=1d&range=6mo&includePrePost=false`, { headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" }, signal: AbortSignal.timeout(7e3) });
+      const r = await fetch(`https://${host}/v8/finance/chart/${symbol}?interval=1d&range=2y&includePrePost=false`, { headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" }, signal: AbortSignal.timeout(7e3) });
       if (!r.ok) continue;
       const result = (await r.json()).chart?.result?.[0];
       if (result?.meta?.symbol !== symbol) continue;
@@ -275,7 +275,7 @@ async function fetchDailyBars(company) {
     }
   }
   const now = new Date(Date.now() + 8 * 36e5), otc = company.market === "\u4E0A\u6AC3";
-  const months = await Promise.all(Array.from({ length: 5 }, async (_, i) => {
+  const months = await Promise.all(Array.from({ length: 25 }, async (_, i) => {
     try {
       const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)), month = d.toISOString().slice(0, 7), date = month.replace("-", "") + "01";
       const u = otc ? `https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock?response=json&date=${month.replace("-", "/")}/01&code=${company.code}` : `https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date=${date}&stockNo=${company.code}`;
@@ -685,7 +685,7 @@ var index_default = { async fetch(req, env) {
         const hasPrices = await sql("SELECT name FROM sqlite_master WHERE type='table' AND name='prices'").first(), list = [...codes], companies = [];
         for (let i = 0; i < list.length; i += 100) {
           const chunk = list.slice(i, i + 100), placeholders = chunk.map(() => "?").join(",");
-          const query = hasPrices ? `SELECT c.*,(SELECT MAX(date) FROM prices p WHERE p.code=c.code) AS last_price_date FROM companies c WHERE code IN (${placeholders})` : `SELECT * FROM companies WHERE code IN (${placeholders})`;
+          const query = hasPrices ? `SELECT c.*,(SELECT MAX(date) FROM prices p WHERE p.code=c.code) AS last_price_date,(SELECT group_concat(month) FROM (SELECT substr(date,1,7) AS month FROM prices p WHERE p.code=c.code AND p.open>0 AND p.high>0 AND p.low>0 GROUP BY month HAVING count(*)>=10)) AS price_months FROM companies c WHERE code IN (${placeholders})` : `SELECT * FROM companies WHERE code IN (${placeholders})`;
           companies.push(...(await sql(query, ...chunk).all()).results);
         }
         return reply({ companies });
@@ -856,19 +856,27 @@ var index_default = { async fetch(req, env) {
       if (!/^[1-9]\d{3}$/.test(code || "")) return reply({ error: "Invalid stock code" }, 400);
       let prices = [];
       try {
-        prices = (await sql("SELECT * FROM prices WHERE code=? AND date>=date('now','-180 days') ORDER BY date", code).all()).results;
+        prices = (await sql("SELECT * FROM prices WHERE code=? AND date>=date('now','-2 years') ORDER BY date", code).all()).results;
       } catch (e) {
         if (!String(e.message).includes("no such table")) throw e;
       }
       const usable = prices.filter((p) => [p.open, p.high, p.low, p.close].every((v) => Number.isFinite(v) && v > 0) && p.low <= Math.min(p.open, p.close) && p.high >= Math.max(p.open, p.close));
-      if (req.method === "POST" || !usable.length) {
+      const shortHistory = usable.length && usable[0].date > new Date(Date.now() - 700 * 864e5).toISOString().slice(0, 10);
+      let recentlyChecked = false;
+      if (shortHistory) {
+        await sql("CREATE TABLE IF NOT EXISTS price_history_sync(code TEXT PRIMARY KEY,updated_at INTEGER NOT NULL)").run();
+        recentlyChecked = !!await sql("SELECT code FROM price_history_sync WHERE code=? AND updated_at>?", code, Date.now() - 864e5).first();
+      }
+      if (req.method === "POST" || !usable.length || shortHistory && !recentlyChecked) {
         try {
           const company = await sql("SELECT * FROM companies WHERE code=?", code).first();
-          if (!company) return reply({ error: "\u516C\u53F8\u4E0D\u5B58\u5728" }, 404);
+          if (!company) return usable.length ? reply({ prices, refreshed: false }) : reply({ error: "\u516C\u53F8\u4E0D\u5B58\u5728" }, 404);
           const { rows, source } = await fetchDailyBars(company);
           await sql("CREATE TABLE IF NOT EXISTS prices(code TEXT NOT NULL,date TEXT NOT NULL,open REAL,high REAL,low REAL,close REAL NOT NULL,volume REAL,PRIMARY KEY(code,date))").run();
           for (let i = 0; i < rows.length; i += 50) await env.DB.batch(rows.slice(i, i + 50).map((p) => sql("INSERT INTO prices(code,date,open,high,low,close,volume) VALUES(?,?,?,?,?,?,?) ON CONFLICT(code,date) DO UPDATE SET open=excluded.open,high=excluded.high,low=excluded.low,close=excluded.close,volume=excluded.volume", p.code, p.date, p.open, p.high, p.low, p.close, p.volume)));
-          return reply({ prices: (await sql("SELECT * FROM prices WHERE code=? AND date>=date('now','-180 days') ORDER BY date", code).all()).results, source, refreshed: true });
+          await sql("CREATE TABLE IF NOT EXISTS price_history_sync(code TEXT PRIMARY KEY,updated_at INTEGER NOT NULL)").run();
+          await sql("INSERT INTO price_history_sync VALUES(?,?) ON CONFLICT(code) DO UPDATE SET updated_at=excluded.updated_at", code, Date.now()).run();
+          return reply({ prices: (await sql("SELECT * FROM prices WHERE code=? AND date>=date('now','-2 years') ORDER BY date", code).all()).results, source, refreshed: true });
         } catch (e) {
           if (!usable.length) return reply({ error: e.message }, 502);
           return reply({ prices, refreshed: false, warning: e.message });
@@ -922,7 +930,7 @@ var index_default = { async fetch(req, env) {
       const code = url.searchParams.get("code");
       if (!await sql("SELECT 1 FROM watchlists WHERE user_id=? AND company_code=?", user.id, code).first()) return reply({ error: "\u8ACB\u5148\u8FFD\u8E64\u516C\u53F8" }, 403);
       try {
-        return reply({ prices: (await sql("SELECT * FROM prices WHERE code IN (?, 'TAIEX') AND date>=date('now','-180 days') ORDER BY date", code).all()).results });
+        return reply({ prices: (await sql("SELECT * FROM prices WHERE code IN (?, 'TAIEX') AND date>=date('now','-2 years') ORDER BY date", code).all()).results });
       } catch (e) {
         if (String(e.message).includes("no such table")) return reply({ prices: [] });
         throw e;
