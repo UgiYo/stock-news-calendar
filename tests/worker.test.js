@@ -122,3 +122,18 @@ test('imported Podcasts are shared by logged-in users, deduplicated and refreshe
   assert.equal((await call(env,'/podcasts/channels','alice',{...data,feed:'https://127.0.0.1/feed'})).status,400);
  }finally{db.close();}
 });
+
+test('untracked ranking stock gets missing OHLCV and manual refresh fetches again',async()=>{
+ const {db,env}=setup();db.exec("INSERT INTO companies(code,name,full_name,market) VALUES('8150','南茂','南茂科技','上市');INSERT INTO users VALUES('alice','a@example.com');");
+ db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(await hash('alice'),'alice',Date.now()+60000);
+ const original=globalThis.fetch;let requests=0;
+ globalThis.fetch=async()=>{requests++;return Response.json({chart:{result:[{meta:{symbol:'8150.TW'},timestamp:[Math.floor(Date.now()/1000)],indicators:{quote:[{open:[10],high:[12],low:[9],close:[11],volume:[2000]}]}}]}});};
+ try{
+  assert.equal((await call(env,'/chart-prices?code=8150')).status,401);assert.equal(requests,0);
+  const first=await (await call(env,'/chart-prices?code=8150','alice')).json();assert.equal(first.prices[0].open,10);assert.equal(first.refreshed,true);assert.equal(requests,1);
+  await call(env,'/chart-prices?code=8150','alice');assert.equal(requests,1);
+  await call(env,'/chart-prices?code=8150','alice',{});assert.equal(requests,2);
+  globalThis.fetch=async()=>{throw Error('offline');};
+  const fallback=await (await call(env,'/chart-prices?code=8150','alice',{})).json();assert.equal(fallback.prices.length,1);assert.equal(fallback.refreshed,false);assert.ok(fallback.warning);
+ }finally{globalThis.fetch=original;db.close();}
+});
