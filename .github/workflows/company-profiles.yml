@@ -10,12 +10,13 @@ permissions:
   contents: read
 concurrency:
   group: company-profiles
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   profiles:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
+      PROFILE_MODE: ${{ github.event_name }}
       WORKER_API_URL: ${{ vars.WORKER_API_URL }}
       COLLECTOR_SECRET: ${{ secrets.COLLECTOR_SECRET }}
     steps:

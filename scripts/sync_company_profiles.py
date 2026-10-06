@@ -1,5 +1,5 @@
 """Collect public company facts from a non-edge runtime; Worker validates identity."""
-import sys,time
+import os,sys,time
 from urllib.parse import urlparse
 import requests
 from collect import api
@@ -14,7 +14,8 @@ def main():
             time.sleep(5)
     try:print('Edge source diagnostic',api('/admin/company-profile-probe?code=2330'),flush=True)
     except requests.RequestException:print('Edge diagnostic unavailable; continuing collection',flush=True)
-    codes=list(dict.fromkeys(['2330','3026']+queued+ [c['code'] for c in api('/admin/chart-codes')['companies']]))[:100]
+    daily=[c['code'] for c in api('/admin/chart-codes')['companies']] if os.environ.get('PROFILE_MODE')=='schedule' else []
+    codes=list(dict.fromkeys(['2330','3026']+queued+daily))[:100]
     failed=[]
     from playwright.sync_api import sync_playwright
     automation=sync_playwright().start()
