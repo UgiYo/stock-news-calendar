@@ -102,3 +102,15 @@ html{scrollbar-gutter:stable}body.modal-open{overflow:hidden}button,input,select
 .flow-screen-date{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:12px;background:#edf6f7;border-radius:10px;margin:10px 0}.flow-screen-date select{min-height:44px}.flow-screen-date small{flex-basis:100%;color:#526572}.flow-selection-prompt{padding:16px;background:#f8fbfc;border:1px dashed #bdccd5;border-radius:10px}
 
 .trading-date-calendar{width:100%;max-width:360px;margin:8px 0}.trading-date-calendar summary{cursor:pointer;padding:12px;border:1px solid #bdccd5;border-radius:8px;min-height:44px}.trading-calendar-panel{padding:12px;background:white;border:1px solid #dce5eb;border-radius:10px;margin-top:6px}.trading-calendar-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.trading-calendar-heading button{min-height:44px;min-width:44px}.trading-calendar-weekdays,.trading-calendar-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;text-align:center}.trading-calendar-weekdays{margin:10px 0;color:#526572;font-size:13px}.trading-calendar-days button{min-height:40px;padding:6px 0;min-width:0;font-variant-numeric:tabular-nums}.trading-calendar-days button:disabled{background:#eef1f4;color:#9ba5ad;border-color:#e4e8ec;opacity:1;cursor:not-allowed}.trading-calendar-days .outside-month{opacity:.55}.trading-calendar-days .selected{background:#087f8c;color:white;border-color:#087f8c}.trading-calendar-panel small{display:block;margin-top:10px;color:#526572}.flow-screen-date [data-observation-calendar]{width:100%}
+
+.flow-observation .flow-screen-date{padding:0 0 12px;margin:0 0 12px;background:transparent;border-bottom:1px solid #c9dedf;border-radius:0}
+.trend-badge{display:inline-block;padding:3px 9px;border-radius:6px;font-size:.9em;line-height:1.6;white-space:normal}
+.trend-warming{color:#9a3412;background:#ffedd5}
+.trend-strengthening{color:#6b21a8;background:#f3e8ff}
+.trend-cooling{color:#1e40af;background:#dbeafe}
+.trend-neutral{color:#475569;background:#eef2f6}
+.watch-chain-group{margin:12px 0;border:1px solid #dce5eb;border-radius:10px;padding:12px}
+.watch-chain-group summary{cursor:pointer;line-height:1.8}
+.watch-chain-stocks{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:10px;margin-top:10px}
+.watch-chain-stocks article{padding:12px;border:1px solid #dce5eb;border-radius:8px;background:white;min-width:0}
+.watch-chain-stocks article .trend-badge{margin:6px}
