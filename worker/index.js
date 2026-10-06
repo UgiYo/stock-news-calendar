@@ -1,3 +1,4 @@
+import {companyAuthRoute} from './company-auth.js';
 import {sharedPodcastsRoute} from './podcasts.js';
 import {aiJobsRoute} from './ai-jobs.js';
 import {summaryCacheRoute} from './summary-cache.js';
@@ -141,6 +142,7 @@ export default {async fetch(req,env){
   const reader=response.body?.getReader();if(!reader)return new Response(await response.text(),{headers:{...headers,'Content-Type':'application/xml; charset=utf-8'}});
   const chunks=[];let size=0;while(true){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>12000000){await reader.cancel();return reply({error:'RSS 超過 12 MB'},413);}chunks.push(part.value);}const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}return new Response(bytes,{headers:{...headers,'Content-Type':'application/xml; charset=utf-8'}});
  }
+ const companyLogin=await companyAuthRoute(req,env,{sql,reply,hash,randomToken,appURL});if(companyLogin)return companyLogin;
  if(path==='/auth/start'){
  const state=randomToken(),verifier=randomToken();await sql('DELETE FROM oauth_states WHERE expires_at<?',Date.now()).run();
  await sql('INSERT INTO oauth_states VALUES(?,?,?)',state,verifier,Date.now()+600000).run();
@@ -294,3 +296,4 @@ export default {async fetch(req,env){
  return reply({error:'Not found'},404);
  }catch(e){console.error(e.message);return reply({error:'服務暫時無法使用，請檢查後端設定'},500);}
 }};
+
