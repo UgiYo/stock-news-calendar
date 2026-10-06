@@ -1,9 +1,11 @@
-export async function summaryCacheRoute(req,{sql,reply,user,randomToken}){
+import {ensureD1Index} from './d1-usage.js';
+export async function summaryCacheRoute(req,{sql,reply,user,randomToken,db}){
  if(req.method!=='POST')return reply({error:'Method not allowed'},405);
  const raw=await req.text();if(raw.length>65000)return reply({error:'Too large'},413);
  let b;try{b=JSON.parse(raw);}catch{return reply({error:'Invalid JSON'},400);}
  if(!b||Object.keys(b).some(k=>!['key','action','lease','answer'].includes(k))||!/^[a-f0-9]{64}$/.test(b.key)||!['claim','save','release'].includes(b.action))return reply({error:'Invalid cache request'},400);
  await sql('CREATE TABLE IF NOT EXISTS summary_cache(key TEXT PRIMARY KEY,answer TEXT,owner TEXT,lease TEXT,expires INTEGER NOT NULL)').run();
+ if(db)await ensureD1Index(db,'summary_expires','CREATE INDEX IF NOT EXISTS summary_cache_expires ON summary_cache(expires)');
  const now=Date.now();
  if(b.action==='claim'){
   await sql('DELETE FROM summary_cache WHERE expires<?',now).run();

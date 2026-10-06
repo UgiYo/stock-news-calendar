@@ -1,3 +1,4 @@
+import {ensureD1Index} from './d1-usage.js';
 const enc=new TextEncoder();
 const b64=bytes=>{let value='';for(let i=0;i<bytes.length;i+=16384)value+=String.fromCharCode(...bytes.subarray(i,i+16384));return btoa(value);};
 export async function encryptTask(value,secret,id){const key=await crypto.subtle.importKey('raw',await crypto.subtle.digest('SHA-256',enc.encode('personal-ai-jobs-v1:'+secret)),{name:'AES-GCM'},false,['encrypt']);const iv=crypto.getRandomValues(new Uint8Array(12));const bytes=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:enc.encode(id)},key,enc.encode(JSON.stringify(value)));return {iv:b64(iv),data:b64(new Uint8Array(bytes))};}
@@ -6,7 +7,7 @@ const schema="CREATE TABLE IF NOT EXISTS personal_ai_tasks(id TEXT PRIMARY KEY,u
 const publicTask=r=>({id:r.id,title:r.title,kind:r.kind,date:r.date,state:['done','partial'].includes(r.status)?'complete':['failed','interrupted'].includes(r.status)?'interrupted':r.status,progress:r.progress,updated_at:new Date(r.updated_at).toISOString(),read_at:r.read_at?new Date(r.read_at).toISOString():null,cloud_id:r.id,...JSON.parse(r.output)});
 export async function aiJobsRoute(req,env,{user,admin=false,reply,dispatch,readArticleURL}){
  const path=new URL(req.url).pathname;if(!path.startsWith('/ai-jobs')&&!path.startsWith('/admin/ai-jobs'))return null;
- const sql=(q,...args)=>env.DB.prepare(q).bind(...args);await sql(schema).run();const now=Date.now();
+ const sql=(q,...args)=>env.DB.prepare(q).bind(...args);await sql(schema).run();await ensureD1Index(env.DB,'ai_user_updated','CREATE INDEX IF NOT EXISTS personal_ai_user_updated ON personal_ai_tasks(user_id,updated_at DESC)');await ensureD1Index(env.DB,'ai_status_updated','CREATE INDEX IF NOT EXISTS personal_ai_status_updated ON personal_ai_tasks(status,updated_at)');await ensureD1Index(env.DB,'ai_expires','CREATE INDEX IF NOT EXISTS personal_ai_expires ON personal_ai_tasks(expires_at) WHERE encrypted IS NOT NULL');const now=Date.now();
  await sql("UPDATE personal_ai_tasks SET status='interrupted',progress='處理程序中斷，請重新送出並保留成功段落',encrypted=NULL,updated_at=?,lease=NULL WHERE status='running' AND updated_at<?",now,now-20*60000).run();
  await sql("UPDATE personal_ai_tasks SET status='interrupted',progress='任務已逾期，請重新送出',encrypted=NULL,updated_at=? WHERE encrypted IS NOT NULL AND expires_at<?",now,now).run();
  if(admin){

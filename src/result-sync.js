@@ -4,11 +4,11 @@ import {resultRecords,saveResult,removeSyncedResult} from './ai-results.js';
 let loading=false,applying=false,last=0;
 const sent=new Map(),sentNews=new Set();
 export async function syncAccountResults(force=false){
- const who=syncOwner();if(!syncEnabled(who)||loading||(!force&&Date.now()-last<30000))return;
+ const who=syncOwner();if(globalThis.document?.visibilityState==='hidden')return;if(!syncEnabled(who)||loading||(!force&&Date.now()-last<300000))return;
  loading=true;last=Date.now();
  try{
   const snapshot=deviceData(who);const news=(snapshot?.news||[]).filter(n=>!sentNews.has(who+':'+n.url)).map(n=>Object.fromEntries(['company_code','title','url','source','published_at','news_date'].map(k=>[k,String(n[k]||'')])));
-  for(let i=0;i<news.length;i+=100){if(who!==syncOwner()||!syncEnabled(who))return;const batch=news.slice(i,i+100);await api('/account-news',{body:batch});batch.forEach(n=>sentNews.add(who+':'+n.url));}
+  for(let i=0;i<news.length;i+=40){if(who!==syncOwner()||!syncEnabled(who))return;const batch=news.slice(i,i+40);await api('/account-news',{body:batch});batch.forEach(n=>sentNews.add(who+':'+n.url));}
   const {news:sharedNews}=await api('/account-news');if(who!==syncOwner()||!syncEnabled(who))return;
   const merged=new Map((deviceData(who)?.news||[]).map(n=>[n.url,n]));for(const n of sharedNews||[])merged.set(n.url,n);saveDeviceData({...deviceData(who),news:[...merged.values()]},who);
   const {results,deleted}=await api('/account-results');if(who!==syncOwner()||!syncEnabled(who))return;
@@ -23,5 +23,5 @@ export async function syncAccountResults(force=false){
 if(typeof window!=='undefined'){
  window.addEventListener('account-result-saved',e=>{if(!applying&&e.detail.who===syncOwner()&&syncEnabled()&&syncResultPayload(e.detail.row))void syncAccountResults(true);});
  window.addEventListener('account-result-deleted',e=>{if(e.detail.who===syncOwner()&&syncEnabled())void api('/account-results?id='+encodeURIComponent(e.detail.id),{method:'DELETE'}).catch(()=>{});});
- window.addEventListener('focus',()=>void syncAccountResults());setInterval(()=>void syncAccountResults(),30000);
+ window.addEventListener('focus',()=>void syncAccountResults());setInterval(()=>void syncAccountResults(),300000);
 }

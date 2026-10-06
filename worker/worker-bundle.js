@@ -1,9 +1,34 @@
+// worker/d1-usage.js
+var initialized = /* @__PURE__ */ new WeakMap();
+async function ensureD1Index(db, name, statement) {
+  let rows = initialized.get(db);
+  if (!rows) {
+    rows = /* @__PURE__ */ new Map();
+    initialized.set(db, rows);
+  }
+  if (!rows.has(name)) {
+    const promise = db.prepare(statement).bind().run().catch((error) => {
+      rows.delete(name);
+      throw error;
+    });
+    rows.set(name, promise);
+  }
+  await rows.get(name);
+}
+function d1QuotaError(error, now = Date.now()) {
+  const message = String(error?.message || error);
+  const kind = /daily (?:row |rows )?(?:read|reading) limit|daily.*(?:rows? read|read.*quota)/i.test(message) ? "read" : /daily (?:row |rows )?(?:write|written) limit|daily.*(?:rows? writ|write.*quota)/i.test(message) ? "write" : null;
+  if (!kind) return null;
+  const reset = Math.floor(now / 864e5) * 864e5 + 864e5;
+  return { error: `D1 \u6BCF\u65E5${kind === "read" ? "\u8B80\u53D6" : "\u5BEB\u5165"}\u914D\u984D\u5DF2\u7528\u5B8C\uFF1B\u53F0\u7063\u6642\u9593\u65E9\u4E0A 8 \u9EDE\u91CD\u7F6E\u3002\u8CC7\u6599\u4ECD\u4FDD\u7559\uFF0C\u8ACB\u65BC\u91CD\u7F6E\u5F8C\u518D\u8A66\u3002`, code: kind === "read" ? "D1_READ_QUOTA" : "D1_WRITE_QUOTA", reset_at: new Date(reset).toISOString(), retry_after: Math.ceil((reset - now) / 1e3) };
+}
+
 // worker/account-results.js
 var fields = ["id", "title", "kind", "date", "updated_at", "answer", "text", "partial", "failures", "transcription_model"];
 function validAccountResult(row) {
   return row && Object.keys(row).every((k) => fields.includes(k)) && typeof row.id === "string" && row.id.length > 0 && row.id.length <= 500 && (row.transcription_model === void 0 || typeof row.transcription_model === "string" && row.transcription_model.length <= 200) && typeof row.title === "string" && row.title.length <= 1e3 && ["news", "text", "podcast"].includes(row.kind) && typeof row.updated_at === "string" && /^\d{4}-\d\d-\d\dT/.test(row.updated_at) && Number.isFinite(Date.parse(row.updated_at)) && typeof row.answer === "string" && typeof row.text === "string" && typeof row.date === "string" && typeof row.partial === "boolean" && Array.isArray(row.failures) && row.failures.every((v) => typeof v === "string");
 }
-async function accountResultsRoute(req, { sql, reply, user }) {
+async function accountResultsRoute(req, { sql, reply, user, db }) {
   const url = new URL(req.url);
   if (!["/account-results", "/account-news"].includes(url.pathname)) return null;
   if (url.pathname === "/account-news") {
@@ -20,11 +45,12 @@ async function accountResultsRoute(req, { sql, reply, user }) {
     }
     const keys = ["company_code", "title", "url", "source", "published_at", "news_date"];
     if (!Array.isArray(rows) || rows.length > 100 || rows.some((r) => !r || Object.keys(r).some((k) => !keys.includes(k)) || keys.some((k) => typeof r[k] !== "string") || !/^https?:\/\//.test(r.url) || !/^\d{4,6}$/.test(r.company_code))) return reply({ error: "Invalid news" }, 400);
-    for (const row2 of rows) await sql("INSERT INTO account_news(user_id,url,payload) VALUES(?,?,?) ON CONFLICT(user_id,url) DO UPDATE SET payload=excluded.payload", user.id, row2.url, JSON.stringify(row2)).run();
+    for (const row2 of rows) await sql("INSERT INTO account_news(user_id,url,payload) VALUES(?,?,?) ON CONFLICT(user_id,url) DO UPDATE SET payload=excluded.payload WHERE account_news.payload<>excluded.payload", user.id, row2.url, JSON.stringify(row2)).run();
     return reply({ ok: true });
   }
   if (!["GET", "POST", "DELETE"].includes(req.method)) return reply({ error: "Method not allowed" }, 405);
   await sql("CREATE TABLE IF NOT EXISTS account_results(user_id TEXT NOT NULL,id TEXT NOT NULL,payload TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(user_id,id))").run();
+  if (db) await ensureD1Index(db, "results_user_updated", "CREATE INDEX IF NOT EXISTS account_results_user_updated ON account_results(user_id,updated_at DESC)");
   if (req.method === "GET") {
     const rows = (await sql("SELECT id,payload,updated_at FROM account_results WHERE user_id=? ORDER BY updated_at DESC LIMIT 200", user.id).all()).results;
     return reply({ results: rows.filter((r) => !JSON.parse(r.payload).deleted).map((r) => JSON.parse(r.payload)), deleted: rows.filter((r) => JSON.parse(r.payload).deleted).map((r) => ({ id: r.id, updated_at: r.updated_at })) });
@@ -245,6 +271,9 @@ async function aiJobsRoute(req, env, { user, admin = false, reply, dispatch: dis
   if (!path.startsWith("/ai-jobs") && !path.startsWith("/admin/ai-jobs")) return null;
   const sql = (q, ...args) => env.DB.prepare(q).bind(...args);
   await sql(schema).run();
+  await ensureD1Index(env.DB, "ai_user_updated", "CREATE INDEX IF NOT EXISTS personal_ai_user_updated ON personal_ai_tasks(user_id,updated_at DESC)");
+  await ensureD1Index(env.DB, "ai_status_updated", "CREATE INDEX IF NOT EXISTS personal_ai_status_updated ON personal_ai_tasks(status,updated_at)");
+  await ensureD1Index(env.DB, "ai_expires", "CREATE INDEX IF NOT EXISTS personal_ai_expires ON personal_ai_tasks(expires_at) WHERE encrypted IS NOT NULL");
   const now = Date.now();
   await sql("UPDATE personal_ai_tasks SET status='interrupted',progress='\u8655\u7406\u7A0B\u5E8F\u4E2D\u65B7\uFF0C\u8ACB\u91CD\u65B0\u9001\u51FA\u4E26\u4FDD\u7559\u6210\u529F\u6BB5\u843D',encrypted=NULL,updated_at=?,lease=NULL WHERE status='running' AND updated_at<?", now, now - 20 * 6e4).run();
   await sql("UPDATE personal_ai_tasks SET status='interrupted',progress='\u4EFB\u52D9\u5DF2\u903E\u671F\uFF0C\u8ACB\u91CD\u65B0\u9001\u51FA',encrypted=NULL,updated_at=? WHERE encrypted IS NOT NULL AND expires_at<?", now, now).run();
@@ -312,7 +341,7 @@ async function aiJobsRoute(req, env, { user, admin = false, reply, dispatch: dis
 }
 
 // worker/summary-cache.js
-async function summaryCacheRoute(req, { sql, reply, user, randomToken: randomToken2 }) {
+async function summaryCacheRoute(req, { sql, reply, user, randomToken: randomToken2, db }) {
   if (req.method !== "POST") return reply({ error: "Method not allowed" }, 405);
   const raw = await req.text();
   if (raw.length > 65e3) return reply({ error: "Too large" }, 413);
@@ -324,6 +353,7 @@ async function summaryCacheRoute(req, { sql, reply, user, randomToken: randomTok
   }
   if (!b || Object.keys(b).some((k) => !["key", "action", "lease", "answer"].includes(k)) || !/^[a-f0-9]{64}$/.test(b.key) || !["claim", "save", "release"].includes(b.action)) return reply({ error: "Invalid cache request" }, 400);
   await sql("CREATE TABLE IF NOT EXISTS summary_cache(key TEXT PRIMARY KEY,answer TEXT,owner TEXT,lease TEXT,expires INTEGER NOT NULL)").run();
+  if (db) await ensureD1Index(db, "summary_expires", "CREATE INDEX IF NOT EXISTS summary_cache_expires ON summary_cache(expires)");
   const now = Date.now();
   if (b.action === "claim") {
     await sql("DELETE FROM summary_cache WHERE expires<?", now).run();
@@ -951,7 +981,7 @@ var index_default = { async fetch(req, env) {
         if (!/^\d{4,6}$/.test(code || "") || !/^\d{4}-\d{2}-\d{2}$/.test(date || "")) return reply({ error: "Invalid probe range" }, 400);
         return reply({ news: (await sql("SELECT id,title,url,article_url FROM news WHERE company_code=? AND news_date=? AND source IN ('MoneyDJ','MoneyDJ\u7406\u8CA1\u7DB2','\u9245\u4EA8\u7DB2','news.cnyes.com','\u4E2D\u592E\u793E') ORDER BY id LIMIT 10", code, date).all()).results });
       }
-      if (path === "/admin/summary-cache") return summaryCacheRoute(req, { sql, reply, user: { id: "collector" }, randomToken });
+      if (path === "/admin/summary-cache") return summaryCacheRoute(req, { sql, reply, user: { id: "collector" }, randomToken, db: env.DB });
       if (path === "/admin/article") return reply({ news: await sql("SELECT * FROM news WHERE id=?", url.searchParams.get("id")).first() });
       if (path === "/admin/summary" && req.method === "POST") {
         const b = await req.json();
@@ -964,7 +994,7 @@ var index_default = { async fetch(req, env) {
     if (!token) return reply({ error: "\u8ACB\u5148\u767B\u5165" }, 401);
     const user = await sql("SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?", await hash(token), Date.now()).first();
     if (!user) return reply({ error: "\u767B\u5165\u5DF2\u904E\u671F\uFF0C\u8ACB\u91CD\u65B0\u767B\u5165" }, 401);
-    const accountResults = await accountResultsRoute(req, { sql, reply, user });
+    const accountResults = await accountResultsRoute(req, { sql, reply, user, db: env.DB });
     if (accountResults) return accountResults;
     const podcasts = await sharedPodcastsRoute(req, { sql, reply, user, hash });
     if (podcasts) return podcasts;
@@ -1138,6 +1168,7 @@ var index_default = { async fetch(req, env) {
       }
     }
     if (path === "/article-content" && req.method === "POST") {
+      await ensureD1Index(env.DB, "news_url", "CREATE INDEX IF NOT EXISTS news_url_lookup ON news(url)");
       const b = await req.json();
       if (Object.keys(b).some((k) => k !== "url") || typeof b.url !== "string" || b.url.length > 3e3) return reply({ error: "\u50C5\u63A5\u53D7\u65B0\u805E\u7DB2\u5740\uFF0C\u4E0D\u53EF\u50B3\u9001 AI \u8A2D\u5B9A\u6216\u91D1\u9470" }, 400);
       try {
@@ -1149,7 +1180,7 @@ var index_default = { async fetch(req, env) {
     }
     const personal = await aiJobsRoute(req, env, { user, reply, dispatch, readArticleURL });
     if (personal) return personal;
-    if (path === "/summary-cache") return summaryCacheRoute(req, { sql, reply, user, randomToken });
+    if (path === "/summary-cache") return summaryCacheRoute(req, { sql, reply, user, randomToken, db: env.DB });
     if (path === "/me") return reply({ user });
     if (path === "/logout" && req.method === "POST") {
       await sql("DELETE FROM sessions WHERE token_hash=?", await hash(token)).run();
@@ -1235,6 +1266,8 @@ var index_default = { async fetch(req, env) {
     }
     return reply({ error: "Not found" }, 404);
   } catch (e) {
+    const quota = d1QuotaError(e);
+    if (quota) return Response.json(quota, { status: 503, headers: { ...headers, "Retry-After": String(quota.retry_after) } });
     console.error(e.message);
     return reply({ error: "\u670D\u52D9\u66AB\u6642\u7121\u6CD5\u4F7F\u7528\uFF0C\u8ACB\u6AA2\u67E5\u5F8C\u7AEF\u8A2D\u5B9A" }, 500);
   }
