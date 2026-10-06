@@ -1,5 +1,5 @@
 """Official TWSE monthly prices; shared daily bars, no user duplication."""
-import datetime,time
+import datetime,time,os
 import requests
 from collect import api,TW
 
@@ -47,14 +47,21 @@ def main():
  def update(c):
   code=c['code'];saved=0
   try:
-   last=datetime.date.fromisoformat(c['last_price_date'])-datetime.timedelta(days=7) if c.get('last_price_date') else None
-   for offset in range(5):
+   complete_months=set((c.get('price_months') or '').split(','))
+   force=os.environ.get('FULL_PRICE_BACKFILL')=='1'
+   month_failures=[]
+   for offset in range(25):
     m=now.year*12+now.month-1-offset;date=datetime.date(m//12,m%12+1,1)
-    if last and date<last.replace(day=1):continue
-    rows=fetch_month(code,date,c['market'])
-    for i in range(0,len(rows),20):api('/admin/prices',{'prices':rows[i:i+20]})
-    saved+=len(rows);print('Price month',code,date.strftime('%Y-%m'),len(rows),flush=True);time.sleep(1)
-   if not saved:raise ValueError('No usable prices')
+    if not force and offset>0 and date.strftime('%Y-%m') in complete_months:continue
+    try:
+     rows=fetch_month(code,date,c['market'])
+     for i in range(0,len(rows),20):api('/admin/prices',{'prices':rows[i:i+20]})
+     saved+=len(rows);print('Price month',code,date.strftime('%Y-%m'),len(rows),flush=True)
+    except Exception as e:
+     month_failures.append(date.strftime('%Y-%m'));print('Price month failed',code,date.strftime('%Y-%m'),type(e).__name__,flush=True)
+    time.sleep(1)
+   if month_failures:raise ValueError('Failed months: '+','.join(month_failures))
+   if not saved and not complete_months:raise ValueError('No usable prices')
    print('Market prices',code,saved,flush=True);return None
   except Exception as e:print('Market prices failed',code,type(e).__name__,flush=True);return code
  with ThreadPoolExecutor(max_workers=2) as pool:failed=[code for code in pool.map(update,companies) if code]
