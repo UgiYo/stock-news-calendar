@@ -11,6 +11,7 @@ on:
     paths:
       - '.github/workflows/news.yml'
       - 'scripts/news_schedule_guard.py'
+      - 'scripts/collect.py'
   workflow_dispatch:
     inputs:
       mode:
@@ -37,6 +38,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - name: Test schedule recovery and quota handling
+        run: |
+          python3 -m unittest discover -s tests -p 'test_news_schedule_guard.py' -v
+          python3 -m unittest discover -s tests -p 'test_collect_quota.py' -v
       - name: Check whether daily news already succeeded
         id: guard
         env:
