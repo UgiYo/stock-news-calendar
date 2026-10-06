@@ -15,3 +15,15 @@ test('ten-day trend identifies sustained warming and separates stock directions'
 test('trend does not label insufficient or incomplete classification data',async()=>{const {tenDayTrends}=await import('../src/turnover-animation.js');assert.deepEqual(tenDayTrends(turnoverFrames(catalog,history.slice(0,5),'2026-09-15')),[]);const model=turnoverFrames(catalog,history.slice(0,10),'2026-09-15');model.frames[0].flows=[];assert.deepEqual(tenDayTrends(model),[]);});
 
 test('industry trend combines overlapping segments without double counting',async()=>{const {industryCatalog}=await import('../src/value-chains.js');const {tenDayTrends,leaderPanel}=await import('../src/turnover-animation.js');const groups=industryCatalog({groups:[{industry:'半導體',codes:['1111']},{industry:'半導體',codes:['1111','2222']}]});const model=turnoverFrames(groups,history,'2026-09-15');assert.equal(model.frames.at(-1).flows[0].share,100);assert.equal(tenDayTrends(model)[0].delta,0);assert.match(leaderPanel({leaders:[]}),/暫不推定/);});
+test('trend choices include the actual share series and comparison, escaping labels',async()=>{
+ const {trendChoice,trendSpark}=await import('../src/turnover-animation.js');
+ const t={series:[2,4,3],before:2,after:3,delta:1,label:'近期轉強'};
+ const html=trendChoice('group:a','濾波器<script>',t,true);
+ assert.ok(html.includes('8,35 80,7 152,21'));
+ assert.ok(html.includes('2.00% → 3.00%（+1.00 個百分點）'));
+ assert.ok(html.includes('aria-pressed="true"'));
+ assert.ok(html.includes('濾波器&lt;script&gt;'));
+ assert.ok(!html.includes('<script>'));
+ assert.ok(trendSpark({series:[3,3,3],delta:0}).includes('8,35 80,35 152,35'));
+ assert.ok(!trendSpark(null).includes('<svg'));
+});

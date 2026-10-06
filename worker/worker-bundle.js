@@ -299,8 +299,13 @@ async function fetchDailyBars(company) {
 }
 function parseCompanyProfile(html, code) {
   const plain = (value) => xmlText(value.replace(/&nbsp;/gi, " ").replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
-  const heading = plain(html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1] || "");
-  if (!new RegExp("(?:^|\\D)" + code + "(?:\\D|$)").test(heading)) throw Error("\u8CA1\u5831\u72D7\u9801\u9762\u8207\u80A1\u7968\u4EE3\u865F\u4E0D\u7B26");
+  const headings = [...html.matchAll(/<h1\b(?:[^>"']|"[^"]*"|'[^']*')*>([\s\S]*?)<\/h1>/gi)].map((m) => plain(m[1]));
+  const title = plain(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "");
+  const matches = (value) => new RegExp("^" + code + "(?:\\D|$)").test(value);
+  const stockHeadings = headings.filter((h) => /^[1-9]\d{3}(?:\D|$)/.test(h));
+  if (stockHeadings.length && !stockHeadings.some(matches)) throw Error("\u8CA1\u5831\u72D7\u9801\u9762\u8207\u80A1\u7968\u4EE3\u865F\u4E0D\u7B26");
+  const heading = stockHeadings.find(matches) || (!stockHeadings.length && matches(title) ? title : "");
+  if (!heading) throw Error("\u8CA1\u5831\u72D7\u66AB\u672A\u56DE\u50B3\u53EF\u6838\u5C0D\u7684\u516C\u53F8\u9801\u9762\uFF0C\u8ACB\u7A0D\u5F8C\u6309\u300C\u66F4\u65B0\u8CA1\u52D9\u53C3\u8003\u300D\u91CD\u8A66");
   const metrics = [];
   for (const match of html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
     const cells = [...match[1].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((m) => plain(m[1]));

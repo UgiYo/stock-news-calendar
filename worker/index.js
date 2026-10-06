@@ -33,7 +33,13 @@ async function fetchDailyBars(company){
 }
 export function parseCompanyProfile(html,code){
  const plain=value=>xmlText(value.replace(/&nbsp;/gi,' ').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi,'').replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi,'').replace(/<[^>]*>/g,' ')).replace(/\s+/g,' ').trim();
- const heading=plain(html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1]||'');if(!new RegExp('(?:^|\\D)'+code+'(?:\\D|$)').test(heading))throw Error('財報狗頁面與股票代號不符');
+ const headings=[...html.matchAll(/<h1\b(?:[^>"']|"[^"]*"|'[^']*')*>([\s\S]*?)<\/h1>/gi)].map(m=>plain(m[1]));
+ const title=plain(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]||'');
+ const matches=value=>new RegExp('^'+code+'(?:\\D|$)').test(value);
+ const stockHeadings=headings.filter(h=>/^[1-9]\d{3}(?:\D|$)/.test(h));
+ if(stockHeadings.length&&!stockHeadings.some(matches))throw Error('財報狗頁面與股票代號不符');
+ const heading=stockHeadings.find(matches)||(!stockHeadings.length&&matches(title)?title:'');
+ if(!heading)throw Error('財報狗暫未回傳可核對的公司頁面，請稍後按「更新財務參考」重試');
  const metrics=[];for(const match of html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)){
   const cells=[...match[1].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(m=>plain(m[1]));
   if(cells.length<2||!/(?:本益比|殖利率|股價淨值比|營收\s*YOY|近\s*4\s*季\s*(?:EPS|ROE))/i.test(cells[0]))continue;
