@@ -125,7 +125,7 @@ app.querySelector('#podcast-guest').onchange=e=>{podcast.guest=e.target.value;tr
 app.querySelectorAll('[data-podcast-date]').forEach(b=>b.onclick=()=>{state.date=b.dataset.podcastDate;const [year,month]=state.date.split('-').map(Number);state.year=year;state.month=month-1;render();if(state.user&&!state.previewCompany)run(()=>load({monthOnly:true}));});
 
 app.querySelectorAll('[data-podcast-result]').forEach(b=>b.onclick=()=>openResultsCenter(b.dataset.podcastResult,{focusCode:b.dataset.mentionCode}));
-app.querySelectorAll('[data-podcast-episode]').forEach(b=>b.onclick=()=>openPodcastEpisode(podcast.episodes.find(e=>e.id===b.dataset.podcastEpisode),{userId:state.user?.id||'guest'}));
+app.querySelectorAll('[data-podcast-episode]').forEach(b=>b.onclick=()=>openPodcastEpisode(podcast.episodes.find(e=>e.id===b.dataset.podcastEpisode),{userId:state.user?.id||'guest',focusCode:b.dataset.mentionCode}));
 app.querySelector('#account-sync')?.addEventListener('change',e=>{const enabled=e.target.checked;void run(async()=>{
  const who=state.user.id;
  if(enabled){
