@@ -16,6 +16,11 @@ def main():
     except requests.RequestException:print('Edge diagnostic unavailable; continuing collection',flush=True)
     codes=list(dict.fromkeys(['2330','3026']+queued+ [c['code'] for c in api('/admin/chart-codes')['companies']]))[:100]
     failed=[]
+    from playwright.sync_api import sync_playwright
+    automation=sync_playwright().start()
+    browser=automation.chromium.launch(headless=True)
+    context=browser.new_context(locale='zh-TW')
+    page=context.new_page()
     for code in codes:
         try:
             target='https://statementdog.com/analysis/'+code
@@ -29,11 +34,22 @@ def main():
             response.raise_for_status()
             response.encoding='utf-8'
             if len(response.content)>2000000:raise ValueError('Page too large')
-            result=api('/admin/company-profiles',{'code':code,'html':response.text})
+            html=response.text
+            if response.status_code==202 or '<h1' not in html:
+                print('Rendering public page',code,'HTTP',response.status_code,flush=True)
+                page.goto('https://statementdog.com/analysis/'+code,wait_until='domcontentloaded',timeout=45000)
+                page.wait_for_function("code => [...document.querySelectorAll('h1')].some(h => h.textContent.trim().startsWith(code))",arg=code,timeout=30000)
+                parsed=urlparse(page.url)
+                if parsed.scheme!='https' or parsed.hostname not in ['statementdog.com','www.statementdog.com']:raise ValueError('Invalid rendered source')
+                html=page.content()
+            result=api('/admin/company-profiles',{'code':code,'html':html})
             print('Verified profile',code,'metrics',result['metrics'],flush=True)
         except Exception as e:
             failed.append(code)
             api('/admin/company-profiles',{'code':code,'error':'Public source collection failed: '+type(e).__name__})
-            print('Profile failed',code,type(e).__name__,flush=True)
+            print('Profile failed',code,type(e).__name__,getattr(getattr(e,'response',None),'status_code',None),flush=True)
+    context.close()
+    browser.close()
+    automation.stop()
     if any(c in failed for c in queued+['2330','3026']):raise SystemExit('Requested profiles failed: '+','.join(failed))
 if __name__=='__main__':main()
