@@ -122,3 +122,5 @@ html{scrollbar-gutter:stable}body.modal-open{overflow:hidden}button,input,select
 .stock-technicals{margin:16px 0;padding:16px;background:#f5fbfa;border:1px solid #c9dedf;border-radius:12px}.stock-technicals>small{display:block;margin:8px 0;color:#526572}.stock-technicals .profile-metrics strong{overflow-wrap:anywhere}
 
 .price-return{font-weight:700;white-space:nowrap}.price-up{color:#b42318}.price-down{color:#16703c}.price-flat,.price-missing{color:#526572}
+
+.candle-range-control{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0}.candle-range-control select{min-height:44px}.reference-price-list{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.reference-price{padding:5px 9px;border-radius:6px;font-weight:600}.reference-price.support{background:#e6f4ee;color:#087f5b}.reference-price.resistance{background:#fff0dc;color:#9a4800}
