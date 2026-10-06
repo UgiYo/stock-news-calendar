@@ -15,9 +15,18 @@ test('overlapping classifications deduplicate stocks, prefer peer-supported grou
  const alternative={...groups[0],id:'other',delta:2};const r=selectObservationStocks([groups[0],alternative,{...groups[1],industry:'半導體'}],stocks,[],technicals);assert.equal(r.length,1);assert.equal(r[0].groupId,'other');assert.deepEqual(selectObservationStocks([],stocks,[],technicals),[]);
 });
 
-test('technical filters run before the three-stock and industry limits and never admit missing data',()=>{
- assert.deepEqual(selectObservationStocks(groups,stocks),[]);
+test('technical remarks never exclude or reorder turnover picks, including unavailable data',()=>{
+ const expected=['1111','2222','3333'];
+ assert.deepEqual(selectObservationStocks(groups,stocks).map(r=>r.code),expected);
  const result=selectObservationStocks(groups,stocks,[],{...technicals,'1111':{eligible:false,reason:'乖離過大'}});
- assert.deepEqual(result.map(r=>r.code),['2222','3333','4444']);
- assert.equal(result[0].technical.bias5,1);
+ assert.deepEqual(result.map(r=>r.code),expected);
+ assert.equal(result[0].technical.reason,'乖離過大');
+ assert.deepEqual(selectObservationStocks(groups,stocks,[{code:'4444'}],{'4444':{eligible:false,reason:'行情讀取失敗'}}).map(r=>r.code),['4444','1111','2222']);
+});
+test('technical notes describe bearish and missing data without claiming bullish alignment',async()=>{
+ const {observationTechnicalNote}=await import('../src/turnover-animation.js');
+ assert.match(observationTechnicalNote(undefined,true),/載入中/);
+ assert.match(observationTechnicalNote({reason:'缺少收盤價'}),/缺少收盤價/);
+ const html=observationTechnicalNote({close:10,ma:{5:11,10:12,20:13,60:14},bull:false,rising:false,bias5:-9,bias20:-23,reason:'收盤價低於 MA5'});
+ assert.match(html,/尚未多頭排列/);assert.match(html,/未皆上揚/);assert.match(html,/-9.00%/);assert.match(html,/不影響入選/);
 });

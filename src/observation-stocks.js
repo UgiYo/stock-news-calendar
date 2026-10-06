@@ -15,6 +15,6 @@ export function observationCandidates(trends,stocks=[],tracked=[]){
 }
 export function selectObservationStocks(trends,stocks=[],tracked=[],technicals={}){
  const ordered=observationCandidates(trends,stocks,tracked),result=[],industries=new Set();
- for(const candidate of ordered){const technical=technicals[candidate.code];if(!technical?.eligible||industries.has(candidate.industry))continue;result.push({...candidate,technical});industries.add(candidate.industry);if(result.length===3)break;}
+ for(const candidate of ordered){const technical=technicals[candidate.code];if(industries.has(candidate.industry))continue;result.push({...candidate,technical});industries.add(candidate.industry);if(result.length===3)break;}
  return result;
 }
