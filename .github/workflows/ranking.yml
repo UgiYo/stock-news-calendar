@@ -50,3 +50,7 @@ jobs:
           from repair_rankings import repair
           repair()
           PY
+
+      - name: Fill daily candlesticks for ranking stocks
+        if: always()
+        run: python scripts/market_prices.py
