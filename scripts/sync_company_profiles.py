@@ -4,13 +4,16 @@ from urllib.parse import urlparse
 import requests
 from collect import api
 
-def official_profiles():
-    from sync_catalog import SOURCES,fetch_text
+def official_profiles(codes):
+    from sync_catalog import SOURCES
     facts={}
     for primary,fallback,market in SOURCES:
         try:
-            try:rows=json.loads(fetch_text(primary))
-            except Exception:rows=list(csv.DictReader(io.StringIO(fetch_text(fallback))))
+            try:
+                r=requests.get(primary,timeout=12);r.raise_for_status();rows=r.json()
+                if not isinstance(rows,list):raise ValueError('Invalid catalog')
+            except Exception:
+                r=requests.get(fallback,timeout=12);r.raise_for_status();r.encoding='utf-8-sig';rows=list(csv.DictReader(io.StringIO(r.text)))
             for row in rows:
                 def get(*keys):return next((str(row[k]).strip() for k in keys if row.get(k) is not None),'')
                 code=get('公司代號','SecuritiesCompanyCode','CompanyCode')
@@ -22,6 +25,7 @@ def official_profiles():
                     value=get(*keys).replace(',','')
                     if re.fullmatch(r'\d+(?:\.\d+)?',value):metrics.append({'label':label,'value':value})
                 facts[code]={'name':name,'full_name':full,'introduction':business or full+'；交易所產業代碼 '+get('產業別','SecuritiesIndustryCode'),'metrics':metrics}
+            if all(code in facts for code in codes):break
         except Exception as e:print('Official catalog failed',market,type(e).__name__,flush=True)
     return facts
 
@@ -38,13 +42,7 @@ def main():
     daily=[c['code'] for c in api('/admin/chart-codes')['companies']] if os.environ.get('PROFILE_MODE')=='schedule' else []
     codes=list(dict.fromkeys(['2330','3026']+queued+daily))[:100]
     failed=[]
-    official=official_profiles()
-    browser_failed=False
-    from playwright.sync_api import sync_playwright
-    automation=sync_playwright().start()
-    browser=automation.chromium.launch(headless=True)
-    context=browser.new_context(locale='zh-TW')
-    page=context.new_page()
+    official=official_profiles(codes)
     for code in codes:
         try:
             target='https://statementdog.com/analysis/'+code
@@ -59,18 +57,10 @@ def main():
             response.encoding='utf-8'
             if len(response.content)>2000000:raise ValueError('Page too large')
             html=response.text
-            if response.status_code==202 or '<h1' not in html:
-                if browser_failed:raise ValueError('Source intermediate page')
-                print('Rendering public page',code,'HTTP',response.status_code,flush=True)
-                page.goto('https://statementdog.com/analysis/'+code,wait_until='domcontentloaded',timeout=45000)
-                page.wait_for_function("code => [...document.querySelectorAll('h1')].some(h => h.textContent.trim().startsWith(code))",arg=code,timeout=30000)
-                parsed=urlparse(page.url)
-                if parsed.scheme!='https' or parsed.hostname not in ['statementdog.com','www.statementdog.com']:raise ValueError('Invalid rendered source')
-                html=page.content()
+            if response.status_code==202 or '<h1' not in html:raise ValueError('Source intermediate page')
             result=api('/admin/company-profiles',{'code':code,'html':html})
             print('Verified profile',code,'metrics',result['metrics'],flush=True)
         except Exception as e:
-            if type(e).__name__=='TimeoutError':browser_failed=True
             if code in official:
                 try:
                     result=api('/admin/company-profiles',{'code':code,'official':official[code]})
@@ -80,8 +70,5 @@ def main():
             failed.append(code)
             api('/admin/company-profiles',{'code':code,'error':'Public source collection failed: '+type(e).__name__})
             print('Profile failed',code,type(e).__name__,getattr(getattr(e,'response',None),'status_code',None),flush=True)
-    context.close()
-    browser.close()
-    automation.stop()
     if any(c in failed for c in queued+['2330','3026']):raise SystemExit('Requested profiles failed: '+','.join(failed))
 if __name__=='__main__':main()
