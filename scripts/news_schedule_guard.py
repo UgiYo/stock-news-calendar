@@ -30,7 +30,7 @@ def candidate(run, cutoff, current_id):
         str(run.get('id')) != str(current_id)
         and run.get('event') in ('schedule', 'push')
         and run.get('head_branch') == 'main'
-        and run.get('status') == 'completed'
+        and run.get('status') in ('completed', 'in_progress')
         and run.get('path') == '.github/workflows/news.yml'
         and timestamp(run['created_at']) >= cutoff
     )
@@ -70,7 +70,7 @@ def main():
                 )
                 with urllib.request.urlopen(request, timeout=20) as response:
                     return json.load(response)
-            # The daily workflow is serialized by its existing concurrency group.
+            # The news job has its own concurrency group; maintenance cannot block retries.
             runs = api('/actions/workflows/news.yml/runs?branch=main&per_page=100')['workflow_runs']
             run_news, previous = should_collect(
                 runs,
