@@ -1,7 +1,16 @@
 name: Update company news
 on:
   schedule:
+    # GitHub cron uses UTC: Taiwan 06:17 primary, 07:17 and 08:17 recovery.
     - cron: '17 22 * * *'
+    - cron: '17 23 * * *'
+    - cron: '17 0 * * *'
+  # Validate schedule configuration changes immediately with a full daily collection.
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/news.yml'
+      - 'scripts/news_schedule_guard.py'
   workflow_dispatch:
     inputs:
       mode:
@@ -10,6 +19,7 @@ on:
         default: queued
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: news-collector
   cancel-in-progress: false
@@ -22,24 +32,58 @@ jobs:
       COLLECTOR_SECRET: ${{ secrets.COLLECTOR_SECRET }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       SUMMARY_MODEL: ${{ vars.SUMMARY_MODEL }}
-      RUN_MODE: ${{ github.event_name == 'schedule' && 'daily' || inputs.mode }}
+      RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'daily' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Check whether daily news already succeeded
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/news_schedule_guard.py
+      - name: Validate collector configuration
+        if: steps.guard.outputs.run_news == 'true'
+        run: |
+          python3 - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          required = ['WORKER_API_URL', 'COLLECTOR_SECRET']
+          missing = [key for key in required if not os.environ.get(key)]
+          if missing:
+              raise SystemExit('Missing configuration: ' + ', '.join(missing))
+          url = urlparse(os.environ['WORKER_API_URL'])
+          if url.scheme != 'https' or not url.hostname or url.username or url.password:
+              raise SystemExit('WORKER_API_URL must be a valid HTTPS URL')
+          PY
       - uses: actions/setup-python@v5
+        if: steps.guard.outputs.run_news == 'true'
         with:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: scripts/requirements.txt
-      - run: pip install -r scripts/requirements.txt
-      - name: Ensure audio tools for background transcription
-        run: command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
-      - name: Process personal background AI tasks
-        run: python scripts/personal_ai_jobs.py
+      - name: Install collector dependencies
+        id: dependencies
+        if: steps.guard.outputs.run_news == 'true'
+        run: pip install -r scripts/requirements.txt
       - name: Sync official company catalog
-        if: env.RUN_MODE == 'daily'
+        if: steps.guard.outputs.run_news == 'true' && env.RUN_MODE == 'daily'
+        continue-on-error: true
         run: python scripts/sync_catalog.py
+      # Prioritize news; background AI/audio preparation must not block daily collection.
       - name: Collect news and process queued summaries
+        if: steps.guard.outputs.run_news == 'true'
         run: python scripts/collect.py
       - name: Update shared daily stock prices
-        if: always()
+        if: always() && steps.guard.outputs.run_news == 'true' && steps.dependencies.outcome == 'success'
         run: python scripts/market_prices.py
+      - name: Ensure audio tools for background transcription
+        if: always() && steps.guard.outputs.run_news == 'true' && steps.dependencies.outcome == 'success'
+        id: audio
+        run: command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: Process personal background AI tasks
+        if: always() && steps.guard.outputs.run_news == 'true' && steps.audio.outcome == 'success'
+        run: python scripts/personal_ai_jobs.py
+      - name: Report news update failure
+        if: failure()
+        run: |
+          echo '::error::Daily news workflow failed. Check the news collection step; later recovery schedules will retry unless collection already succeeded.'
+          echo 'Daily news workflow failed. Check the failed step before assuming news was updated.' >> "$GITHUB_STEP_SUMMARY"
