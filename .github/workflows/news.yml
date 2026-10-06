@@ -20,19 +20,21 @@ on:
 permissions:
   contents: read
   actions: read
-concurrency:
-  group: news-collector
-  cancel-in-progress: false
+env:
+  WORKER_API_URL: ${{ vars.WORKER_API_URL }}
+  COLLECTOR_SECRET: ${{ secrets.COLLECTOR_SECRET }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  SUMMARY_MODEL: ${{ vars.SUMMARY_MODEL }}
+  RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'daily' }}
 jobs:
   update:
+    concurrency:
+      group: news-daily-collection
+      cancel-in-progress: false
+    outputs:
+      run_news: ${{ steps.guard.outputs.run_news }}
     runs-on: ubuntu-latest
-    timeout-minutes: 300
-    env:
-      WORKER_API_URL: ${{ vars.WORKER_API_URL }}
-      COLLECTOR_SECRET: ${{ secrets.COLLECTOR_SECRET }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      SUMMARY_MODEL: ${{ vars.SUMMARY_MODEL }}
-      RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'daily' }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Check whether daily news already succeeded
@@ -72,18 +74,37 @@ jobs:
       - name: Collect news and process queued summaries
         if: steps.guard.outputs.run_news == 'true'
         run: python scripts/collect.py
-      - name: Update shared daily stock prices
-        if: always() && steps.guard.outputs.run_news == 'true' && steps.dependencies.outcome == 'success'
-        run: python scripts/market_prices.py
-      - name: Ensure audio tools for background transcription
-        if: always() && steps.guard.outputs.run_news == 'true' && steps.dependencies.outcome == 'success'
-        id: audio
-        run: command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
-      - name: Process personal background AI tasks
-        if: always() && steps.guard.outputs.run_news == 'true' && steps.audio.outcome == 'success'
-        run: python scripts/personal_ai_jobs.py
       - name: Report news update failure
         if: failure()
         run: |
-          echo '::error::Daily news workflow failed. Check the news collection step; later recovery schedules will retry unless collection already succeeded.'
-          echo 'Daily news workflow failed. Check the failed step before assuming news was updated.' >> "$GITHUB_STEP_SUMMARY"
+          echo '::error::News collection failed. Later recovery schedules will retry unless collection already succeeded.'
+          echo 'News collection failed. Check the failed step before assuming news was updated.' >> "$GITHUB_STEP_SUMMARY"
+  maintenance:
+    name: Shared prices and personal background tasks
+    needs: update
+    if: needs.update.result == 'success' && needs.update.outputs.run_news == 'true'
+    # Preserve serialization with earlier workflow versions and queued maintenance.
+    concurrency:
+      group: news-collector
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+      - name: Install maintenance dependencies
+        id: dependencies
+        run: pip install -r scripts/requirements.txt
+      - name: Update shared daily stock prices
+        run: python scripts/market_prices.py
+      - name: Ensure audio tools for background transcription
+        if: always() && steps.dependencies.outcome == 'success'
+        id: audio
+        run: command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: Process personal background AI tasks
+        if: always() && steps.audio.outcome == 'success'
+        run: python scripts/personal_ai_jobs.py
