@@ -182,3 +182,27 @@ test('official fallback is identity checked and carries its actual source into s
  assert.equal((await call(env,'/admin/company-profiles','secret',{code:'2330',official})).status,200);
  const result=await (await call(env,'/company-profile?code=2330','alice')).json();assert.equal(result.profile.source,'臺灣證券交易所');assert.match(result.warning,/交易所/);assert.equal(result.profile.metrics[0].label,'實收資本額（元）');db.close();
 });
+
+test('account result sync isolates users, rejects credentials and protects newer versions',async()=>{
+ const {db,env}=setup();for(const id of ['alice','bob']){db.prepare('INSERT INTO users VALUES(?,?)').run(id,id+'@example.com');db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(await hash(id),id,Date.now()+60000);}
+ const row={id:'analysis',title:'台積電',kind:'text',date:'2026-10-06',updated_at:'2026-10-06T12:00:00.000Z',answer:'量價分析',text:'',partial:false,failures:[]};
+ assert.equal((await call(env,'/account-results',null,row)).status,401);
+ assert.equal((await call(env,'/account-results','alice',{...row,key:'secret'})).status,400);
+ assert.equal((await call(env,'/account-results','alice',row)).status,200);
+ assert.equal((await (await call(env,'/account-results','bob')).json()).results.length,0);
+ await call(env,'/account-results','alice',{...row,updated_at:'2026-10-05T12:00:00.000Z',answer:'old'});
+ assert.equal((await (await call(env,'/account-results','alice')).json()).results[0].answer,'量價分析');
+ await call(env,'/account-results?id=analysis','bob',undefined,'DELETE');
+ assert.equal((await (await call(env,'/account-results','alice')).json()).results.length,1);
+ await call(env,'/account-results?id=analysis','alice',undefined,'DELETE');
+ assert.equal((await (await call(env,'/account-results','alice')).json()).results.length,0);db.close();
+});
+
+test('device news sync isolates accounts and accepts only public news fields',async()=>{
+ const {db,env}=setup();for(const id of ['alice','bob']){db.prepare('INSERT INTO users VALUES(?,?)').run(id,id+'@example.com');db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(await hash(id),id,Date.now()+60000);}
+ const row={company_code:'2330',title:'新聞',url:'https://example.com/news',source:'中央社',published_at:'2026-10-06T12:00:00Z',news_date:'2026-10-06'};
+ assert.equal((await call(env,'/account-news','alice',[{...row,key:'secret'}])).status,400);
+ assert.equal((await call(env,'/account-news','alice',[row])).status,200);
+ assert.equal((await (await call(env,'/account-news','alice')).json()).news.length,1);
+ assert.equal((await (await call(env,'/account-news','bob')).json()).news.length,0);db.close();
+});

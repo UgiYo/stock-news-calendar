@@ -1,3 +1,5 @@
+import {syncEnabled} from './account-sync.js';
+import {resultRecords} from './ai-results.js';
 import {assertCloudConfig} from './ai-privacy.js';
 import {api} from './api.js';
 import {saveResult,openResultsCenter,refreshNotifications} from './ai-results.js';
@@ -11,5 +13,5 @@ export async function submitCloudTask({kind,title,date,input,config}){
 }
 function saveCloudTask(task){saveResult({id:'cloud:'+task.id,title:task.title,kind:task.kind,date:task.date,episode:task.episode,request:task.request},{...task,cloud_id:task.id});}
 export function startCloudSync(who){const next=String(who||'guest');if(next!==currentOwner){currentOwner=next;lastSync=0;}if(next==='guest'||syncing||Date.now()-lastSync<15000)return;void syncCloudResults();}
-export async function syncCloudResults(){if(currentOwner==='guest'||syncing)return;const who=currentOwner;syncing=true;lastSync=Date.now();try{const {tasks}=await api('/ai-jobs');if(who===currentOwner)for(const task of tasks||[])saveCloudTask(task);}catch{}finally{syncing=false;}}
+export async function syncCloudResults(){if(currentOwner==='guest'||syncing)return;const who=currentOwner;syncing=true;lastSync=Date.now();try{const {tasks}=await api('/ai-jobs');if(who===currentOwner)for(const task of tasks||[])if(syncEnabled(who)||resultRecords(who).some(r=>r.cloud_id===task.id))saveCloudTask(task);}catch{}finally{syncing=false;}}
 if(typeof window!=='undefined'){setInterval(()=>startCloudSync(currentOwner),15000);window.addEventListener('focus',()=>{lastSync=0;startCloudSync(currentOwner);});window.addEventListener('cloud-result-read',e=>{void api('/ai-jobs/read',{body:{id:e.detail}}).catch(()=>{});});}

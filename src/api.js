@@ -1,6 +1,12 @@
+import {deviceRequest,syncEnabled,deviceData} from './account-sync.js';
 const base=(import.meta.env?.VITE_WORKER_API_URL||'').replace(/\/$/,'');
 const key='stock-news-session';
 export async function api(path,options={}){
+ const local=await deviceRequest(path,options,remoteAPI);if(local!==undefined)return local;const data=await remoteAPI(path,options);
+ if(syncEnabled()&&path.startsWith('/news?')){data.serverCount=data.news?.length||0;const url=new URL(path,'https://device.invalid'),extra=(deviceData()?.news||[]).filter(n=>n.news_date>=url.searchParams.get('from')&&n.news_date<=url.searchParams.get('to'));if(!Number(url.searchParams.get('offset')||0)){const rows=new Map((data.news||[]).map(n=>[n.url,n]));for(const n of extra)rows.set(n.url,n);data.news=[...rows.values()];data.deviceMerged=true;}}
+ return data;
+}
+export async function remoteAPI(path,options={}){
  const token=localStorage.getItem(key);const response=await fetch(base+path,{method:options.method||(options.body?'POST':'GET'),headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:options.body?JSON.stringify(options.body):undefined,signal:AbortSignal.timeout(path==='/article-content'?90000:30000)});
  const data=await response.json();if(!response.ok)throw Error(data.error||'後端服務無法使用');return data;
 }
