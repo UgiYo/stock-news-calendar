@@ -98,3 +98,5 @@ html{scrollbar-gutter:stable}body.modal-open{overflow:hidden}button,input,select
 .scatter-choices button,.scatter-stocks button{min-height:44px;text-align:left;overflow-wrap:anywhere}
 .scatter-detail{margin-top:12px;border:1px solid #dce5eb;border-radius:10px;padding:12px;background:white}
 @media(max-width:600px){.turnover-scatter text{font-size:15px}.scatter-choices{display:grid;grid-template-columns:1fr 1fr}.scatter-choices button{font-size:12px;padding:8px}.scatter-stocks{display:grid;grid-template-columns:1fr}}
+
+.flow-screen-date{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:12px;background:#edf6f7;border-radius:10px;margin:10px 0}.flow-screen-date select{min-height:44px}.flow-screen-date small{flex-basis:100%;color:#526572}.flow-selection-prompt{padding:16px;background:#f8fbfc;border:1px dashed #bdccd5;border-radius:10px}
