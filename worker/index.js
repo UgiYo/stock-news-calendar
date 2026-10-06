@@ -172,8 +172,13 @@ export default {async fetch(req,env){
  if(req.method==='GET')return reply({codes:(await sql("SELECT code FROM company_profiles WHERE state='queued' OR updated_at<? ORDER BY requested_at DESC LIMIT 100",Date.now()-86400000).all()).results.map(r=>r.code)});
  const b=await req.json();if(!/^[1-9]\d{3}$/.test(b.code||'')||!await sql('SELECT code FROM companies WHERE code=?',b.code).first())return reply({error:'Invalid company'},400);
  if(b.error){await sql("UPDATE company_profiles SET state='failed',error=? WHERE code=?",String(b.error).slice(0,200),b.code).run();return reply({ok:true});}
- if(typeof b.html!=='string'||b.html.length>2000000)return reply({error:'Invalid page'},400);
- const profile=parseCompanyProfile(b.html,b.code);await sql("INSERT INTO company_profiles(code,payload,state,updated_at) VALUES(?,?,'ready',?) ON CONFLICT(code) DO UPDATE SET payload=excluded.payload,state='ready',updated_at=excluded.updated_at,error=NULL",b.code,JSON.stringify(profile),Date.now()).run();return reply({ok:true,code:profile.code,metrics:profile.metrics.length});
+ let profile;
+ if(b.official){
+ const company=await sql('SELECT * FROM companies WHERE code=?',b.code).first(),o=b.official;
+ if(o.name!==company.name&&o.full_name!==company.full_name)return reply({error:'Official company mismatch'},400);
+ if(typeof o.introduction!=='string'||!Array.isArray(o.metrics)||o.metrics.length>3||o.metrics.some(m=>!['實收資本額（元）','已發行普通股數（股）'].includes(m.label)||!/^\d[\d,]*(?:\.\d+)?$/.test(m.value)))return reply({error:'Invalid official facts'},400);
+ const otc=company.market==='上櫃';profile={code:b.code,heading:b.code+' '+o.name,introduction:o.introduction.slice(0,400),metrics:o.metrics,source:otc?'櫃買中心':'臺灣證券交易所',url:otc?'https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O':'https://openapi.twse.com.tw/v1/opendata/t187ap03_L',fetchedAt:new Date().toISOString(),notice:'財報狗公開頁面暫時無法取得，目前採用交易所公開公司基本資料。'};
+ }else{if(typeof b.html!=='string'||b.html.length>2000000)return reply({error:'Invalid page'},400);profile=parseCompanyProfile(b.html,b.code);}await sql("INSERT INTO company_profiles(code,payload,state,updated_at) VALUES(?,?,'ready',?) ON CONFLICT(code) DO UPDATE SET payload=excluded.payload,state='ready',updated_at=excluded.updated_at,error=NULL",b.code,JSON.stringify(profile),Date.now()).run();return reply({ok:true,code:profile.code,metrics:profile.metrics.length});
  }
  if(path==='/admin/ranking-audit'){try{return reply({snapshots:(await sql('SELECT date,payload FROM rankings ORDER BY date DESC LIMIT 60').all()).results.map(r=>{const p=JSON.parse(r.payload);return {date:r.date,previousDate:Array.isArray(p)?null:p.previousDate};})});}catch(e){if(String(e.message).includes('no such table'))return reply({snapshots:[]});throw e;}}
  if(path==='/admin/ranking-link'&&req.method==='POST'){const b=await req.json();if(!/^\d{4}-\d{2}-\d{2}$/.test(b.date||'')||!/^\d{4}-\d{2}-\d{2}$/.test(b.previousDate||'')||b.previousDate>=b.date)return reply({error:'Invalid dates'},400);const row=await sql('SELECT payload FROM rankings WHERE date=?',b.date).first(),prior=await sql('SELECT date FROM rankings WHERE date=?',b.previousDate).first();if(!row||!prior)return reply({error:'Missing snapshot'},409);const p=JSON.parse(row.payload);await sql('UPDATE rankings SET payload=? WHERE date=?',JSON.stringify({stocks:Array.isArray(p)?p:p.stocks,previousDate:b.previousDate}),b.date).run();return reply({ok:true});}
@@ -217,7 +222,7 @@ export default {async fetch(req,env){
  await sql('CREATE TABLE IF NOT EXISTS company_profiles(code TEXT PRIMARY KEY,payload TEXT,state TEXT,requested_at INTEGER,updated_at INTEGER,error TEXT)').run();
  const stored=await sql('SELECT * FROM company_profiles WHERE code=?',code).first();
  if(stored?.state==='queued'&&stored.requested_at>Date.now()-300000)return reply({pending:true,profile:stored.payload?JSON.parse(stored.payload):undefined});
- if(req.method!=='POST'&&stored?.payload&&stored.updated_at>Date.now()-86400000)return reply({profile:JSON.parse(stored.payload)});
+ if(req.method!=='POST'&&stored?.payload&&stored.updated_at>Date.now()-86400000)return reply({profile:JSON.parse(stored.payload),warning:JSON.parse(stored.payload).notice||''});
  const key=new Request(url.origin+'/cache/company-profile/'+code),cache=globalThis.caches?.default,cached=await cache?.match(key);
  if(req.method!=='POST'&&cached)return reply({profile:await cached.json()});
  try{let target='https://statementdog.com/analysis/'+code,response;

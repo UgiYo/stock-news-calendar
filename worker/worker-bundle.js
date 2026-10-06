@@ -696,8 +696,17 @@ var index_default = { async fetch(req, env) {
           await sql("UPDATE company_profiles SET state='failed',error=? WHERE code=?", String(b.error).slice(0, 200), b.code).run();
           return reply({ ok: true });
         }
-        if (typeof b.html !== "string" || b.html.length > 2e6) return reply({ error: "Invalid page" }, 400);
-        const profile = parseCompanyProfile(b.html, b.code);
+        let profile;
+        if (b.official) {
+          const company = await sql("SELECT * FROM companies WHERE code=?", b.code).first(), o = b.official;
+          if (o.name !== company.name && o.full_name !== company.full_name) return reply({ error: "Official company mismatch" }, 400);
+          if (typeof o.introduction !== "string" || !Array.isArray(o.metrics) || o.metrics.length > 3 || o.metrics.some((m) => !["\u5BE6\u6536\u8CC7\u672C\u984D\uFF08\u5143\uFF09", "\u5DF2\u767C\u884C\u666E\u901A\u80A1\u6578\uFF08\u80A1\uFF09"].includes(m.label) || !/^\d[\d,]*(?:\.\d+)?$/.test(m.value))) return reply({ error: "Invalid official facts" }, 400);
+          const otc = company.market === "\u4E0A\u6AC3";
+          profile = { code: b.code, heading: b.code + " " + o.name, introduction: o.introduction.slice(0, 400), metrics: o.metrics, source: otc ? "\u6AC3\u8CB7\u4E2D\u5FC3" : "\u81FA\u7063\u8B49\u5238\u4EA4\u6613\u6240", url: otc ? "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O" : "https://openapi.twse.com.tw/v1/opendata/t187ap03_L", fetchedAt: (/* @__PURE__ */ new Date()).toISOString(), notice: "\u8CA1\u5831\u72D7\u516C\u958B\u9801\u9762\u66AB\u6642\u7121\u6CD5\u53D6\u5F97\uFF0C\u76EE\u524D\u63A1\u7528\u4EA4\u6613\u6240\u516C\u958B\u516C\u53F8\u57FA\u672C\u8CC7\u6599\u3002" };
+        } else {
+          if (typeof b.html !== "string" || b.html.length > 2e6) return reply({ error: "Invalid page" }, 400);
+          profile = parseCompanyProfile(b.html, b.code);
+        }
         await sql("INSERT INTO company_profiles(code,payload,state,updated_at) VALUES(?,?,'ready',?) ON CONFLICT(code) DO UPDATE SET payload=excluded.payload,state='ready',updated_at=excluded.updated_at,error=NULL", b.code, JSON.stringify(profile), Date.now()).run();
         return reply({ ok: true, code: profile.code, metrics: profile.metrics.length });
       }
@@ -908,7 +917,7 @@ var index_default = { async fetch(req, env) {
       await sql("CREATE TABLE IF NOT EXISTS company_profiles(code TEXT PRIMARY KEY,payload TEXT,state TEXT,requested_at INTEGER,updated_at INTEGER,error TEXT)").run();
       const stored = await sql("SELECT * FROM company_profiles WHERE code=?", code).first();
       if (stored?.state === "queued" && stored.requested_at > Date.now() - 3e5) return reply({ pending: true, profile: stored.payload ? JSON.parse(stored.payload) : void 0 });
-      if (req.method !== "POST" && stored?.payload && stored.updated_at > Date.now() - 864e5) return reply({ profile: JSON.parse(stored.payload) });
+      if (req.method !== "POST" && stored?.payload && stored.updated_at > Date.now() - 864e5) return reply({ profile: JSON.parse(stored.payload), warning: JSON.parse(stored.payload).notice || "" });
       const key = new Request(url.origin + "/cache/company-profile/" + code), cache = globalThis.caches?.default, cached = await cache?.match(key);
       if (req.method !== "POST" && cached) return reply({ profile: await cached.json() });
       try {

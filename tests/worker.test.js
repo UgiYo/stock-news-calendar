@@ -175,3 +175,10 @@ test('failed edge profile fetch queues a validated background collection and sha
   const ready=await (await call(env,'/company-profile?code=8150','alice')).json();assert.equal(ready.profile.code,'8150');assert.equal(ready.pending,undefined);assert.equal(edge,1);
  }finally{globalThis.fetch=originalFetch;globalThis.caches=originalCaches;db.close();}
 });
+test('official fallback is identity checked and carries its actual source into shared responses',async()=>{
+ const {db,env}=setup();db.exec("INSERT INTO companies(code,name,full_name,market) VALUES('2330','台積電','台灣積體電路製造股份有限公司','上市');INSERT INTO users VALUES('alice','a@example.com');");db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(await hash('alice'),'alice',Date.now()+60000);
+ const official={name:'台積電',full_name:'台灣積體電路製造股份有限公司',introduction:'積體電路製造',metrics:[{label:'實收資本額（元）',value:'259000000000'}]};
+ assert.equal((await call(env,'/admin/company-profiles','secret',{code:'2330',official:{...official,name:'錯誤',full_name:'錯誤'}})).status,400);
+ assert.equal((await call(env,'/admin/company-profiles','secret',{code:'2330',official})).status,200);
+ const result=await (await call(env,'/company-profile?code=2330','alice')).json();assert.equal(result.profile.source,'臺灣證券交易所');assert.match(result.warning,/交易所/);assert.equal(result.profile.metrics[0].label,'實收資本額（元）');db.close();
+});
