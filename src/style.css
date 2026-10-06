@@ -84,3 +84,10 @@ html{scrollbar-gutter:stable}body.modal-open{overflow:hidden}button,input,select
 .flow-picker-sector>.flow-picker-option:first-child{background:#f0f3f6}
 .flow-picker-missing{font-size:12px;color:#697a83}
 @media(max-width:600px){.flow-picker-option{grid-template-columns:minmax(0,1fr) 84px;gap:8px;padding:10px 8px}.flow-picker-panel{padding:8px}.flow-picker-option strong{font-size:14px}}
+.flow-observation{border:1px solid #c9dedf;border-radius:12px;padding:14px;margin:14px 0;background:#f5fbfa}
+.flow-observation-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:12px 0}
+.flow-observation-grid article{min-width:0;margin:0;padding:12px}
+.flow-observation-grid button{min-height:44px;text-align:left;width:100%}
+.flow-observation-grid li{margin:8px 0;overflow-wrap:anywhere}
+.flow-observation-grid ul{padding-left:20px}
+@media(max-width:800px){.flow-observation-grid{grid-template-columns:1fr}}
