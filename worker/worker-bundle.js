@@ -579,10 +579,10 @@ async function verifyGoogle(token, clientID) {
   if (!await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b642(sig), encoder.encode(head + "." + body))) throw Error("Invalid signature");
   return claims;
 }
-async function dispatch(env) {
+async function dispatch(env, workflow = "news.yml") {
   if (!env.GITHUB_DISPATCH_TOKEN) throw Error("Pages Production \u5C1A\u672A\u8A2D\u5B9A GITHUB_DISPATCH_TOKEN");
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(env.GITHUB_REPO || "")) throw Error("GITHUB_REPO \u683C\u5F0F\u932F\u8AA4\uFF0C\u61C9\u70BA UgiYo/stock-news-calendar");
-  const r = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/news.yml/dispatches`, { method: "POST", headers: { Authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`, "User-Agent": "stock-news-calendar", "Accept": "application/vnd.github+json", "Content-Type": "application/json" }, body: JSON.stringify({ ref: "main", inputs: { mode: "queued" } }), signal: AbortSignal.timeout(1e4) });
+  const r = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${workflow}/dispatches`, { method: "POST", headers: { Authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`, "User-Agent": "stock-news-calendar", "Accept": "application/vnd.github+json", "Content-Type": "application/json" }, body: JSON.stringify({ ref: "main", ...workflow === "news.yml" ? { inputs: { mode: "queued" } } : {} }), signal: AbortSignal.timeout(1e4) });
   if (!r.ok) {
     const reason = { 401: "token \u7121\u6548\u6216\u5DF2\u904E\u671F", 403: "token \u6B0A\u9650\u4E0D\u8DB3\uFF0C\u9700 Actions: Read and write\uFF1B\u6216 GitHub \u5B58\u53D6\u9650\u5236", 404: "repo\u3001news.yml \u4E0D\u5B58\u5728\uFF0C\u6216 token \u672A\u7372\u6388\u6B0A\u5B58\u53D6\u6B64 repo", 422: "workflow \u7684 main \u5206\u652F\u6216 workflow_dispatch \u8A2D\u5B9A\u4E0D\u7B26" };
     throw Error("GitHub HTTP " + r.status + "\uFF1A" + (reason[r.status] || "\u555F\u52D5\u8ACB\u6C42\u5931\u6557"));
@@ -674,6 +674,33 @@ var index_default = { async fetch(req, env) {
       if (podcasts2) return podcasts2;
       const personal2 = await aiJobsRoute(req, env, { admin: true, reply, dispatch, readArticleURL });
       if (personal2) return personal2;
+      if (path === "/admin/company-profile-probe") {
+        const code = url.searchParams.get("code");
+        if (!/^[1-9]\d{3}$/.test(code || "")) return reply({ error: "Invalid code" }, 400);
+        const r = await fetch("https://statementdog.com/analysis/" + code, { headers: { "User-Agent": "Mozilla/5.0", "Accept": "text/html" }, redirect: "manual", signal: AbortSignal.timeout(1e4) });
+        const html = await r.text();
+        let error = "";
+        try {
+          parseCompanyProfile(html, code);
+        } catch (e) {
+          error = e.message;
+        }
+        return reply({ status: r.status, bytes: html.length, title: xmlText(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "").slice(0, 150), error });
+      }
+      if (path === "/admin/company-profiles") {
+        await sql("CREATE TABLE IF NOT EXISTS company_profiles(code TEXT PRIMARY KEY,payload TEXT,state TEXT,requested_at INTEGER,updated_at INTEGER,error TEXT)").run();
+        if (req.method === "GET") return reply({ codes: (await sql("SELECT code FROM company_profiles WHERE state='queued' OR updated_at<? ORDER BY requested_at DESC LIMIT 100", Date.now() - 864e5).all()).results.map((r) => r.code) });
+        const b = await req.json();
+        if (!/^[1-9]\d{3}$/.test(b.code || "") || !await sql("SELECT code FROM companies WHERE code=?", b.code).first()) return reply({ error: "Invalid company" }, 400);
+        if (b.error) {
+          await sql("UPDATE company_profiles SET state='failed',error=? WHERE code=?", String(b.error).slice(0, 200), b.code).run();
+          return reply({ ok: true });
+        }
+        if (typeof b.html !== "string" || b.html.length > 2e6) return reply({ error: "Invalid page" }, 400);
+        const profile = parseCompanyProfile(b.html, b.code);
+        await sql("INSERT INTO company_profiles(code,payload,state,updated_at) VALUES(?,?,'ready',?) ON CONFLICT(code) DO UPDATE SET payload=excluded.payload,state='ready',updated_at=excluded.updated_at,error=NULL", b.code, JSON.stringify(profile), Date.now()).run();
+        return reply({ ok: true, code: profile.code, metrics: profile.metrics.length });
+      }
       if (path === "/admin/ranking-audit") {
         try {
           return reply({ snapshots: (await sql("SELECT date,payload FROM rankings ORDER BY date DESC LIMIT 60").all()).results.map((r) => {
@@ -878,6 +905,10 @@ var index_default = { async fetch(req, env) {
       const code = url.searchParams.get("code");
       if (!/^[1-9]\d{3}$/.test(code || "")) return reply({ error: "Invalid stock code" }, 400);
       if (!await sql("SELECT code FROM companies WHERE code=?", code).first()) return reply({ error: "\u516C\u53F8\u4E0D\u5B58\u5728" }, 404);
+      await sql("CREATE TABLE IF NOT EXISTS company_profiles(code TEXT PRIMARY KEY,payload TEXT,state TEXT,requested_at INTEGER,updated_at INTEGER,error TEXT)").run();
+      const stored = await sql("SELECT * FROM company_profiles WHERE code=?", code).first();
+      if (stored?.state === "queued" && stored.requested_at > Date.now() - 3e5) return reply({ pending: true, profile: stored.payload ? JSON.parse(stored.payload) : void 0 });
+      if (req.method !== "POST" && stored?.payload && stored.updated_at > Date.now() - 864e5) return reply({ profile: JSON.parse(stored.payload) });
       const key = new Request(url.origin + "/cache/company-profile/" + code), cache = globalThis.caches?.default, cached = await cache?.match(key);
       if (req.method !== "POST" && cached) return reply({ profile: await cached.json() });
       try {
@@ -893,11 +924,20 @@ var index_default = { async fetch(req, env) {
         const html = await response.text();
         if (html.length > 2e6) throw Error("\u8CA1\u5831\u72D7\u9801\u9762\u8D85\u904E\u8B80\u53D6\u4E0A\u9650");
         const profile = parseCompanyProfile(html, code);
+        await sql("INSERT INTO company_profiles(code,payload,state,updated_at) VALUES(?,?,'ready',?) ON CONFLICT(code) DO UPDATE SET payload=excluded.payload,state='ready',updated_at=excluded.updated_at,error=NULL", code, JSON.stringify(profile), Date.now()).run();
         if (cache) await cache.put(key, Response.json(profile, { headers: { "Cache-Control": "public, max-age=86400" } }));
         return reply({ profile });
       } catch (e) {
-        if (cached) return reply({ profile: await cached.json(), warning: e.message });
-        return reply({ error: e.message }, 502);
+        const old = stored?.payload ? JSON.parse(stored.payload) : cached ? await cached.json() : void 0;
+        if (stored?.state === "failed" && req.method !== "POST") return old ? reply({ profile: old, warning: "\u8CA1\u52D9\u66F4\u65B0\u66AB\u6642\u5931\u6557\uFF0C\u53EF\u6309\u91CD\u8A66\u3002" }) : reply({ error: "\u8CA1\u5831\u72D7\u516C\u958B\u8CC7\u6599\u66AB\u6642\u7121\u6CD5\u53D6\u5F97\uFF0C\u8ACB\u6309\u91CD\u8A66\u8CA1\u52D9\u53C3\u8003\u3002" }, 502);
+        await sql("INSERT INTO company_profiles(code,state,requested_at,error) VALUES(?,'queued',?,?) ON CONFLICT(code) DO UPDATE SET state='queued',requested_at=excluded.requested_at,error=excluded.error", code, Date.now(), e.message).run();
+        try {
+          await dispatch(env, "company-profiles.yml");
+          return reply({ pending: true, profile: old });
+        } catch (dispatchError) {
+          await sql("UPDATE company_profiles SET state='failed',error=? WHERE code=?", dispatchError.message, code).run();
+          return old ? reply({ profile: old, warning: "\u8CA1\u52D9\u66F4\u65B0\u66AB\u6642\u7121\u6CD5\u555F\u52D5\uFF0C\u53EF\u6309\u91CD\u8A66\u3002" }) : reply({ error: "\u8CA1\u52D9\u8CC7\u6599\u66F4\u65B0\u66AB\u6642\u7121\u6CD5\u555F\u52D5\uFF0C\u8ACB\u7A0D\u5F8C\u91CD\u8A66\u3002" }, 502);
+        }
       }
     }
     if (path === "/chart-prices") {

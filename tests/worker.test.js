@@ -159,3 +159,19 @@ test('company profile distinguishes unavailable pages from wrong stock and toler
  assert.throws(()=>parseCompanyProfile('<title>3026禾伸堂股票</title><h1>2330 台積電</h1>'+facts,'3026'),/代號不符/);
  assert.throws(()=>parseCompanyProfile('<h1>13026 其他公司</h1>'+facts,'3026'),/暫未回傳/);
 });
+test('failed edge profile fetch queues a validated background collection and shares persisted result',async()=>{
+ const {db,env}=setup();env.GITHUB_DISPATCH_TOKEN='test-token';
+ db.exec("INSERT INTO companies(code,name,full_name,market) VALUES('8150','南茂','南茂科技','上市');INSERT INTO users VALUES('alice','a@example.com');");
+ db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(await hash('alice'),'alice',Date.now()+60000);
+ const originalFetch=globalThis.fetch,originalCaches=globalThis.caches;let edge=0,dispatches=0;
+ globalThis.caches=undefined;globalThis.fetch=async url=>{if(String(url).includes('api.github.com')){assert.ok(String(url).includes('company-profiles.yml/dispatches'));dispatches++;return new Response(null,{status:204});}edge++;return new Response('<title>Verification</title>');};
+ try{
+  assert.equal((await (await call(env,'/company-profile?code=8150','alice')).json()).pending,true);
+  assert.equal((await (await call(env,'/company-profile?code=8150','alice')).json()).pending,true);
+  assert.equal(edge,1);assert.equal(dispatches,1);
+  assert.equal((await call(env,'/admin/company-profiles','wrong',{code:'8150',html:profileHTML})).status,403);
+  assert.equal((await call(env,'/admin/company-profiles','secret',{code:'8150',html:profileHTML.replace('8150','2330')})).status,500);
+  assert.equal((await call(env,'/admin/company-profiles','secret',{code:'8150',html:profileHTML})).status,200);
+  const ready=await (await call(env,'/company-profile?code=8150','alice')).json();assert.equal(ready.profile.code,'8150');assert.equal(ready.pending,undefined);assert.equal(edge,1);
+ }finally{globalThis.fetch=originalFetch;globalThis.caches=originalCaches;db.close();}
+});

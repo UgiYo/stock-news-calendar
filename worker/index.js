@@ -118,7 +118,7 @@ export async function verifyGoogle(token,clientID){
  const key=await crypto.subtle.importKey('jwk',jwk,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['verify']);
  if(!await crypto.subtle.verify('RSASSA-PKCS1-v1_5',key,b64(sig),encoder.encode(head+'.'+body)))throw Error('Invalid signature');return claims;
 }
-async function dispatch(env){if(!env.GITHUB_DISPATCH_TOKEN)throw Error('Pages Production 尚未設定 GITHUB_DISPATCH_TOKEN');if(!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(env.GITHUB_REPO||''))throw Error('GITHUB_REPO 格式錯誤，應為 UgiYo/stock-news-calendar');const r=await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/news.yml/dispatches`,{method:'POST',headers:{Authorization:`Bearer ${env.GITHUB_DISPATCH_TOKEN}`,'User-Agent':'stock-news-calendar','Accept':'application/vnd.github+json','Content-Type':'application/json'},body:JSON.stringify({ref:'main',inputs:{mode:'queued'}}),signal:AbortSignal.timeout(10000)});if(!r.ok){const reason={401:'token 無效或已過期',403:'token 權限不足，需 Actions: Read and write；或 GitHub 存取限制',404:'repo、news.yml 不存在，或 token 未獲授權存取此 repo',422:'workflow 的 main 分支或 workflow_dispatch 設定不符'};throw Error('GitHub HTTP '+r.status+'：'+(reason[r.status]||'啟動請求失敗'));}return true;}
+async function dispatch(env,workflow="news.yml"){if(!env.GITHUB_DISPATCH_TOKEN)throw Error('Pages Production 尚未設定 GITHUB_DISPATCH_TOKEN');if(!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(env.GITHUB_REPO||''))throw Error('GITHUB_REPO 格式錯誤，應為 UgiYo/stock-news-calendar');const r=await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${workflow}/dispatches`,{method:'POST',headers:{Authorization:`Bearer ${env.GITHUB_DISPATCH_TOKEN}`,'User-Agent':'stock-news-calendar','Accept':'application/vnd.github+json','Content-Type':'application/json'},body:JSON.stringify({ref:'main',...(workflow==='news.yml'?{inputs:{mode:'queued'}}:{})}),signal:AbortSignal.timeout(10000)});if(!r.ok){const reason={401:'token 無效或已過期',403:'token 權限不足，需 Actions: Read and write；或 GitHub 存取限制',404:'repo、news.yml 不存在，或 token 未獲授權存取此 repo',422:'workflow 的 main 分支或 workflow_dispatch 設定不符'};throw Error('GitHub HTTP '+r.status+'：'+(reason[r.status]||'啟動請求失敗'));}return true;}
 export default {async fetch(req,env){
  const url=new URL(req.url),path=url.pathname;
  let appURL;
@@ -163,6 +163,18 @@ export default {async fetch(req,env){
  const provided=req.headers.get('Authorization')||'';if(!env.COLLECTOR_SECRET||await hash(provided)!==await hash('Bearer '+env.COLLECTOR_SECRET))return reply({error:'Forbidden'},403);
  const podcasts=await sharedPodcastsRoute(req,{sql,reply,admin:true,hash});if(podcasts)return podcasts;
  const personal=await aiJobsRoute(req,env,{admin:true,reply,dispatch,readArticleURL});if(personal)return personal;
+ if(path==='/admin/company-profile-probe'){
+ const code=url.searchParams.get('code');if(!/^[1-9]\d{3}$/.test(code||''))return reply({error:'Invalid code'},400);
+ const r=await fetch('https://statementdog.com/analysis/'+code,{headers:{'User-Agent':'Mozilla/5.0','Accept':'text/html'},redirect:'manual',signal:AbortSignal.timeout(10000)});const html=await r.text();let error='';try{parseCompanyProfile(html,code);}catch(e){error=e.message;}return reply({status:r.status,bytes:html.length,title:xmlText(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]||'').slice(0,150),error});
+ }
+ if(path==='/admin/company-profiles'){
+ await sql('CREATE TABLE IF NOT EXISTS company_profiles(code TEXT PRIMARY KEY,payload TEXT,state TEXT,requested_at INTEGER,updated_at INTEGER,error TEXT)').run();
+ if(req.method==='GET')return reply({codes:(await sql("SELECT code FROM company_profiles WHERE state='queued' OR updated_at<? ORDER BY requested_at DESC LIMIT 100",Date.now()-86400000).all()).results.map(r=>r.code)});
+ const b=await req.json();if(!/^[1-9]\d{3}$/.test(b.code||'')||!await sql('SELECT code FROM companies WHERE code=?',b.code).first())return reply({error:'Invalid company'},400);
+ if(b.error){await sql("UPDATE company_profiles SET state='failed',error=? WHERE code=?",String(b.error).slice(0,200),b.code).run();return reply({ok:true});}
+ if(typeof b.html!=='string'||b.html.length>2000000)return reply({error:'Invalid page'},400);
+ const profile=parseCompanyProfile(b.html,b.code);await sql("INSERT INTO company_profiles(code,payload,state,updated_at) VALUES(?,?,'ready',?) ON CONFLICT(code) DO UPDATE SET payload=excluded.payload,state='ready',updated_at=excluded.updated_at,error=NULL",b.code,JSON.stringify(profile),Date.now()).run();return reply({ok:true,code:profile.code,metrics:profile.metrics.length});
+ }
  if(path==='/admin/ranking-audit'){try{return reply({snapshots:(await sql('SELECT date,payload FROM rankings ORDER BY date DESC LIMIT 60').all()).results.map(r=>{const p=JSON.parse(r.payload);return {date:r.date,previousDate:Array.isArray(p)?null:p.previousDate};})});}catch(e){if(String(e.message).includes('no such table'))return reply({snapshots:[]});throw e;}}
  if(path==='/admin/ranking-link'&&req.method==='POST'){const b=await req.json();if(!/^\d{4}-\d{2}-\d{2}$/.test(b.date||'')||!/^\d{4}-\d{2}-\d{2}$/.test(b.previousDate||'')||b.previousDate>=b.date)return reply({error:'Invalid dates'},400);const row=await sql('SELECT payload FROM rankings WHERE date=?',b.date).first(),prior=await sql('SELECT date FROM rankings WHERE date=?',b.previousDate).first();if(!row||!prior)return reply({error:'Missing snapshot'},409);const p=JSON.parse(row.payload);await sql('UPDATE rankings SET payload=? WHERE date=?',JSON.stringify({stocks:Array.isArray(p)?p:p.stocks,previousDate:b.previousDate}),b.date).run();return reply({ok:true});}
  if(path==='/admin/chart-codes'){const codes=new Set((await sql('SELECT DISTINCT company_code AS code FROM watchlists').all()).results.map(r=>r.code));try{for(const row of (await sql('SELECT payload FROM rankings ORDER BY date DESC LIMIT 60').all()).results){const p=JSON.parse(row.payload),stocks=Array.isArray(p)?p:p.stocks;for(const r of [...stocks].sort((a,b)=>b.amount-a.amount||a.code.localeCompare(b.code)).slice(0,10))codes.add(r.code);}}catch(e){if(!String(e.message).includes('no such table'))throw e;}if(!codes.size)return reply({companies:[]});const hasPrices=await sql("SELECT name FROM sqlite_master WHERE type='table' AND name='prices'").first(),list=[...codes],companies=[];for(let i=0;i<list.length;i+=100){const chunk=list.slice(i,i+100),placeholders=chunk.map(()=>'?').join(',');const query=hasPrices?`SELECT c.*,(SELECT MAX(date) FROM prices p WHERE p.code=c.code) AS last_price_date,(SELECT group_concat(month) FROM (SELECT substr(date,1,7) AS month FROM prices p WHERE p.code=c.code AND p.open>0 AND p.high>0 AND p.low>0 GROUP BY month HAVING count(*)>=10)) AS price_months FROM companies c WHERE code IN (${placeholders})`:`SELECT * FROM companies WHERE code IN (${placeholders})`;companies.push(...(await sql(query,...chunk).all()).results);}return reply({companies});}
@@ -202,13 +214,22 @@ export default {async fetch(req,env){
  if(path==='/company-profile'){
  const code=url.searchParams.get('code');if(!/^[1-9]\d{3}$/.test(code||''))return reply({error:'Invalid stock code'},400);
  if(!await sql('SELECT code FROM companies WHERE code=?',code).first())return reply({error:'公司不存在'},404);
+ await sql('CREATE TABLE IF NOT EXISTS company_profiles(code TEXT PRIMARY KEY,payload TEXT,state TEXT,requested_at INTEGER,updated_at INTEGER,error TEXT)').run();
+ const stored=await sql('SELECT * FROM company_profiles WHERE code=?',code).first();
+ if(stored?.state==='queued'&&stored.requested_at>Date.now()-300000)return reply({pending:true,profile:stored.payload?JSON.parse(stored.payload):undefined});
+ if(req.method!=='POST'&&stored?.payload&&stored.updated_at>Date.now()-86400000)return reply({profile:JSON.parse(stored.payload)});
  const key=new Request(url.origin+'/cache/company-profile/'+code),cache=globalThis.caches?.default,cached=await cache?.match(key);
  if(req.method!=='POST'&&cached)return reply({profile:await cached.json()});
  try{let target='https://statementdog.com/analysis/'+code,response;
   for(let i=0;i<3;i++){response=await fetch(target,{redirect:'manual',headers:{'User-Agent':'Mozilla/5.0','Accept':'text/html'},signal:AbortSignal.timeout(10000)});if(![301,302,303,307,308].includes(response.status))break;const next=new URL(response.headers.get('Location')||'',target);if(next.protocol!=='https:'||!['statementdog.com','www.statementdog.com'].includes(next.hostname)||next.username||next.password||next.port)throw Error('財報狗來源轉址不符');target=next.href;}
   if(!response?.ok)throw Error('財報狗公開資訊暫時無法讀取');const html=await response.text();if(html.length>2000000)throw Error('財報狗頁面超過讀取上限');const profile=parseCompanyProfile(html,code);
-  if(cache)await cache.put(key,Response.json(profile,{headers:{'Cache-Control':'public, max-age=86400'}}));return reply({profile});
- }catch(e){if(cached)return reply({profile:await cached.json(),warning:e.message});return reply({error:e.message},502);}
+  await sql("INSERT INTO company_profiles(code,payload,state,updated_at) VALUES(?,?,'ready',?) ON CONFLICT(code) DO UPDATE SET payload=excluded.payload,state='ready',updated_at=excluded.updated_at,error=NULL",code,JSON.stringify(profile),Date.now()).run();if(cache)await cache.put(key,Response.json(profile,{headers:{'Cache-Control':'public, max-age=86400'}}));return reply({profile});
+  }catch(e){
+ const old=stored?.payload?JSON.parse(stored.payload):cached?await cached.json():undefined;
+ if(stored?.state==='failed'&&req.method!=='POST')return old?reply({profile:old,warning:'財務更新暫時失敗，可按重試。'}):reply({error:'財報狗公開資料暫時無法取得，請按重試財務參考。'},502);
+ await sql("INSERT INTO company_profiles(code,state,requested_at,error) VALUES(?,'queued',?,?) ON CONFLICT(code) DO UPDATE SET state='queued',requested_at=excluded.requested_at,error=excluded.error",code,Date.now(),e.message).run();
+ try{await dispatch(env,'company-profiles.yml');return reply({pending:true,profile:old});}catch(dispatchError){await sql("UPDATE company_profiles SET state='failed',error=? WHERE code=?",dispatchError.message,code).run();return old?reply({profile:old,warning:'財務更新暫時無法啟動，可按重試。'}):reply({error:'財務資料更新暫時無法啟動，請稍後重試。'},502);}
+ }
  }
  if(path==='/chart-prices'){
  const code=url.searchParams.get('code');if(!/^[1-9]\d{3}$/.test(code||''))return reply({error:'Invalid stock code'},400);

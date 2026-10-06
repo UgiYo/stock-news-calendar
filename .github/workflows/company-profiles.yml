@@ -1,0 +1,28 @@
+name: Update public company profiles
+on:
+  push:
+    branches: [main]
+    paths: ['scripts/sync_company_profiles.py', '.github/workflows/company-profiles.yml']
+  schedule:
+    - cron: '35 12 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: company-profiles
+  cancel-in-progress: false
+jobs:
+  profiles:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      WORKER_API_URL: ${{ vars.WORKER_API_URL }}
+      COLLECTOR_SECRET: ${{ secrets.COLLECTOR_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Read and validate public company facts
+        run: python scripts/sync_company_profiles.py
