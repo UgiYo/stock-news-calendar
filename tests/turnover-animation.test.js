@@ -27,3 +27,9 @@ test('trend choices include the actual share series and comparison, escaping lab
  assert.ok(trendSpark({series:[3,3,3],delta:0}).includes('8,35 80,35 152,35'));
  assert.ok(!trendSpark(null).includes('<svg'));
 });
+test('trend dropdown sorts strongest increases first, cooling later, missing last',async()=>{
+ const {sortTrendChoices}=await import('../src/turnover-animation.js');
+ const choices=[{title:'missing'},{title:'cool',trend:{delta:-5}},{title:'warm',trend:{delta:2}},{title:'flat',trend:{delta:0}},{title:'hottest',trend:{delta:6}}];
+ assert.deepEqual(sortTrendChoices(choices).map(c=>c.title),['hottest','warm','flat','cool','missing']);
+ assert.equal(choices[0].title,'missing');
+});
