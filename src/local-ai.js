@@ -1,3 +1,4 @@
+import {connectionDiagnostic} from './ai-errors.js';
 import {showMarkdown,markdownSource} from './markdown-preview.js';
 import {requireAISession,lockGuestAI} from './ai-auth.js';
 import {companyMode,configureCloudOption} from './ai-privacy.js';
@@ -52,7 +53,7 @@ export async function requestAI(config,text,{fetcher=globalThis.fetch,signal}={}
   const {provider,endpoint,model,key,version}=config;
   request={url:origin+'/relay',options:{method:'POST',mode:'cors',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',headers:{'Content-Type':'application/json','X-Local-AI-Token':config.bridgeToken.trim()},body:JSON.stringify({config:{provider,endpoint,model,key,version},text})}};
  }
- try{response=await fetcher(request.url,{...request.options,signal});}catch(e){if(e.name==='AbortError')throw Error('請求已取消或超過 90 秒。');throw Error(config.transport==='python'?'無法連線到本機 Python：請先啟動工具、確認配對碼，並允許瀏覽器的本機網路存取。也可直接開啟本機工具頁面貼上新聞。':'無法直接連線：請確認網址、公司網路／VPN、HTTPS 憑證與 CORS。沒有改用本專案伺服器轉送。');}
+ try{response=await fetcher(request.url,{...request.options,signal});}catch(e){if(signal?.aborted||e.name==='AbortError')throw Error('AI 摘要請求已取消或逾時。');throw Error(connectionDiagnostic(config,'AI 摘要'));}
  if(!response.ok&&config.transport==='python'){let error;try{error=await response.json();}catch{}throw Error(error?.error||`本機工具 HTTP ${response.status}`);}
  if(!response.ok)throw Error(`AI HTTP ${response.status}：${({401:'金鑰或認證方式不正確',403:'無權使用此服務或模型',404:'端點、模型或 Azure 部署名稱不正確',429:'額度或速率限制'}[response.status]||'服務無法完成請求')}。`);
  let data;try{data=await response.json();}catch{throw Error('AI 服務未回傳 JSON。');}

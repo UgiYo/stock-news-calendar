@@ -51,3 +51,8 @@ test('partial article failures are reported and only successful bodies are sent 
  const result=await summarizeFullNews(rows,{...config,transport:'direct'},{articleFetcher:async(url)=>{reads.push(url);if(url.endsWith('/failed'))throw Error('來源 HTTP 403');return {url,text:'完整成功內文。'.repeat(30)};},fetcher:async(url,options)=>{calls++;assert.equal(reads.length,2);assert.ok(options.body.includes('完整成功內文'));assert.ok(options.body.includes('部分新聞摘要'));assert.ok(!options.body.includes('Failed headline'));assert.ok(!options.body.includes('OLD SUMMARY'));return {ok:true,json:async()=>({choices:[{message:{content:'partial summary'}}]})};}});
  assert.equal(calls,1);assert.equal(result.answer,'partial summary');assert.equal(result.total,2);assert.equal(result.articles.length,1);assert.deepEqual(result.failed,[{title:'Failed headline',url:rows[0].url,reason:'來源 HTTP 403'}]);
 });
+
+test('public provider network failures report stage and host without implying company VPN or exposing key',async()=>{
+ const c={provider:'openai',endpoint:'https://api.openai.com/v1',model:'chat',key:'secret'};
+ await assert.rejects(requestAI(c,'text',{fetcher:async()=>{throw new TypeError('secret');}}),e=>e.message.includes('AI 摘要')&&e.message.includes('api.openai.com')&&e.message.includes('HTTP')&&!e.message.includes('VPN')&&!e.message.includes('secret'));
+});
