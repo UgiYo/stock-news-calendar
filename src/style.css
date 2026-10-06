@@ -91,3 +91,10 @@ html{scrollbar-gutter:stable}body.modal-open{overflow:hidden}button,input,select
 .flow-observation-grid li{margin:8px 0;overflow-wrap:anywhere}
 .flow-observation-grid ul{padding-left:20px}
 @media(max-width:800px){.flow-observation-grid{grid-template-columns:1fr}}
+.turnover-scatter{display:block;width:100%;height:auto;background:#fff;border:1px solid #dce5eb;border-radius:12px;touch-action:pan-y}
+.turnover-scatter text{font-size:13px;fill:#526572}.turnover-scatter .scatter-bubble text{fill:white;font-weight:700;font-size:11px}
+.scatter-bubble{cursor:pointer;transition:opacity .3s}.scatter-bubble:focus circle,.scatter-bubble:hover circle{stroke:#152f40;stroke-width:3}
+.scatter-key{font-size:13px;line-height:1.8}.scatter-choices,.scatter-stocks{display:flex;flex-wrap:wrap;gap:8px}
+.scatter-choices button,.scatter-stocks button{min-height:44px;text-align:left;overflow-wrap:anywhere}
+.scatter-detail{margin-top:12px;border:1px solid #dce5eb;border-radius:10px;padding:12px;background:white}
+@media(max-width:600px){.turnover-scatter text{font-size:15px}.scatter-choices{display:grid;grid-template-columns:1fr 1fr}.scatter-choices button{font-size:12px;padding:8px}.scatter-stocks{display:grid;grid-template-columns:1fr}}
