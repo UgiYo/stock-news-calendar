@@ -1011,7 +1011,7 @@ var index_default = { async fetch(req, env) {
     }
     if (path === "/intraday") {
       const code = url.searchParams.get("code"), interval = url.searchParams.get("interval") || "5m";
-      if (!/^[1-9]\d{3}$/.test(code || "") || !["1m", "5m", "15m", "60m"].includes(interval)) return reply({ error: "Invalid interval" }, 400);
+      if (!/^[1-9]\d{3}$/.test(code || "") || !["1d", "1m", "5m", "15m", "60m"].includes(interval)) return reply({ error: "Invalid interval" }, 400);
       const company = await sql("SELECT * FROM companies WHERE code=?", code).first();
       if (!company) return reply({ error: "\u516C\u53F8\u4E0D\u5B58\u5728" }, 404);
       const symbol = code + (company.market === "\u4E0A\u6AC3" ? ".TWO" : ".TW"), key = new Request(url.origin + "/cache/intraday/" + symbol + "/" + interval), cache = globalThis.caches?.default;
@@ -1029,8 +1029,8 @@ var index_default = { async fetch(req, env) {
         }
       }
       if (!result || result.meta?.symbol !== symbol) return reply({ error: "\u5206\u9418\u884C\u60C5\u4F86\u6E90\u66AB\u6642\u7121\u6CD5\u8B80\u53D6\uFF0C\u8ACB\u7A0D\u5F8C\u91CD\u8A66\uFF1B\u65E5\u9031\u6708 K \u4ECD\u53EF\u4F7F\u7528\u3002" }, 502);
-      const quote = result.indicators?.quote?.[0], prices = [];
-      for (const [i, timestamp] of (result.timestamp || []).entries()) {
+      const quote = result.indicators?.quote?.[0], prices = interval === "1d" ? dailyBars(result, code) : [];
+      for (const [i, timestamp] of (interval === "1d" ? [] : result.timestamp || []).entries()) {
         const open = quote?.open?.[i], high = quote?.high?.[i], low = quote?.low?.[i], close = quote?.close?.[i], volume = quote?.volume?.[i];
         if (![open, high, low, close].every((v) => Number.isFinite(v) && v > 0) || low > Math.min(open, close) || high < Math.max(open, close)) continue;
         const time = new Date(timestamp * 1e3 + 8 * 36e5), minutes = time.getUTCHours() * 60 + time.getUTCMinutes();
@@ -1038,7 +1038,7 @@ var index_default = { async fetch(req, env) {
         prices.push({ date: time.toISOString().slice(0, 16).replace("T", " "), timestamp, open, high, low, close, volume: Number.isFinite(volume) ? volume : null });
       }
       const data = { prices, source: "Yahoo Finance", interval, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
-      if (cache) await cache.put(key, Response.json(data, { headers: { "Cache-Control": "public, max-age=180" } }));
+      if (cache) await cache.put(key, Response.json(data, { headers: { "Cache-Control": "public, max-age=55" } }));
       return reply(data);
     }
     if (path === "/company-profile") {
