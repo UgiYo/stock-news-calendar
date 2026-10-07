@@ -3,7 +3,7 @@ const cache=new Map();
 const normalize=s=>String(s||'').normalize('NFKC').replaceAll('臺','台');
 const doubtful=/待確認|疑似|無法確認|未確認|未能辨識|僅(?:在)?標題|簡介提及|逐字稿未|名稱不明/;
 export function setPodcastWatchlist(rows){watchlist=rows||[];}
-function aliases(c){return [...new Set([c.name,c.full_name].filter(s=>s&&s.length>=2).map(normalize))].sort((a,b)=>b.length-a.length);}
+function aliases(c){return [...new Set([c.name,c.full_name].filter(s=>s&&s.length>=2).map(s=>normalize(s).replace(/[＊*]+$/,'').trim()).filter(s=>s.length>=2))].sort((a,b)=>b.length-a.length);}
 function contains(text,c){
  let value=normalize(text);for(const other of [...(c.conflicting_names||[]),...(c.code==='2303'?['台聯電']:[])])value=value.split(normalize(other)).join(' ');
  if(aliases(c).some(n=>value.includes(n)&&(!['世界','中華','大同','大成','中興'].includes(n)||new RegExp(c.code).test(value))))return true;
