@@ -1,9 +1,11 @@
+import {independentSTTRequest} from './podcast-stt.js';
 import {connectionDiagnostic} from './ai-errors.js';
 import financeTranscriptionPrompt from '../shared/podcast-transcription-prompt.json' with {type:'json'};
 import podcastSummaryRules from '../shared/podcast-summary-rules.json' with {type:'json'};
 import {aiRequest,requestAI,localBridgeOrigin,pairLocalBridge} from './local-ai.js';
 import {cachedSummary} from './summary-cache.js';
 export function transcriptionRequest(config,blob,model){
+ if(config.stt?.enabled)return independentSTTRequest(config.stt,blob);
  const checked=aiRequest(config,'驗證設定');
  if(!model?.trim())throw Error('請填語音轉文字模型／Azure 語音部署名稱。');
  if(!blob.size||blob.size>24000000)throw Error('單段音訊需小於 24 MB。');
@@ -47,6 +49,7 @@ async function resilientChunk(config,blob,model,options){
  }
 }
 export async function transcribePodcast(config,blob,model,{fetcher=globalThis.fetch,signal,onProgress=()=>{},segments=[],onCheckpoint=()=>{},requestTimeoutMs=180000}={}){
+ if(config.stt?.enabled){config={...config,key:config.stt.key,endpoint:config.stt.endpoint,transport:'direct'};model=config.stt.model;}
  if(config.transport==='python'){await pairLocalBridge(config,{fetcher,signal});const r=await fetcher(localBridgeOrigin(config.bridge)+'/health',{signal});if((await r.json()).version<4)throw Error('請下載新版本機工具，才能使用 Podcast 音訊轉文字。');}
  if(!blob.size||blob.size>120000000)throw Error('音訊上限 120 MB；請改上傳分段音訊或逐字稿。');
  if(blob.size<=24000000&&!segments.length){onProgress('正在將整集音訊送往指定語音服務轉文字…');const result={text:await resilientChunk(config,blob,model,{fetcher,signal,onProgress,timeoutMs:requestTimeoutMs}),failed:[],segments:[],transcription_model:model.trim()};onCheckpoint(result);return result;}
