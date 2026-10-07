@@ -3,16 +3,22 @@ import {createTurnoverScatter} from './turnover-scatter.js';
 import {selectObservationStocks} from './observation-stocks.js';
 import {chainFlows,capRanking,industryCatalog} from './value-chains.js';
 let selectedIndustry='',selectedGroup='';
+const turnoverFrameCache=new WeakMap(),tenDayTrendCache=new WeakMap();
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export function turnoverFrames(catalog,history,date,industry=''){
- const all=(history||[]).filter(h=>h.date<=date&&Array.isArray(h.turnover)).sort((a,b)=>a.date.localeCompare(b.date)),selected=all.slice(-10);
- const frames=selected.map(h=>{const prior=all.find(p=>p.date===h.previousDate),rows=h.turnover.map(([code,amount])=>({code,amount})),previous=prior?.turnover.map(([code,amount])=>({code,amount}));return {date:h.date,previousDate:h.previousDate,total:h.total||rows.reduce((n,r)=>n+r.amount,0),flows:chainFlows(catalog,rows,previous).filter(g=>!industry||g.industry===industry)};});
+ if(!catalog||typeof catalog!=='object'||!Array.isArray(history))return {frames:[],groups:[]};
+ let histories=turnoverFrameCache.get(catalog);if(!histories){histories=new WeakMap();turnoverFrameCache.set(catalog,histories);}
+ let cache=histories.get(history);if(!cache){cache=new Map();histories.set(history,cache);}
+ const key=String(date)+'\u0000'+industry;if(cache.has(key))return cache.get(key);
+ const all=history.filter(h=>h.date<=date&&Array.isArray(h.turnover)).sort((a,b)=>a.date.localeCompare(b.date)),byDate=new Map(all.map(h=>[h.date,h])),selected=all.slice(-10);
+ const frames=selected.map(h=>{const prior=byDate.get(h.previousDate),rows=h.turnover.map(([code,amount])=>({code,amount})),previous=prior?.turnover.map(([code,amount])=>({code,amount}));return {date:h.date,previousDate:h.previousDate,total:h.total||rows.reduce((n,r)=>n+r.amount,0),flows:chainFlows(catalog,rows,previous).filter(g=>!industry||g.industry===industry)};});
  const totals=new Map();for(const f of frames)for(const g of f.flows)totals.set(g.id,(totals.get(g.id)||0)+g.amount);
  const ids=[...totals].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])).slice(0,12).map(([id])=>id);
- return {frames,groups:ids.map(id=>catalog.groups.find(g=>g.id===id))};
+ const model={frames,groups:ids.map(id=>catalog.groups.find(g=>g.id===id))};cache.set(key,model);if(cache.size>24)cache.delete(cache.keys().next().value);return model;
 }
 export function tenDayTrends(model){
- const {frames}=model;if(frames.length<6)return [];
+ if(!model||typeof model!=='object')return [];if(tenDayTrendCache.has(model))return tenDayTrendCache.get(model);
+ const {frames}=model;if(frames.length<6){tenDayTrendCache.set(model,[]);return [];}
  const avg=xs=>xs.reduce((a,b)=>a+b,0)/xs.length,ids=[...new Set(frames.flatMap(f=>f.flows.map(g=>g.id)))],results=[];
  for(const id of ids){const series=frames.map(f=>f.flows.find(g=>g.id===id));if(series.some(g=>!g))continue;
   const first=series.slice(0,3),last=series.slice(-3),before=avg(first.map(g=>g.share)),after=avg(last.map(g=>g.share)),delta=after-before,changes=series.slice(1).map((g,i)=>frames[i+1].previousDate===frames[i].date?g.share-series[i].share:null),valid=changes.filter(v=>v!==null),ups=valid.filter(v=>v>0).length,downs=valid.filter(v=>v<0).length;
@@ -20,7 +26,7 @@ export function tenDayTrends(model){
   let label='震盪／持平';if(delta>=0.3&&ups>=Math.ceil(valid.length*0.6)&&valid.length>=5)label='持續升溫';else if(delta<=-0.3&&downs>=Math.ceil(valid.length*0.6)&&valid.length>=5)label='持續降溫';else if(recentDelta>=0.3&&delta>-0.3)label='近期轉強';else if(recentDelta<=-0.3&&delta<0.3)label='近期轉弱';else if(delta>=0.3)label='整體升溫・有震盪';else if(delta<=-0.3)label='整體降溫・有震盪';
   const members=latest.codes.map(code=>{const values=series.map((g,i)=>{const row=g.members.find(r=>r.code===code);return row?{amount:row.amount,share:row.amount/frames[i].total*100}:null;});if(values.slice(0,3).some(v=>!v)||values.slice(-3).some(v=>!v))return null;const a=avg(values.slice(0,3).map(v=>v.share)),b=avg(values.slice(-3).map(v=>v.share)),amount=avg(values.slice(-3).map(v=>v.amount));return {code,complete:values.every(Boolean),before:a,after:b,delta:b-a,amount,contribution:avg(last.map(g=>g.amount))?amount/avg(last.map(g=>g.amount))*100:0};}).filter(Boolean).sort((a,b)=>b.amount-a.amount||a.code.localeCompare(b.code));
   results.push({...latest,label,before,after,delta,recentDelta,ups,downs,comparisons:valid.length,series:series.map(g=>g.share),dates:frames.map(f=>f.date),members});
- }return results.sort((a,b)=>Math.abs(b.delta)-Math.abs(a.delta)||b.amount-a.amount);
+ }const sorted=results.sort((a,b)=>Math.abs(b.delta)-Math.abs(a.delta)||b.amount-a.amount);tenDayTrendCache.set(model,sorted);return sorted;
 }
 export function trendSpark(t,label='成交占比走勢'){
  if(!t?.series?.length)return '<span class="flow-picker-missing">資料不足</span>';

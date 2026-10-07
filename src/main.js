@@ -41,6 +41,10 @@ function openHoldings(){holdingsDetail={records:loadHoldings(state.user.id),brok
 async function refreshHoldingsQuotes(){const detail=holdingsDetail,owner=state.user?.id;if(!detail)return;const rows=detail.records[detail.broker]?.rows||[];detail.quotes={};if(!rows.length){render();return;}detail.message='讀取已保存行情…';render();try{const data=await api('/portfolio-quotes?codes='+rows.map(r=>r.code).join(','));if(holdingsDetail===detail&&state.user?.id===owner){detail.quotes=Object.fromEntries(data.quotes.map(q=>[q.code,q]));detail.message=`取得 ${data.quotes.length} 檔已保存行情。`;}}catch(e){if(holdingsDetail===detail&&state.user?.id===owner)detail.error=e.message;}if(holdingsDetail===detail)render();}
 let maSettings=readMASettings();
 let chainCatalog=null,chainError='';let ranking=null,rankingTag='',rankingDate='',rankingError='',observationRequest=0,rankingDetail=null,rankingRequest=0;
+const rankingPriceCache=new Map(),rankingPriceLoads=new Map(),rankingResponseCache=new Map();
+function readRankingResponse(owner,key){const cacheKey=owner+':'+key,row=rankingResponseCache.get(cacheKey);if(!row)return null;const ttl=key==='latest'?90_000:10*60_000;if(Date.now()-row.savedAt>ttl){rankingResponseCache.delete(cacheKey);return null;}return row.data;}
+function saveRankingResponse(owner,key,data){for(const value of new Set([key,data.date].filter(Boolean))){rankingResponseCache.set(owner+':'+value,{data,savedAt:Date.now()});}if(key==='latest')rankingResponseCache.set(owner+':latest',{data,savedAt:Date.now()});while(rankingResponseCache.size>16)rankingResponseCache.delete(rankingResponseCache.keys().next().value);}
+async function rankingChartPrices(code){const cached=rankingPriceCache.get(code);if(cached&&Date.now()-cached.savedAt<10*60_000)return cached.result;if(rankingPriceLoads.has(code))return rankingPriceLoads.get(code);const task=api('/chart-prices?code='+encodeURIComponent(code)).then(result=>{rankingPriceCache.set(code,{result,savedAt:Date.now()});if(rankingPriceCache.size>40)rankingPriceCache.delete(rankingPriceCache.keys().next().value);return result;}).finally(()=>rankingPriceLoads.delete(code));rankingPriceLoads.set(code,task);return task;}
 async function openRankingStock(code){const request=++rankingRequest,owner=state.user?.id;rankingDetail={...maSettings,code,stock:ranking?.stocks.find(r=>r.code===code)||state.companies.find(c=>c.code===code)||state.previewCompany,loading:true};render();app.querySelector('#close-stock-ranking')?.focus();rankingDetail.profileLoading=true;readCompanyProfile(code).then(result=>{if(request===rankingRequest&&owner===state.user?.id){rankingDetail.profile=result.profile;rankingDetail.profileError=result.warning||'';}}).catch(e=>{if(request===rankingRequest&&owner===state.user?.id)rankingDetail.profileError=e.message;}).finally(()=>{if(request===rankingRequest&&owner===state.user?.id){rankingDetail.profileLoading=false;render();}});try{const [data,chart]=await Promise.all([api('/ranking-stock?code='+encodeURIComponent(code)),api('/chart-prices?code='+encodeURIComponent(code))]);if(request===rankingRequest&&owner===state.user?.id)Object.assign(rankingDetail,{...data,stock:data.stock||state.companies.find(c=>c.code===code)||rankingDetail.stock,code,prices:chart.prices,priceSource:chart.source,candlePeriod:'day',...maSettings,loading:false});}catch(e){if(request===rankingRequest&&owner===state.user?.id)Object.assign(rankingDetail,{loading:false,error:e.message});}if(request===rankingRequest){render();refreshLiveCandles();}}
 async function toggleRankingNews(refresh=false){
  const detail=rankingDetail,owner=state.user?.id;if(!detail||detail.newsLoading)return;
@@ -73,23 +77,23 @@ function closeRankingStock(){const code=rankingDetail?.code;rankingRequest++;ran
 async function loadObservationTechnicals(data,request,owner){
  if(!chainCatalog||!data.date)return;
  const candidates=observationCandidates(tenDayTrends(turnoverFrames(chainCatalog,data.history,data.date)),data.stocks,state.companies);
- data.observationTechnicals={};data.observationLoading=!!candidates.length;render();
+ data.observationTechnicals={};data.observationLoading=!!candidates.length;
  for(let i=0;i<candidates.length;i+=4){
   if(request!==observationRequest||owner!==state.user?.id)return;
   const results=await Promise.allSettled(candidates.slice(i,i+4).map(async r=>{
-   const result=await api('/chart-prices?code='+encodeURIComponent(r.code));
+   const result=await rankingChartPrices(r.code);
    return [r.code,observationTechnical(result.prices||[],data.date)];
   }));
   if(request!==observationRequest||owner!==state.user?.id)return;
   results.forEach((r,j)=>{const code=candidates[i+j].code;data.observationTechnicals[code]=r.status==='fulfilled'?r.value[1]:{eligible:false,reason:'行情讀取失敗，請重試'};});
  }
- data.observationLoading=false;if(ranking===data)render();
+ data.observationLoading=false;if(candidates.length&&ranking===data)render();
 }
 async function loadRankingReturns(data,request,owner){
- data.priceReturns={};data.priceReturnsLoading=true;render();
+ data.priceReturns={};data.priceReturnsLoading=true;
  const stocks=[...(data.stocks||[])].sort((a,b)=>b.amount-a.amount||a.code.localeCompare(b.code)).slice(0,10);
  await Promise.allSettled(stocks.map(async stock=>{
-  try{const result=await api('/chart-prices?code='+encodeURIComponent(stock.code));if(ranking===data&&request===observationRequest&&owner===state.user?.id){data.priceReturns[stock.code]=rankingReturns(result.prices,data.date,data.dates);}}
+  try{const result=await rankingChartPrices(stock.code);if(ranking===data&&request===observationRequest&&owner===state.user?.id){data.priceReturns[stock.code]=rankingReturns(result.prices,data.date,data.dates);}}
   catch{if(ranking===data&&request===observationRequest&&owner===state.user?.id)data.priceReturns[stock.code]=rankingReturns([],data.date,data.dates);}
  }));
  if(ranking===data&&request===observationRequest&&owner===state.user?.id){data.priceReturnsLoading=false;render();}
@@ -98,10 +102,14 @@ async function loadRanking(date=''){
  const request=++observationRequest,owner=state.user?.id;
  try{
   if(!chainCatalog){try{const r=await fetch(import.meta.env.BASE_URL+'data/value-chains.json');if(!r.ok)throw Error('分類資料讀取失敗');chainCatalog=await r.json();chainError='';}catch(e){chainError=e.message;}}
-  let data=await api('/ranking'+(date?'?date='+encodeURIComponent(date):''));
-  if(data.date&&!data.previousStocks){const index=data.dates?.indexOf(data.date),previousDate=data.previousDate||data.dates?.[index+1];if(previousDate){try{const previous=await api('/ranking?date='+encodeURIComponent(previousDate));data={...data,previousDate:previous.date,previousStocks:previous.stocks};}catch{}}}
+  const cacheKey=date||'latest';let data=readRankingResponse(owner,cacheKey);
+  if(!data){data=await api('/ranking'+(date?'?date='+encodeURIComponent(date):''));
+   if(data.date&&!data.previousStocks){const index=data.dates?.indexOf(data.date),previousDate=data.previousDate||data.dates?.[index+1];if(previousDate){try{const previous=await api('/ranking?date='+encodeURIComponent(previousDate));data={...data,previousDate:previous.date,previousStocks:previous.stocks};}catch{}}}
+   saveRankingResponse(owner,cacheKey,data);
+  }
   if(request!==observationRequest||owner!==state.user?.id)return;
   ranking=data;rankingDate=data.date||'';rankingTag='';rankingError='';
+  if(data.priceReturns&&!data.priceReturnsLoading&&!data.observationLoading){render();return;}
   loadRankingReturns(data,request,owner);
   loadObservationTechnicals(data,request,owner).catch(()=>{if(ranking===data&&request===observationRequest){data.observationLoading=false;data.observationError='技術條件讀取失敗，請重新選擇交易日期重試';render();}});
  }catch(e){if(request===observationRequest)rankingError=e.message;}render();
@@ -113,7 +121,7 @@ async function loadPrices(code,{notify=true}={}){if(!code||!state.user||marketPr
 let priceBackground=false;
 async function loadBackgroundPrices(){if(priceBackground)return;priceBackground=true;const owner=state.user?.id;try{const codes=state.companies.filter(c=>!marketPrices[c.code]).map(c=>c.code);for(let i=0;i<codes.length;i+=4){if(state.user?.id!==owner)break;await Promise.all(codes.slice(i,i+4).map(code=>loadPrices(code,{notify:false})));}}finally{priceBackground=false;if(state.user?.id===owner)render();}}
 let monthLoadVersion=0,calendarSwitchVersion=0;
-async function switchCalendarMonth(year,month,date){const version=++calendarSwitchVersion,d=new Date(year,month,1);state.year=d.getFullYear();state.month=d.getMonth();state.date=date||dayKey(d);state.news=[];state.message='載入月份新聞…';render();try{await load({monthOnly:true});}catch(e){if(version===calendarSwitchVersion){state.message=e.message||'月份新聞載入失敗';render();}return;}if(version===calendarSwitchVersion){state.message='';render();}}
+async function switchCalendarMonth(year,month,date){const version=++calendarSwitchVersion,d=new Date(year,month,1);state.year=d.getFullYear();state.month=d.getMonth();state.date=date||dayKey(d);state.message='載入月份新聞…';render();try{await load({monthOnly:true});}catch(e){if(version===calendarSwitchVersion){state.message=e.message||'月份新聞載入失敗';render();}return;}if(version===calendarSwitchVersion){state.message='';render();}}
 
 function publicBrokerPanel(){if(!state.user)return '';const rows=trackedPublicReports(state.companies,state.selected);if(!rows.length)return '';return `<section class="detail public-broker-reports"><h2>券商觀點與目標價 <span>${rows.length} 份</span></h2><small>僅收錄券商原始報告，且至少明確提供評等或目標價。日期為報告日期；歷史報告不能代表最新評等或目標價。</small>${rows.length?`<div style="overflow-x:auto"><table><thead><tr><th>個股</th><th>券商</th><th>報告日期</th><th>評等</th><th>目標價</th><th>原始報告</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.code)} ${esc(state.companies.find(c=>c.code===r.code)?.name||'')}</td><td><strong>${esc(r.broker)}</strong></td><td>${esc(r.date)}${Date.now()-Date.parse(r.date)>180*86400000?' · 歷史資料':''}</td><td>${esc(r.rating||'未明示')}</td><td>${r.target==null?'原報告未列':esc(r.target)+' '+esc(r.currency||'')}</td><td><a href="${esc(safeURL(r.url))}#page=${r.page||1}" target="_blank" rel="noopener noreferrer">${esc(r.title)} ↗</a><br><small>${esc(r.type)} · 第 ${r.page||1} 頁 · 可讀取驗證 ${esc(r.verifiedAt)}</small><details><summary>資料說明</summary><p>${esc(r.note)}</p></details></td></tr>`).join('')}</tbody></table></div>`:'<p>此追蹤清單／個股尚無已驗證可公開讀取的原始報告。目前已收錄永豐投顧國巨歷史報告；其他券商的會員報告尚未接通。</p>'}</section>`;}
 function reactionPanel(news){const result=studyEvent(news,marketPrices[news.company_code]||[]),pct=v=>v==null?'—':`${v>=0?'+':''}${v.toFixed(2)}%`;if(!result)return `<small>股價反應：${esc(priceMessage[news.company_code]||'等待股價資料與前一交易日基準')}</small>`;return `<details class="reaction"><summary>${esc(result.category)} · 股價反應（事件交易日 ${result.date}）</summary><p>${esc(result.alignment)}。基準：${result.baseline} 收盤 ${result.baselineClose.toFixed(2)}；前 5 日 ${pct(result.before5)}</p><table><thead><tr><th>事件日起</th><th>截止日期</th><th>個股</th><th>大盤</th><th>相對差（百分點）</th></tr></thead><tbody>${result.returns.map(r=>`<tr><td>第 ${r.days} 交易日</td><td>${r.date||'等待資料'}</td><td>${pct(r.stock)}</td><td>${pct(r.market)}</td><td>${r.excess==null?'等待資料':r.excess.toFixed(2)}</td></tr>`).join('')}</tbody></table><small>第 1 交易日包含事件交易日本身；報酬＝截止日收盤 ÷ 基準收盤 − 1。同一檔同日盤中與盤後新聞的基準不同，因此數值可能不同。未還原股價，除權息會影響數值；相對差為個股減加權指數報酬，並非因果推論。同日可能有其他事件。</small></details>`;}

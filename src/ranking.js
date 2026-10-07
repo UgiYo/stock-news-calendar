@@ -5,7 +5,8 @@ import {chainFlows,watchChainSignals,capRanking} from './value-chains.js';
 import {newEntrants,sectorTrend} from './sector-trend.js';
 let selectedChainTag='';
 export function filterSector(rows,tag){return tag?rows.filter(r=>r.tag===tag):rows;}
-export function topTurnover(rows){return [...rows].sort((a,b)=>b.amount-a.amount||a.code.localeCompare(b.code)).slice(0,10);}
+const turnoverTopCache=new WeakMap();
+export function topTurnover(rows){if(!Array.isArray(rows))return [];if(turnoverTopCache.has(rows))return turnoverTopCache.get(rows);const top=[...rows].sort((a,b)=>b.amount-a.amount||a.code.localeCompare(b.code)).slice(0,10);turnoverTopCache.set(rows,top);return top;}
 export function renderRanking(host,data,{tag='',date='',error='',catalog=null,chainError='',tracked=[],onTag,onDate,onStock}){
  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  if(tag.startsWith('chain:'))selectedChainTag=tag;
