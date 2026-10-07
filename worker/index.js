@@ -266,7 +266,7 @@ export default {async fetch(req,env){
  }
  const personal=await aiJobsRoute(req,env,{user,reply,dispatch,readArticleURL});if(personal)return personal;
  if(path==='/summary-cache')return summaryCacheRoute(req,{sql,reply,user,randomToken,db:env.DB});
- if(path==='/me')return reply({user});
+ if(path==='/me')return reply({user:{id:user.id,email:String(user.email||'').trim()}});
  if(path==='/logout'&&req.method==='POST'){await sql('DELETE FROM sessions WHERE token_hash=?',await hash(token)).run();return reply({ok:true});}
  if(path==='/companies'){const q=(url.searchParams.get('q')||'').trim().slice(0,60);return reply({companies:(await sql("SELECT * FROM companies WHERE code=? OR instr(name,?)>0 OR instr(full_name,?)>0 ORDER BY code LIMIT 20",q,q,q).all()).results});}
  if(path==='/preview'&&req.method==='GET'){
