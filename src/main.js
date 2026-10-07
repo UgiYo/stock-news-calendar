@@ -1,3 +1,4 @@
+import {createRankingRefresher} from './ranking-refresh.js';
 import {accountSettingsWindow,bindAccountSettings} from './account-settings.js';
 import {trackedPublicReports} from './public-broker-reports.js';
 import {installSiteAssistant} from './site-assistant.js';
@@ -42,6 +43,7 @@ async function refreshHoldingsQuotes(){const detail=holdingsDetail,owner=state.u
 let maSettings=readMASettings();
 let chainCatalog=null,chainError='';let ranking=null,rankingTag='',rankingDate='',rankingError='',observationRequest=0,rankingDetail=null,rankingRequest=0;
 const rankingPriceCache=new Map(),rankingPriceLoads=new Map(),rankingResponseCache=new Map();
+const rankingRefresher=createRankingRefresher({request:remoteAPI,owner:()=>state.user?.id,onChange:()=>render(),reload:async()=>{await loadRanking('',true);if(rankingError)throw Error(rankingError);}});
 function readRankingResponse(owner,key){const cacheKey=owner+':'+key,row=rankingResponseCache.get(cacheKey);if(!row)return null;const ttl=key==='latest'?90_000:10*60_000;if(Date.now()-row.savedAt>ttl){rankingResponseCache.delete(cacheKey);return null;}return row.data;}
 function saveRankingResponse(owner,key,data){for(const value of new Set([key,data.date].filter(Boolean))){rankingResponseCache.set(owner+':'+value,{data,savedAt:Date.now()});}if(key==='latest')rankingResponseCache.set(owner+':latest',{data,savedAt:Date.now()});while(rankingResponseCache.size>16)rankingResponseCache.delete(rankingResponseCache.keys().next().value);}
 async function rankingChartPrices(code){const cached=rankingPriceCache.get(code);if(cached&&Date.now()-cached.savedAt<10*60_000)return cached.result;if(rankingPriceLoads.has(code))return rankingPriceLoads.get(code);const task=api('/chart-prices?code='+encodeURIComponent(code)).then(result=>{rankingPriceCache.set(code,{result,savedAt:Date.now()});if(rankingPriceCache.size>40)rankingPriceCache.delete(rankingPriceCache.keys().next().value);return result;}).finally(()=>rankingPriceLoads.delete(code));rankingPriceLoads.set(code,task);return task;}
@@ -98,7 +100,8 @@ async function loadRankingReturns(data,request,owner){
  }));
  if(ranking===data&&request===observationRequest&&owner===state.user?.id){data.priceReturnsLoading=false;render();}
 }
-async function loadRanking(date=''){
+async function loadRanking(date='',force=false){
+ if(force){rankingResponseCache.clear();rankingPriceCache.clear();}
  const request=++observationRequest,owner=state.user?.id;
  try{
   if(!chainCatalog){try{const r=await fetch(import.meta.env.BASE_URL+'data/value-chains.json');if(!r.ok)throw Error('分類資料讀取失敗');chainCatalog=await r.json();chainError='';}catch(e){chainError=e.message;}}
@@ -154,11 +157,11 @@ if(state.user){
  app.querySelector('#ranking-tab-panel').style.display=state.rankingPage?'':'none';
  const selectTab=ranking=>{state.rankingPage=ranking;render();app.querySelector(ranking?'#ranking-tab':'#news-tab')?.focus({preventScroll:true});};
  app.querySelector('#news-tab').onclick=()=>selectTab(false);
- app.querySelector('#ranking-tab').onclick=()=>selectTab(true);
+ app.querySelector('#ranking-tab').onclick=()=>{selectTab(true);void rankingRefresher.resume();};
  app.querySelector('.workspace-tabs').onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();selectTab(e.key==='Home'?false:e.key==='End'?true:!state.rankingPage);}};
 }
 const rankingHost=state.rankingPage?app.querySelector('#ranking-page-host'):null;
-if(state.user&&rankingHost)renderRanking(rankingHost,ranking,{tag:rankingTag,date:rankingDate,error:rankingError,catalog:chainCatalog,chainError,tracked:state.companies,onTag:t=>{rankingTag=t;render();},onDate:d=>loadRanking(d),onStock:code=>openRankingStock(code)});
+if(state.user&&rankingHost)renderRanking(rankingHost,ranking,{tag:rankingTag,date:rankingDate,error:rankingError,refreshing:rankingRefresher.state.busy,refreshMessage:rankingRefresher.state.message,onRefresh:()=>void rankingRefresher.start(),catalog:chainCatalog,chainError,tracked:state.companies,onTag:t=>{rankingTag=t;render();},onDate:d=>loadRanking(d),onStock:code=>openRankingStock(code)});
 if(rankingDetail&&state.user){app.insertAdjacentHTML('beforeend',stockRankingWindow(rankingDetail,{esc,tracked:state.companies.some(c=>c.code===rankingDetail.code),busy:state.busy,message:state.message}));bindCandles(app.querySelector('#stock-ranking-dialog'),rankingDetail,period=>changeCandlePeriod(period),async()=>{const detail=rankingDetail;if(detail.candleRefreshing)return;if(detail.candlePeriod?.endsWith('m')){await changeCandlePeriod(detail.candlePeriod,true);return;}detail.candleRefreshing=true;detail.candleMessage='正在抓取最新行情…';render();try{const result=await api('/chart-prices?code='+encodeURIComponent(detail.code),{body:{}});if(rankingDetail===detail){rankingDetail.prices=result.prices;rankingDetail.candleMessage=result.warning||`K 線已更新，最新資料：${result.prices.at(-1)?.date||'無資料'}（${result.source||'已保存行情'}）`;render();}}catch(e){if(rankingDetail===detail){rankingDetail.candleMessage=e.message;render();}}finally{if(rankingDetail===detail){detail.candleRefreshing=false;render();}}},settings=>{maSettings=settings;saveMASettings(settings);Object.assign(rankingDetail,settings);render();});app.querySelector('#toggle-live-candles').onclick=()=>{rankingDetail.livePaused=!rankingDetail.livePaused;render();if(!rankingDetail.livePaused)refreshLiveCandles();};app.querySelector('#close-stock-ranking').onclick=closeRankingStock;app.querySelector('#refresh-company-profile').onclick=()=>refreshCompanyProfile();app.querySelector('#analyze-company-profile').onclick=()=>analyzeCompanyProfile();app.querySelector('#analyze-stock-technicals').onclick=()=>{const detail=rankingDetail,prompt=technicalPrompt(detail);if(prompt)openAIWindow({prompt,title:detail.code+' '+(detail.stock?.name||'')+' 技術分析',autoGenerate:true});};app.querySelector('#track-ranking-stock').onclick=()=>run(()=>add(rankingDetail.code));app.querySelector('#preview-ranking-stock').onclick=()=>toggleRankingNews();app.querySelector('#retry-ranking-news')?.addEventListener('click',()=>toggleRankingNews(true));app.querySelector('#stock-ranking-dialog').onkeydown=e=>{if(e.key==='Escape')closeRankingStock();if(e.key==='Tab'){const nodes=[...e.currentTarget.querySelectorAll('button:not(:disabled),input:not(:disabled),[tabindex="0"]')],first=nodes[0],last=nodes.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}};}
 app.querySelector('#check-d1-recovery')?.addEventListener('click',()=>run(async()=>{state.user=(await remoteAPI('/me',{quotaProbe:true})).user;render();await Promise.all([load(),loadRanking(),loadPodcasts()]);state.message='D1 已恢復連線。';}));
  app.querySelector('#open-ai-results').onclick=()=>openResultsCenter();app.querySelector('#ai-notifications').onclick=openResultNotifications;refreshNotifications();startCloudSync(state.user?.id);void syncAccountResults();

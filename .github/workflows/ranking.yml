@@ -5,9 +5,14 @@ on:
     branches: [main]
     paths: [.github/workflows/ranking.yml, scripts/repair_rankings.py]
   schedule:
-    # 12:00 UTC = 20:00 Asia/Taipei. Run after the Taiwan market data is available.
-    - cron: '0 12 * * *'
+    # 08:00 UTC = 16:00 Asia/Taipei. Official source dates remain authoritative.
+    - cron: '0 8 * * *'
   workflow_dispatch:
+    inputs:
+      refresh_id:
+        description: Website refresh request ID
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -23,6 +28,7 @@ jobs:
     env:
       WORKER_API_URL: ${{ vars.WORKER_API_URL }}
       COLLECTOR_SECRET: ${{ secrets.COLLECTOR_SECRET }}
+      RANKING_REFRESH_ID: ${{ inputs.refresh_id || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,7 +38,7 @@ jobs:
           cache-dependency-path: scripts/requirements.txt
       - run: pip install -r scripts/requirements.txt
       - name: Update turnover, industry tags and market-cap leaders
-        run: python scripts/ranking.py
+        run: python scripts/run_ranking_refresh.py
       - name: Audit and repair preceding trading-day snapshots
         if: always()
         run: |

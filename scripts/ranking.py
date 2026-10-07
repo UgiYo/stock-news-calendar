@@ -51,6 +51,7 @@ def main():
   days=fetch_month('TAIEX',d.replace(day=1)-datetime.timedelta(days=1));previous=[r['date'] for r in days if r['date']<date]
  if not previous:raise ValueError('Cannot establish previous trading date')
  api('/admin/ranking',{'date':date,'previousDate':max(previous),'stocks':rows});print('Market caps',sum(r.get('marketCap') is not None for r in rows),'of',len(rows),flush=True);print('Turnover ranking',date,len(rows),'top ten',','.join(r['code'] for r in rows[:10]),flush=True)
+ return date
 if __name__=='__main__':main()
 
 def historical_quotes(date,market):

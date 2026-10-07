@@ -1,3 +1,4 @@
+import {rankingRefreshRoute} from './ranking-refresh.js';
 import {ensureD1Index,d1QuotaError} from './d1-usage.js';
 import {accountResultsRoute} from './account-results.js';
 import {sharedPodcastsRoute,publicPodcastTranscript} from './podcasts.js';
@@ -120,7 +121,7 @@ export async function verifyGoogle(token,clientID){
  const key=await crypto.subtle.importKey('jwk',jwk,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['verify']);
  if(!await crypto.subtle.verify('RSASSA-PKCS1-v1_5',key,b64(sig),encoder.encode(head+'.'+body)))throw Error('Invalid signature');return claims;
 }
-async function dispatch(env,workflow="news.yml"){if(!env.GITHUB_DISPATCH_TOKEN)throw Error('Pages Production 尚未設定 GITHUB_DISPATCH_TOKEN');if(!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(env.GITHUB_REPO||''))throw Error('GITHUB_REPO 格式錯誤，應為 UgiYo/stock-news-calendar');const r=await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${workflow}/dispatches`,{method:'POST',headers:{Authorization:`Bearer ${env.GITHUB_DISPATCH_TOKEN}`,'User-Agent':'stock-news-calendar','Accept':'application/vnd.github+json','Content-Type':'application/json'},body:JSON.stringify({ref:'main',...(workflow==='news.yml'?{inputs:{mode:'queued'}}:{})}),signal:AbortSignal.timeout(10000)});if(!r.ok){const reason={401:'token 無效或已過期',403:'token 權限不足，需 Actions: Read and write；或 GitHub 存取限制',404:'repo、news.yml 不存在，或 token 未獲授權存取此 repo',422:'workflow 的 main 分支或 workflow_dispatch 設定不符'};throw Error('GitHub HTTP '+r.status+'：'+(reason[r.status]||'啟動請求失敗'));}return true;}
+async function dispatch(env,workflow="news.yml",inputs){if(!env.GITHUB_DISPATCH_TOKEN)throw Error('Pages Production 尚未設定 GITHUB_DISPATCH_TOKEN');if(!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(env.GITHUB_REPO||''))throw Error('GITHUB_REPO 格式錯誤，應為 UgiYo/stock-news-calendar');const r=await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${workflow}/dispatches`,{method:'POST',headers:{Authorization:`Bearer ${env.GITHUB_DISPATCH_TOKEN}`,'User-Agent':'stock-news-calendar','Accept':'application/vnd.github+json','Content-Type':'application/json'},body:JSON.stringify({ref:'main',...(inputs?{inputs}:workflow==='news.yml'?{inputs:{mode:'queued'}}:{})}),signal:AbortSignal.timeout(10000)});if(!r.ok){const reason={401:'token 無效或已過期',403:'token 權限不足，需 Actions: Read and write；或 GitHub 存取限制',404:'repo、news.yml 不存在，或 token 未獲授權存取此 repo',422:'workflow 的 main 分支或 workflow_dispatch 設定不符'};throw Error('GitHub HTTP '+r.status+'：'+(reason[r.status]||'啟動請求失敗'));}return true;}
 export default {async fetch(req,env){
  const url=new URL(req.url),path=url.pathname;
  let appURL;
@@ -164,6 +165,7 @@ export default {async fetch(req,env){
  }
  if(path.startsWith('/admin/')){
  const provided=req.headers.get('Authorization')||'';if(!env.COLLECTOR_SECRET||await hash(provided)!==await hash('Bearer '+env.COLLECTOR_SECRET))return reply({error:'Forbidden'},403);
+ const rankingUpdate=await rankingRefreshRoute(req,{sql,reply,db:env.DB,dispatch,env,admin:true});if(rankingUpdate)return rankingUpdate;
  const podcasts=await sharedPodcastsRoute(req,{sql,reply,admin:true,hash});if(podcasts)return podcasts;
  const personal=await aiJobsRoute(req,env,{admin:true,reply,dispatch,readArticleURL});if(personal)return personal;
  if(path==='/admin/company-profile-probe'){
@@ -216,6 +218,7 @@ export default {async fetch(req,env){
  }
  const token=req.headers.get('Authorization')?.replace(/^Bearer /,'');if(!token)return reply({error:'請先登入'},401);
  const user=await sql('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?',await hash(token),Date.now()).first();if(!user)return reply({error:'登入已過期，請重新登入'},401);
+ const rankingUpdate=await rankingRefreshRoute(req,{sql,reply,db:env.DB,dispatch,env});if(rankingUpdate)return rankingUpdate;
  const accountResults=await accountResultsRoute(req,{sql,reply,user,db:env.DB});if(accountResults)return accountResults;
  const podcasts=await sharedPodcastsRoute(req,{sql,reply,user,hash});if(podcasts)return podcasts;
  if(path==='/portfolio-quotes'){const codes=[...new Set((url.searchParams.get('codes')||'').split(',').filter(Boolean))];if(!codes.length)return reply({quotes:[]});if(codes.length>100||codes.some(c=>!/^\d{4,6}$/.test(c)))return reply({error:'Invalid codes'},400);try{return reply({quotes:(await sql(`SELECT p.code,p.date,p.close FROM prices p WHERE p.code IN (${codes.map(()=>'?').join(',')}) AND p.date=(SELECT MAX(q.date) FROM prices q WHERE q.code=p.code)`,...codes).all()).results});}catch(e){if(String(e.message).includes('no such table'))return reply({quotes:[]});throw e;}}

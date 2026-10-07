@@ -372,6 +372,51 @@ async function summaryCacheRoute(req, { sql, reply, user, randomToken: randomTok
   return row ? reply({ ok: true }) : reply({ error: "Cache lease expired" }, 409);
 }
 
+// worker/ranking-refresh.js
+const rankingRefreshRoute = (() => {
+
+const schema='CREATE TABLE IF NOT EXISTS ranking_refresh(slot INTEGER PRIMARY KEY CHECK(slot=1),id TEXT NOT NULL,status TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,data_date TEXT,error TEXT)';
+const expiry=25*60_000;
+async function rankingRefreshRoute(req,{sql,reply,db,dispatch,env,admin=false,now=Date.now(),uuid=()=>crypto.randomUUID()}){
+ const url=new URL(req.url),path=url.pathname;
+ if(path!==(admin?'/admin/ranking-refresh':'/ranking-refresh'))return null;
+ if(!['GET','POST'].includes(req.method)||admin&&req.method!=='POST')return reply({error:'Method not allowed'},405);
+ await ensureD1Index(db,'ranking_refresh_schema',schema);
+ if(admin){
+  const body=await req.json();
+  if(typeof body.id!=='string'||!['running','done','failed'].includes(body.status)||body.data_date!=null&&!/^\d{4}-\d{2}-\d{2}$/.test(body.data_date))return reply({error:'Invalid ranking update'},400);
+  await sql("UPDATE ranking_refresh SET status=?,updated_at=?,data_date=?,error=? WHERE slot=1 AND id=? AND status IN ('pending','running')",body.status,now,body.data_date||null,String(body.error||'').slice(0,500)||null,body.id).run();
+  return reply({ok:true});
+ }
+ let job=await sql('SELECT * FROM ranking_refresh WHERE slot=1').first();
+ if(job&&['pending','running'].includes(job.status)&&job.created_at<=now-expiry){
+  await sql("UPDATE ranking_refresh SET status='failed',updated_at=?,error=? WHERE slot=1 AND id=? AND status IN ('pending','running')",now,'更新等待逾時，請重新按「立即更新成交值」。',job.id).run();
+  job={...job,status:'failed',error:'更新等待逾時，請重新按「立即更新成交值」。'};
+ }
+ if(req.method==='GET'){
+  const id=url.searchParams.get('id');
+  if(id&&job?.id!==id)return reply({error:'此更新任務已結束，請重新讀取排行榜。'},404);
+  return reply({job});
+ }
+ if(job&&['pending','running'].includes(job.status))return reply({job},202);
+ const id=uuid();
+ await sql("INSERT INTO ranking_refresh(slot,id,status,created_at,updated_at) VALUES(1,?,'pending',?,?) ON CONFLICT(slot) DO UPDATE SET id=excluded.id,status='pending',created_at=excluded.created_at,updated_at=excluded.updated_at,data_date=NULL,error=NULL WHERE ranking_refresh.status NOT IN ('pending','running') OR ranking_refresh.created_at<=?",id,now,now,now-expiry).run();
+ job=await sql('SELECT * FROM ranking_refresh WHERE slot=1').first();
+ if(job.id!==id)return reply({job},202);
+ try{
+  await dispatch(env,'ranking.yml',{refresh_id:id});
+  return reply({job},202);
+ }catch(error){
+  const message='成交值更新無法啟動，請稍後重試。';
+  console.error('Ranking dispatch failed:',error.message);
+  await sql("UPDATE ranking_refresh SET status='failed',updated_at=?,error=? WHERE slot=1 AND id=?",now,message,id).run();
+  return reply({error:message},502);
+ }
+}
+
+return rankingRefreshRoute;
+})();
+
 // worker/index.js
 function dailyBars(result, code) {
   const quote = result.indicators?.quote?.[0], rows = [];
@@ -700,10 +745,10 @@ async function verifyGoogle(token, clientID) {
   if (!await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b642(sig), encoder.encode(head + "." + body))) throw Error("Invalid signature");
   return claims;
 }
-async function dispatch(env, workflow = "news.yml") {
+async function dispatch(env, workflow = "news.yml", inputs) {
   if (!env.GITHUB_DISPATCH_TOKEN) throw Error("Pages Production \u5C1A\u672A\u8A2D\u5B9A GITHUB_DISPATCH_TOKEN");
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(env.GITHUB_REPO || "")) throw Error("GITHUB_REPO \u683C\u5F0F\u932F\u8AA4\uFF0C\u61C9\u70BA UgiYo/stock-news-calendar");
-  const r = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${workflow}/dispatches`, { method: "POST", headers: { Authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`, "User-Agent": "stock-news-calendar", "Accept": "application/vnd.github+json", "Content-Type": "application/json" }, body: JSON.stringify({ ref: "main", ...workflow === "news.yml" ? { inputs: { mode: "queued" } } : {} }), signal: AbortSignal.timeout(1e4) });
+  const r = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${workflow}/dispatches`, { method: "POST", headers: { Authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`, "User-Agent": "stock-news-calendar", "Accept": "application/vnd.github+json", "Content-Type": "application/json" }, body: JSON.stringify({ ref: "main", ...(inputs ? { inputs } : workflow === "news.yml" ? { inputs: { mode: "queued" } } : {}) }), signal: AbortSignal.timeout(1e4) });
   if (!r.ok) {
     const reason = { 401: "token \u7121\u6548\u6216\u5DF2\u904E\u671F", 403: "token \u6B0A\u9650\u4E0D\u8DB3\uFF0C\u9700 Actions: Read and write\uFF1B\u6216 GitHub \u5B58\u53D6\u9650\u5236", 404: "repo\u3001news.yml \u4E0D\u5B58\u5728\uFF0C\u6216 token \u672A\u7372\u6388\u6B0A\u5B58\u53D6\u6B64 repo", 422: "workflow \u7684 main \u5206\u652F\u6216 workflow_dispatch \u8A2D\u5B9A\u4E0D\u7B26" };
     throw Error("GitHub HTTP " + r.status + "\uFF1A" + (reason[r.status] || "\u555F\u52D5\u8ACB\u6C42\u5931\u6557"));
@@ -799,6 +844,8 @@ var index_default = { async fetch(req, env) {
     if (path.startsWith("/admin/")) {
       const provided = req.headers.get("Authorization") || "";
       if (!env.COLLECTOR_SECRET || await hash(provided) !== await hash("Bearer " + env.COLLECTOR_SECRET)) return reply({ error: "Forbidden" }, 403);
+      const rankingUpdate = await rankingRefreshRoute(req, {sql,reply,db:env.DB,dispatch,env,admin:true});
+      if(rankingUpdate) return rankingUpdate;
       const podcasts2 = await sharedPodcastsRoute(req, { sql, reply, admin: true, hash });
       if (podcasts2) return podcasts2;
       const personal2 = await aiJobsRoute(req, env, { admin: true, reply, dispatch, readArticleURL });
@@ -994,6 +1041,8 @@ var index_default = { async fetch(req, env) {
     if (!token) return reply({ error: "\u8ACB\u5148\u767B\u5165" }, 401);
     const user = await sql("SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?", await hash(token), Date.now()).first();
     if (!user) return reply({ error: "\u767B\u5165\u5DF2\u904E\u671F\uFF0C\u8ACB\u91CD\u65B0\u767B\u5165" }, 401);
+    const rankingUpdate = await rankingRefreshRoute(req, {sql,reply,db:env.DB,dispatch,env});
+    if(rankingUpdate) return rankingUpdate;
     const accountResults = await accountResultsRoute(req, { sql, reply, user, db: env.DB });
     if (accountResults) return accountResults;
     const podcasts = await sharedPodcastsRoute(req, { sql, reply, user, hash });
@@ -1292,3 +1341,4 @@ export {
   trustedSource,
   verifyGoogle
 };
+
