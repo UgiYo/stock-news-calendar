@@ -249,4 +249,4 @@ window.addEventListener('podcast-auto-status',()=>render());
 window.addEventListener('ai-settings-change',()=>{const who=state.user?.id;void runPodcastAuto(podcast.episodes,who,{isCurrent:()=>who===state.user?.id});});
 setInterval(()=>{if(podcastAutoState().enabled&&state.user&&!document.hidden)void loadPodcasts(true);},15*60000);
 
-installSiteAssistant(()=>({userId:state.user?.id||'guest',companies:state.companies,selected:state.selected,news:state.news,records:podcastMentionSources(state.user?.id||'guest',podcast.episodes)}));
+installSiteAssistant(()=>({userId:state.user?.id||'guest',companies:state.companies,selected:state.selected,news:state.news,episodes:podcast.episodes,date:state.date,records:podcastMentionSources(state.user?.id||'guest',podcast.episodes)}));
