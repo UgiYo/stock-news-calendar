@@ -1,6 +1,14 @@
-let settings={enabled:false,endpoint:'',model:'smg-whisper',key:''};
+const STORAGE='stock-news-podcast-stt-v1';
+const defaults={enabled:false,endpoint:'',model:'smg-whisper',key:''};
+export function loadSTTSettings(storage=globalThis.localStorage){try{return {...defaults,...JSON.parse(storage?.getItem(STORAGE)||'null')};}catch{return {...defaults};}}
+let settings=loadSTTSettings();
 export function readSTTSettings(){return {...settings};}
-export function saveSTTSettings(value){settings={enabled:!!value.enabled,endpoint:String(value.endpoint||'').trim(),model:String(value.model||'').trim(),key:String(value.key||'').trim()};}
+export function rememberSTTSettings(storage=globalThis.localStorage){try{return !!storage?.getItem(STORAGE);}catch{return false;}}
+export function saveSTTSettings(value,remember=false,storage=globalThis.localStorage){
+ const next={enabled:!!value.enabled,endpoint:String(value.endpoint||'').trim(),model:String(value.model||'smg-whisper').trim(),key:String(value.key||'').trim()};
+ if(remember)storage?.setItem(STORAGE,JSON.stringify(next));else storage?.removeItem(STORAGE);
+ settings=next;
+}
 export function independentSTTRequest(stt,blob){
  const url=new URL(stt.endpoint);
  if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash||!url.pathname.endsWith('/audio/transcriptions'))throw Error('語音網址需為 HTTPS，並以 /audio/transcriptions 結尾。');

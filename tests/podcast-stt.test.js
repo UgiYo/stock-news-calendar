@@ -17,3 +17,10 @@ test('audio override leaves text AI settings intact and bypasses Python',async()
  assert.equal(result.transcription_model,'smg-whisper');assert.equal(config.key,'text-secret');assert.equal(config.model,'text-model');assert.equal(config.transport,'python');
 });
 test('settings can be cleared and reads cannot mutate stored settings',()=>{saveSTTSettings(stt);const copy=readSTTSettings();copy.key='other';assert.equal(readSTTSettings().key,'voice-secret');saveSTTSettings({});assert.equal(readSTTSettings().key,'');assert.equal(readSTTSettings().enabled,false);});
+test('remember restores Whisper across reloads and clearing removes saved key',async()=>{
+ const {loadSTTSettings,rememberSTTSettings}=await import('../src/podcast-stt.js');
+ const data=new Map(),storage={getItem:k=>data.get(k)||null,setItem:(k,v)=>data.set(k,v),removeItem:k=>data.delete(k)};
+ saveSTTSettings(stt,true,storage);assert.equal(rememberSTTSettings(storage),true);assert.equal(loadSTTSettings(storage).key,stt.key);
+ saveSTTSettings(stt,false,storage);assert.equal(rememberSTTSettings(storage),false);assert.equal(loadSTTSettings(storage).key,'');
+ saveSTTSettings({},false,storage);
+});
