@@ -62,18 +62,21 @@ def collect(c):
  while cursor<now:
   end=min(cursor+datetime.timedelta(days=1),now)
   q=f'("{c["name"]}" OR "{c["full_name"]}" OR "{c["code"]}") (site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com) after:{(cursor-datetime.timedelta(days=1)).date()} before:{(end+datetime.timedelta(days=1)).date()}'
-  r=requests.get('https://news.google.com/rss/search',params={'q':q,'hl':'zh-TW','gl':'TW','ceid':'TW:zh-Hant'},timeout=30);r.raise_for_status()
-  root=ET.fromstring(r.content)
-  if root.find('channel') is None:raise ValueError('Invalid RSS')
-  for item in root.findall('./channel/item'):
-   title=item.findtext('title') or '';url=item.findtext('link') or ''
-   source_element=item.find('source');source=trusted_domain(source_element.get('url','') if source_element is not None else '')
-   if not source:continue
-   if not company_mention(title,c,conflicts):continue
-   try:published=email.utils.parsedate_to_datetime(item.findtext('pubDate')).astimezone(UTC)
-   except (ValueError,TypeError,AttributeError):continue
-   if start<=published<=now and url.startswith('https://'):
-    rows[url]={'company_code':c['code'],'title':title,'url':url,'source':source,'published_at':published.isoformat(),'news_date':published.astimezone(TW).date().isoformat()}
+  # Separate broker query improves coverage when broad stock news fills RSS results.
+  broker_q=f'("{c["name"]}" OR "{c["full_name"]}" OR "{c["code"]}") (券商 OR 投顧 OR 外資 OR 目標價 OR 評等) (site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com) after:{(cursor-datetime.timedelta(days=1)).date()} before:{(end+datetime.timedelta(days=1)).date()}'
+  for query in (q,broker_q):
+   r=requests.get('https://news.google.com/rss/search',params={'q':query,'hl':'zh-TW','gl':'TW','ceid':'TW:zh-Hant'},timeout=30);r.raise_for_status()
+   root=ET.fromstring(r.content)
+   if root.find('channel') is None:raise ValueError('Invalid RSS')
+   for item in root.findall('./channel/item'):
+    title=item.findtext('title') or '';url=item.findtext('link') or ''
+    source_element=item.find('source');source=trusted_domain(source_element.get('url','') if source_element is not None else '')
+    if not source:continue
+    if not company_mention(title,c,conflicts):continue
+    try:published=email.utils.parsedate_to_datetime(item.findtext('pubDate')).astimezone(UTC)
+    except (ValueError,TypeError,AttributeError):continue
+    if start<=published<=now and url.startswith('https://'):
+     rows[url]={'company_code':c['code'],'title':title,'url':url,'source':source,'published_at':published.isoformat(),'news_date':published.astimezone(TW).date().isoformat()}
   cursor=end;time.sleep(.2)
  values=curate_news(list(rows.values()))
  for i in range(0,len(values),20):api('/admin/news',{'news':values[i:i+20]})
