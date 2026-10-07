@@ -3,15 +3,26 @@
   "title": "兆華與股惑仔",
   "spotify": "https://open.spotify.com/show/6cMUsVRnTCrCqo4rs8LBjQ",
   "feed": "https://feeds.soundon.fm/podcasts/91be014b-9f55-4bf3-a910-b232eda82d11.xml",
-  "updated_at": "2026-10-06T16:25:00.856482+00:00",
+  "updated_at": "2026-10-07T17:07:56.972050+00:00",
   "episodes": [
+    {
+      "id": "7bb081ec-42db-44bb-9a92-7acf96a2e568",
+      "title": "EP1198｜指數不動，但類股輪流復活！9月營收要關注幾面向，ETF誰比大盤領先創高？CPO、被動增溫中，記憶體鈍化怎看？ft.型男股神 陳威良",
+      "published_at": "2026-10-07T08:26:11+00:00",
+      "date": "2026-10-07",
+      "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/7bb081ec-42db-44bb-9a92-7acf96a2e568",
+      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/7bb081ec-42db-44bb-9a92-7acf96a2e568/rssFileVip.mp3?timestamp=1791361576059",
+      "description": "指數不動，但類股輪流復活！9月營收要關注幾面向，ETF誰比大盤領先創高？CPO、被動增溫中，記憶體鈍化怎看？ \n \n \n#00985A \n▲投資一定有風險，基金投資有賺有賠，申購前應詳閱公開說明書。 \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
+      "duration": "2801",
+      "transcript_url": ""
+    },
     {
       "id": "cdb370f3-3fbc-484f-aad7-05367393f2a9",
       "title": "EP1197｜輝達、AMD創高，AI成長率壓制公債殖利率？半導體、PCB是大局！基本面沒變但氣氛變了，再度回落的可能性？ft.紀緯明 小明同學",
       "published_at": "2026-10-06T08:09:36+00:00",
       "date": "2026-10-06",
       "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/cdb370f3-3fbc-484f-aad7-05367393f2a9",
-      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/cdb370f3-3fbc-484f-aad7-05367393f2a9/rssFileVip.mp3?timestamp=1791278062992",
+      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/cdb370f3-3fbc-484f-aad7-05367393f2a9/rssFileVip.mp3?timestamp=1791309886914",
       "description": "輝達、AMD創高，AI成長率壓制公債殖利率？半導體、PCB是大局！基本面沒變但氣氛變了，再度回落的可能性？ \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
       "duration": "2625",
       "transcript_url": ""
@@ -762,17 +773,6 @@
       "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/2d9e3d0e-b6a6-4ae9-80cd-9e28977531f8/rssFileVip.mp3?timestamp=1782845352288",
       "description": "再次複製走勢，破月線後低量反彈千點，基本面向上、資金緊縮，下跌時選漲價、營收高成長股，大漲想追就守動能原則！ \n  \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
       "duration": "3386",
-      "transcript_url": ""
-    },
-    {
-      "id": "97a5988d-66d4-454f-8062-ab8c76a1cbbf",
-      "title": "EP1128｜反彈體感不理想，買太滿、高檔套牢變多，信心受動搖？如何降壓又不錯過行情？康寧發展玻璃橋接殺傷CPO？ft.題材獵人 林漢偉",
-      "published_at": "2026-06-29T08:22:49+00:00",
-      "date": "2026-06-29",
-      "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/97a5988d-66d4-454f-8062-ab8c76a1cbbf",
-      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/97a5988d-66d4-454f-8062-ab8c76a1cbbf/rssFileVip.mp3?timestamp=1782758882314",
-      "description": "反彈體感不理想，買太滿、高檔套牢變多，信心受動搖？如何降壓又不錯過行情？康寧發展玻璃橋接殺傷CPO？ \n  \n------- \n  \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n  \n--\nHosting provided by  SoundOn",
-      "duration": "2937",
       "transcript_url": ""
     }
   ]
