@@ -7,4 +7,5 @@ test('auto queue skips complete episodes, keeps transcript-only and partial hist
  assert.deepEqual(pendingPodcastEpisodes(episodes,rows).map(e=>e.id),['new','old']);
  assert.deepEqual(pendingPodcastEpisodes(episodes,rows,new Set(['podcast:new'])).map(e=>e.id),['old']);
  assert.equal(pendingPodcastEpisodes([{id:'transcript',date:'2026-10-01'}],[{id:'podcast:transcript',text:'逐字稿',answer:'',state:'complete'}]).length,1);
+ assert.deepEqual(pendingPodcastEpisodes(episodes,rows,new Set(),new Set(['podcast:new'])).map(e=>e.id),['old']);
 });
