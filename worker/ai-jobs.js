@@ -6,7 +6,7 @@ export function cloudConfig(config){if(!['openai','azure'].includes(config?.prov
 const schema="CREATE TABLE IF NOT EXISTS personal_ai_tasks(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,kind TEXT NOT NULL,title TEXT NOT NULL,date TEXT NOT NULL,status TEXT NOT NULL,progress TEXT NOT NULL,encrypted TEXT,output TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,read_at INTEGER,lease TEXT)";
 const publicTask=r=>({id:r.id,title:r.title,kind:r.kind,date:r.date,state:['done','partial'].includes(r.status)?'complete':['failed','interrupted'].includes(r.status)?'interrupted':r.status,progress:r.progress,updated_at:new Date(r.updated_at).toISOString(),read_at:r.read_at?new Date(r.read_at).toISOString():null,cloud_id:r.id,...JSON.parse(r.output)});
 export async function aiJobsRoute(req,env,{user,admin=false,reply,dispatch,readArticleURL}){
- const path=new URL(req.url).pathname;if(!path.startsWith('/ai-jobs')&&!path.startsWith('/admin/ai-jobs'))return null;
+ const url=new URL(req.url),path=url.pathname;if(!path.startsWith('/ai-jobs')&&!path.startsWith('/admin/ai-jobs'))return null;
  const sql=(q,...args)=>env.DB.prepare(q).bind(...args);await sql(schema).run();await ensureD1Index(env.DB,'ai_user_updated','CREATE INDEX IF NOT EXISTS personal_ai_user_updated ON personal_ai_tasks(user_id,updated_at DESC)');await ensureD1Index(env.DB,'ai_status_updated','CREATE INDEX IF NOT EXISTS personal_ai_status_updated ON personal_ai_tasks(status,updated_at)');await ensureD1Index(env.DB,'ai_expires','CREATE INDEX IF NOT EXISTS personal_ai_expires ON personal_ai_tasks(expires_at) WHERE encrypted IS NOT NULL');const now=Date.now();
  await sql("UPDATE personal_ai_tasks SET status='interrupted',progress='處理程序中斷，請重新送出並保留成功段落',encrypted=NULL,updated_at=?,lease=NULL WHERE status='running' AND updated_at<?",now,now-20*60000).run();
  await sql("UPDATE personal_ai_tasks SET status='interrupted',progress='任務已逾期，請重新送出',encrypted=NULL,updated_at=? WHERE encrypted IS NOT NULL AND expires_at<?",now,now).run();
@@ -17,7 +17,7 @@ export async function aiJobsRoute(req,env,{user,admin=false,reply,dispatch,readA
   return reply({error:'Not found'},404);
  }
  if(path==='/ai-jobs/capabilities')return reply({enabled:!!env.COLLECTOR_SECRET&&!!env.GITHUB_DISPATCH_TOKEN,providers:['openai','azure']});
- if(req.method==='GET')return reply({tasks:(await sql('SELECT * FROM personal_ai_tasks WHERE user_id=? ORDER BY updated_at DESC LIMIT 100',user.id).all()).results.map(publicTask)});
+ if(req.method==='GET'){const offset=Number(url.searchParams.get('offset')||0);if(!Number.isSafeInteger(offset)||offset<0)return reply({error:'Invalid offset'},400);const rows=(await sql('SELECT * FROM personal_ai_tasks WHERE user_id=? ORDER BY updated_at DESC,id DESC LIMIT 100 OFFSET ?',user.id,offset).all()).results;return reply({owner_id:user.id,tasks:rows.map(publicTask),count:rows.length,has_more:rows.length===100});}
  if(req.method==='DELETE'){await sql('DELETE FROM personal_ai_tasks WHERE id=? AND user_id=?',new URL(req.url).searchParams.get('id'),user.id).run();return reply({ok:true});}
  if(path==='/ai-jobs/read'&&req.method==='POST'){const b=await req.json();await sql('UPDATE personal_ai_tasks SET read_at=? WHERE id=? AND user_id=?',now,b.id,user.id).run();return reply({ok:true});}
  if(path==='/ai-jobs'&&req.method==='POST'){

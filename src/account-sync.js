@@ -31,8 +31,9 @@ export async function deviceRequest(path,options,remote){
  const from=url.searchParams.get('from'),to=url.searchParams.get('to'),offset=Number(url.searchParams.get('offset')||0);
  return {news:data.news.filter(n=>data.companies.some(c=>c.code===n.company_code)&&n.news_date>=from&&n.news_date<=to).sort((a,b)=>String(b.published_at).localeCompare(String(a.published_at))).slice(offset,offset+500)};
 }
-// Only completed public-mode output is shared. Request/config/token data never leaves the device.
-export function syncResultPayload(row){
- if(!row||row.local_only||row.local_id||row.cloud_id||row.state!=='complete')return null;
- return {id:row.id,title:row.title,kind:row.kind,date:row.date||'',updated_at:row.updated_at,answer:String(row.answer||''),text:String(row.text||''),transcription_model:String(row.transcription_model||''),partial:!!row.partial,failures:(row.failures||[]).map(String)};
+// Completed results are private to their signed-in owner; settings and credentials are never synced.
+export function syncResultPayload(row,who=owner){
+ if(!row||who==='guest'||row.owner!==who||row.state!=='complete')return null;
+ const episode=row.episode?Object.fromEntries(['id','title','date','url','audio_url','channel_id','channel_name'].filter(k=>typeof row.episode[k]==='string').map(k=>[k,row.episode[k]])):undefined;
+ return {id:row.id,title:row.title,kind:row.kind,date:row.date||'',updated_at:row.updated_at,completed_at:row.completed_at||row.updated_at,answer:String(row.answer||''),text:String(row.text||''),transcription_model:String(row.transcription_model||''),partial:!!row.partial,failures:(row.failures||[]).map(String),...(episode?{episode}:{}),...(row.cloud_id?{cloud_id:String(row.cloud_id)}:{})};
 }

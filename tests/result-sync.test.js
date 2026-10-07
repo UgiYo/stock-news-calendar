@@ -1,0 +1,12 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {setSyncOwner,syncEnabled} from '../src/account-sync.js';import {setResultOwner,saveResult,resultRecords} from '../src/ai-results.js';import {syncAccountResults} from '../src/result-sync.js';
+function storage(){const map=new Map();globalThis.localStorage={get length(){return map.size},key:i=>[...map.keys()][i],getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,v),removeItem:k=>map.delete(k)};localStorage.setItem('stock-news-session','session-one');}
+test('completed results sync automatically with watchlist sync off; older pages load too',async()=>{
+ storage();setSyncOwner('one');setResultOwner('one');assert.equal(syncEnabled(),false);saveResult({id:'paid',title:'paid',kind:'news'},{answer:'paid result',state:'complete',updated_at:'2026-10-07T05:00:00Z'},'one');const posts=[],gets=[];
+ globalThis.fetch=async(path,options)=>{if(options.method==='POST'){posts.push(JSON.parse(options.body));return Response.json({ok:true});}gets.push(path);const old={id:'older',title:'older',kind:'news',date:'',updated_at:'2026-10-06T05:00:00Z',answer:'older result',text:'',partial:false,failures:[]};return Response.json(path.includes('offset=0')?{owner_id:'one',results:[],deleted:[],count:200,has_more:true}:{owner_id:'one',results:[old],deleted:[],count:1,has_more:false});};
+ await syncAccountResults(true);assert.deepEqual(gets,['/account-results?offset=0','/account-results?offset=200']);assert.deepEqual(posts.map(r=>r.answer),['paid result']);assert.ok(resultRecords('one').some(r=>r.id==='older'));assert.ok(posts.every(r=>!('owner' in r)&&!('key' in r)));
+});
+test('server identity mismatch and account switch stop uploads before any write',async()=>{
+ storage();setSyncOwner('one');setResultOwner('one');const posts=[];globalThis.fetch=async(path,options)=>{if(options.method==='POST')posts.push(path);return Response.json({owner_id:'two',results:[],deleted:[],has_more:false});};await assert.rejects(syncAccountResults(true),/登入身分核對不一致/);assert.equal(posts.length,0);
+ globalThis.fetch=async(path,options)=>{if(options.method==='POST')posts.push(path);setSyncOwner('two');setResultOwner('two');localStorage.setItem('stock-news-session','session-two');return Response.json({owner_id:'one',results:[],deleted:[],has_more:false});};await assert.rejects(syncAccountResults(true),/登入帳號已變更/);assert.equal(posts.length,0);assert.ok(resultRecords('two',true).every(r=>r.owner==='two'));
+});
