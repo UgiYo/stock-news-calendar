@@ -32,9 +32,10 @@ export async function runPodcastAuto(episodes,who,{retry=false,isCurrent=()=>tru
  try{await runResultJob(meta,async(signal,progress)=>{
  const timer=setTimeout(()=>activeResultJob(id)?.controller.abort(),45*60000);
  try{const result=await generatePodcastHighlights(config,e,{text:previous.text||'',model:config.stt.enabled?config.stt.model:'whisper-1',transcriptionModel:previous.transcription_model||'',partial:previous.partial||previous.state==='interrupted',segments:previous.segments||[],failures:previous.failures||[],signal,fetchAudio:downloadAudio,onProgress:text=>{progress(text);currentProgress=text;message='自動處理：'+e.title+' · '+text;changed();},onTranscript:r=>saveResult(meta,{...resultRecords(who,true).find(x=>x.id===id),text:r.text,segments:r.segments,failures:r.failed,partial:r.partial,transcription_model:r.transcription_model,state:'running'},who)});return {...resultRecords(who,true).find(x=>x.id===id),...result,failures:result.failed};}finally{clearTimeout(timer);}
- });}catch(error){if(skipped.has(id)){currentId='';currentProgress='';continue;}if(/音訊上限\s*120\s*MB/i.test(error.message||'')){blocked.add(id);persistBlocked();message='此集音訊超過 120 MB，已暫停此集並繼續其他集數；請匯入較小分段或逐字稿後，再於處理進度開啟單集處理。';changed();continue;}
+ });}catch(error){if(skipped.has(id)){currentId='';currentProgress='';continue;}if(/音訊上限\s*120\s*MB/i.test(error.message||'')){blocked.add(id);persistBlocked();message=`${e.channel_name||'Podcast'} · ${e.date||'日期未標示'} · ${e.title}：音訊超過 120 MB，已略過此集並繼續處理其他集數。`;changed();continue;}
  message='自動處理已暫停：'+error.message+'。確認連線後按「補齊／重試歷史集數」。';changed();return;}
  }
- message=blocked.size?`其他可處理集數已處理；${blocked.size} 集音訊超過 120 MB，已保留在待手動處理清單。請從處理進度開啟該集，匯入較小分段音訊或逐字稿。`:enabled?'本裝置已處理完目前載入的集數；完成通知在 AI 成果中心。':'自動處理已停止。';
+ const blockedItems=episodes.filter(e=>blocked.has('podcast:'+e.id));const blockedNames=blockedItems.slice(0,3).map(e=>`${e.channel_name||'Podcast'} · ${e.date||'日期未標示'} · ${e.title}`).join('；');
+ message=blockedItems.length?`需手動處理 ${blockedItems.length} 集（音訊超過 120 MB）：${blockedNames}${blockedItems.length>3?'；另有 '+(blockedItems.length-3)+' 集':''}。請在處理進度開啟對應集數，匯入較小分段音訊或逐字稿。`:enabled?'本裝置已處理完目前載入的集數；完成通知在 AI 成果中心。':'自動處理已停止。';
  }catch(error){message='等待設定／連線：'+error.message;}finally{running=false;currentId='';currentProgress='';changed();}
 }
