@@ -9,7 +9,7 @@ async function setup(){
  const sql=(q,...args)=>({first:async()=>db.prepare(q).get(...args)||null,all:async()=>({results:db.prepare(q).all(...args)}),run:async()=>db.prepare(q).run(...args)});
  const reply=(data,status=200)=>Response.json(data,{status});
  const env={ADMIN_USERNAME:'admin',ADMIN_PASSWORD:'test-password'};
- const route=(req)=>managementRoute(req,env,{sql,reply,randomToken:()=>crypto.randomUUID()});
+ const route=(req,user)=>managementRoute(req,env,{sql,reply,randomToken:()=>crypto.randomUUID(),user});
  return {db,sql,route};
 }
 const request=(path,{method='GET',token,body}={})=>new Request('https://worker.example'+path,{method,headers:{...(token?{Authorization:'Bearer '+token}:{}),...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
@@ -21,9 +21,7 @@ test('independent admin login controls global and per-user feature flags',async(
  assert.equal((await route(request('/management',{token:'invalid'}))).status,401);
  const initial=await (await route(request('/management',{token}))).json();assert.equal(initial.users[0].email,'user@example.com');
  assert.equal((await route(request('/management/features',{method:'PUT',token,body:{features:[{key:'ai_tools.assistant',enabled:false}]}}))).status,200);
- const defaultUser=await (await route(request('/features',{token:'google-token'}))).json().catch(()=>null);
- assert.equal(defaultUser,null);
- const userFlags=await (await route(request('/features'))).json();assert.equal(userFlags.error,'請先登入');
+ const userFlags=await (await route(request('/features'),{id:'google-user'})).json();assert.equal(userFlags.features['ai_tools.assistant'],false);
  const override=await route(request('/management/users/google-user/features',{method:'PUT',token,body:{key:'ai_tools.assistant',enabled:true}}));assert.equal(override.status,200);
  const data=await (await route(request('/management',{token}))).json();assert.equal(data.features['ai_tools.assistant'],false);assert.equal(data.overrides[0].enabled,true);
  assert.equal((await route(request('/admin/logout',{method:'POST',token}))).status,200);
@@ -38,6 +36,8 @@ test('blacklisting a user revokes their existing sessions',async()=>{
  db.close();
 });
 test('admin login is disabled until deployment credentials are configured',async()=>{
- const {route}=await setup();
- const response=await route(request('/admin/login',{method:'POST',body:{username:'',password:''}}));assert.equal(response.status,401);
+ const {db,sql}=await setup();
+ const reply=(data,status=200)=>Response.json(data,{status});
+ const route=req=>managementRoute(req,{}, {sql,reply,randomToken:()=>crypto.randomUUID()});
+ const response=await route(request('/admin/login',{method:'POST',body:{username:'admin',password:'secret'}}));assert.equal(response.status,503);db.close();
 });
