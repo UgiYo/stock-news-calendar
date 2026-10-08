@@ -213,3 +213,18 @@ test('public transcript proxy serves text with CORS and rejects private redirect
 test('daily D1 quota failure returns a recoverable 503 with reset time',async()=>{const env={APP_URL:'https://example.com/',DB:{prepare(){throw Error("D1_ERROR: Your account has exceeded D1's free tier daily row read limit.");}}};const r=await call(env,'/me','alice');assert.equal(r.status,503);assert.equal((await r.json()).code,'D1_READ_QUOTA');assert.ok(Number(r.headers.get('Retry-After'))>0);});
 
 test('unchanged account news sync does not rewrite rows and task queries use their user index',async()=>{const {db,env}=setup();db.prepare('INSERT INTO users VALUES(?,?)').run('alice','a@example.com');db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(await hash('alice'),'alice',Date.now()+60000);try{const rows=[{company_code:'2330',title:'新聞',url:'https://example.com/story',source:'中央社',published_at:'2026-10-06T00:00:00Z',news_date:'2026-10-06'}];assert.equal((await call(env,'/account-news','alice',rows)).status,200);const before=db.prepare('SELECT total_changes() AS n').get().n;assert.equal((await call(env,'/account-news','alice',rows)).status,200);assert.equal(db.prepare('SELECT total_changes() AS n').get().n,before);assert.equal((await call(env,'/ai-jobs','alice')).status,200);const plan=db.prepare('EXPLAIN QUERY PLAN SELECT * FROM personal_ai_tasks WHERE user_id=? ORDER BY updated_at DESC LIMIT 100').all('alice');assert.ok(plan.some(r=>r.detail.includes('personal_ai_user_updated')));}finally{db.close();}});
+
+test('company search supports partial stock codes and ranks closest matches first',async()=>{
+ const {db,env}=setup();
+ db.prepare('INSERT INTO users VALUES(?,?)').run('alice','alice@example.com');
+ db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(await hash('alice'),'alice',Date.now()+60000);
+ db.prepare('INSERT INTO companies(code,name,full_name,market) VALUES(?,?,?,?)').run('1232','甲公司','甲公司股份有限公司','上市');
+ db.prepare('INSERT INTO companies(code,name,full_name,market) VALUES(?,?,?,?)').run('2327','國巨','國巨股份有限公司','上市');
+ db.prepare('INSERT INTO companies(code,name,full_name,market) VALUES(?,?,?,?)').run('3232','乙公司','乙公司股份有限公司','上市');
+ const byCode=await (await call(env,'/companies?q=232','alice')).json();
+ assert.deepEqual(byCode.companies.map(c=>c.code),['2327','1232','3232']);
+ const byName=await (await call(env,'/companies?q=國巨','alice')).json();
+ assert.deepEqual(byName.companies.map(c=>c.code),['2327']);
+ const empty=await (await call(env,'/companies?q=','alice')).json();
+ assert.deepEqual(empty.companies,[]);
+});
