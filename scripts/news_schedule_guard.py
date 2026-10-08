@@ -2,6 +2,7 @@
 
 Uses GitHub run/job metadata, not D1 writes. API failures deliberately allow recovery.
 Manual daily/queued requests and configuration pushes are never skipped.
+Independent scheduler heartbeat pushes use the same guard as cron events.
 """
 import datetime as dt
 import json
@@ -54,9 +55,13 @@ def should_collect(runs, get_jobs, now, current_id):
     return True, None
 
 
+def guarded_event(event, external_trigger='false'):
+    return event == 'schedule' or (event == 'push' and external_trigger == 'true')
+
+
 def main():
     run_news, previous = True, None
-    if os.environ.get('GITHUB_EVENT_NAME') == 'schedule':
+    if guarded_event(os.environ.get('GITHUB_EVENT_NAME'), os.environ.get('EXTERNAL_NEWS_TRIGGER', 'false')):
         try:
             repo = os.environ['GITHUB_REPOSITORY']
             token = os.environ['GH_TOKEN']

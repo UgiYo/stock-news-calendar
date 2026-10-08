@@ -12,6 +12,7 @@ on:
       - '.github/workflows/news.yml'
       - 'scripts/news_schedule_guard.py'
       - 'scripts/collect.py'
+      - '.automation/news-daily.json'
   workflow_dispatch:
     inputs:
       mode:
@@ -46,6 +47,7 @@ jobs:
         id: guard
         env:
           GH_TOKEN: ${{ github.token }}
+          EXTERNAL_NEWS_TRIGGER: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[news-daily-trigger]') }}
         run: python3 scripts/news_schedule_guard.py
       - name: Validate collector configuration
         if: steps.guard.outputs.run_news == 'true'
