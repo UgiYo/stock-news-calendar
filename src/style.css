@@ -160,3 +160,5 @@ aside>.podcast-controls{margin-top:24px;padding-top:16px;border-top:1px solid va
 
 
 .podcast-queue-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0}.podcast-queue-filters label{display:block;margin:0}.podcast-queue-filters select{display:block;width:100%;min-width:0;margin-top:6px;padding:10px;border:1px solid var(--theme-border,#d2dce4);border-radius:8px;background:var(--theme-surface,white);color:var(--theme-text,#163047)}.podcast-queue-count{margin:8px 0;color:var(--theme-text-secondary,#718797)}.podcast-queue-actions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 16px}.podcast-queue-actions button{flex:1 1 180px}@media(max-width:520px){.podcast-queue-filters{grid-template-columns:1fr}.podcast-queue-actions button{flex-basis:100%}}
+
+.ai-notification-panel,#ai-results-center{overscroll-behavior:contain;overflow-anchor:none}
