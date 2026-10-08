@@ -32,7 +32,7 @@ test('blacklisting a user revokes their existing sessions',async()=>{
  const {db,sql,route}=await setup();await sql('INSERT INTO sessions VALUES(?,?,?)','user-session','google-user',Date.now()+60000);
  const {token}=await (await route(request('/admin/login',{method:'POST',body:{username:'admin',password:'test-password'}}))).json();
  assert.equal((await route(request('/management/users/google-user/blacklist',{method:'PUT',token,body:{blacklisted:true}}))).status,200);
- assert.equal(await sql('SELECT token_hash FROM sessions WHERE user_id=?','google-user').then(x=>x.first()),null);
+ assert.equal(await sql('SELECT token_hash FROM sessions WHERE user_id=?','google-user').first(),null);
  db.close();
 });
 test('admin login is disabled until deployment credentials are configured',async()=>{
