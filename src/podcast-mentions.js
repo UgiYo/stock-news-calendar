@@ -7,7 +7,7 @@ function aliases(c){return [...new Set([c.name,c.full_name].filter(s=>s&&s.lengt
 function contains(text,c){
  let value=normalize(text);for(const other of [...(c.conflicting_names||[]),...(c.code==='2303'?['台聯電']:[])])value=value.split(normalize(other)).join(' ');
  if(aliases(c).some(n=>value.includes(n)&&(!['世界','中華','大同','大成','中興'].includes(n)||new RegExp(c.code).test(value))))return true;
- return new RegExp('(?:股號|代號|股票|ticker)[：:\\s]*'+c.code+'(?!\\d)','i').test(value)||new RegExp('(?<!\\d)'+c.code+'\\s*(?:股票|個股|股價|公司)').test(value);
+ return new RegExp('(?:股號|代號|股票|ticker)[：:\\s]*'+c.code+'(?!\d)','i').test(value)||new RegExp('(?<!\d)'+c.code+'\\s*(?:股票|個股|股價|公司)').test(value);
 }
 export function summaryPassages(answer){
  let excluded=false,inCode=false;const rows=[];
@@ -44,7 +44,7 @@ export function podcastMentions(record,companies=watchlist){
 export function podcastMentionIndex(records,companies=watchlist,selected=''){
  const dates=new Map(),episodes=new Map();
  for(const record of [...records].sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at)))){
-  const date=record.date||record.episode?.date;if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(date||''))continue;
+  const date=record.date||record.episode?.date;if(!/^\d{4}-\d{2}-\d{2}$/.test(date||''))continue;
   const stocks=podcastMentions(record,companies).filter(c=>!selected||c.code===selected);if(!stocks.length)continue;
   const episodeId=record.episode?.id||String(record.id||'').replace(/^podcast:/,'');
   const key=date+':'+(episodeId||normalize(record.title));
