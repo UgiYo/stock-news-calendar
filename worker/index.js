@@ -6,6 +6,7 @@ import {accountResultsRoute} from './account-results.js';
 import {sharedPodcastsRoute,publicPodcastTranscript} from './podcasts.js';
 import {aiJobsRoute} from './ai-jobs.js';
 import {summaryCacheRoute} from './summary-cache.js';
+import {managementRoute} from './management.js';
 export function dailyBars(result,code){
  const quote=result.indicators?.quote?.[0],rows=[];
  for(const [i,t] of (result.timestamp||[]).entries()){
@@ -164,8 +165,11 @@ export default {async fetch(req,env){
  if(!response.ok)throw Error('Google login failed');const identity=await verifyGoogle((await response.json()).id_token,env.GOOGLE_CLIENT_ID);
  await sql('INSERT INTO users VALUES(?,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email',identity.sub,identity.email).run();
  const token=randomToken();await sql('DELETE FROM sessions WHERE expires_at<?',Date.now()).run();await sql('INSERT INTO sessions VALUES(?,?,?)',await hash(token),identity.sub,Date.now()+30*86400000).run();
+ await sql('CREATE TABLE IF NOT EXISTS managed_users(user_id TEXT PRIMARY KEY REFERENCES users(id),blacklisted INTEGER NOT NULL DEFAULT 0,first_login_at INTEGER,last_login_at INTEGER)').run();
+ await sql('INSERT INTO managed_users(user_id,first_login_at,last_login_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET last_login_at=excluded.last_login_at',identity.sub,Date.now(),Date.now()).run();
  return new Response(null,{status:302,headers:{Location:appURL.href+'#session='+token,'Set-Cookie':'oauth_state=; Secure; HttpOnly; SameSite=Lax; Max-Age=0; Path=/auth','Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
  }
+ const managementAuth=await managementRoute(req,env,{sql,reply,randomToken});if(managementAuth)return managementAuth;
  if(path.startsWith('/admin/')){
  const provided=req.headers.get('Authorization')||'';if(!env.COLLECTOR_SECRET||await hash(provided)!==await hash('Bearer '+env.COLLECTOR_SECRET))return reply({error:'Forbidden'},403);
  const rankingUpdate=await rankingRefreshRoute(req,{sql,reply,db:env.DB,dispatch,env,admin:true});if(rankingUpdate)return rankingUpdate;
@@ -221,6 +225,9 @@ export default {async fetch(req,env){
  }
  const token=req.headers.get('Authorization')?.replace(/^Bearer /,'');if(!token)return reply({error:'請先登入'},401);
  const user=await sql('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?',await hash(token),Date.now()).first();if(!user)return reply({error:'登入已過期，請重新登入'},401);
+ await sql('CREATE TABLE IF NOT EXISTS managed_users(user_id TEXT PRIMARY KEY REFERENCES users(id),blacklisted INTEGER NOT NULL DEFAULT 0,first_login_at INTEGER,last_login_at INTEGER)').run();
+ const managed=await sql('SELECT blacklisted FROM managed_users WHERE user_id=?',user.id).first();if(managed?.blacklisted){await sql('DELETE FROM sessions WHERE user_id=?',user.id).run();return reply({error:'此帳號已停用'},403);}
+ const featureReply=await managementRoute(req,env,{sql,reply,randomToken,user});if(featureReply)return featureReply;
  const rankingUpdate=await rankingRefreshRoute(req,{sql,reply,db:env.DB,dispatch,env});if(rankingUpdate)return rankingUpdate;
  const eventCache=await stockEventCacheRoute(req,{sql,reply,user,randomToken});if(eventCache)return eventCache;
  const stockEvents=await stockEventsRoute(req,{sql,reply,user,parsePreview,curateNews,companyMention});if(stockEvents)return stockEvents;
