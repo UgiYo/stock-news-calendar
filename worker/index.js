@@ -225,8 +225,7 @@ export default {async fetch(req,env){
  }
  const token=req.headers.get('Authorization')?.replace(/^Bearer /,'');if(!token)return reply({error:'請先登入'},401);
  const user=await sql('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?',await hash(token),Date.now()).first();if(!user)return reply({error:'登入已過期，請重新登入'},401);
- await sql('CREATE TABLE IF NOT EXISTS managed_users(user_id TEXT PRIMARY KEY REFERENCES users(id),blacklisted INTEGER NOT NULL DEFAULT 0,first_login_at INTEGER,last_login_at INTEGER)').run();
- const managed=await sql('SELECT blacklisted FROM managed_users WHERE user_id=?',user.id).first();if(managed?.blacklisted){await sql('DELETE FROM sessions WHERE user_id=?',user.id).run();return reply({error:'此帳號已停用'},403);}
+ let managed=null;try{managed=await sql('SELECT blacklisted FROM managed_users WHERE user_id=?',user.id).first();}catch(error){if(!String(error?.message||error).includes('no such table'))throw error;}if(managed?.blacklisted){await sql('DELETE FROM sessions WHERE user_id=?',user.id).run();return reply({error:'此帳號已停用'},403);}
  const featureReply=await managementRoute(req,env,{sql,reply,randomToken,user});if(featureReply)return featureReply;
  const rankingUpdate=await rankingRefreshRoute(req,{sql,reply,db:env.DB,dispatch,env});if(rankingUpdate)return rankingUpdate;
  const eventCache=await stockEventCacheRoute(req,{sql,reply,user,randomToken});if(eventCache)return eventCache;
