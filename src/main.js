@@ -224,6 +224,7 @@ app.querySelector('#summary-ai-settings')?.addEventListener('click',()=>openAIWi
 app.querySelector('#summarize-all')?.addEventListener('click',()=>openAINews({rows:filtered.filter(n=>n.news_date.startsWith(`${state.year}-${String(state.month+1).padStart(2,'0')}`)),title:'本月份多篇新聞內文總結'}));
 app.querySelector('#login')?.addEventListener('click',()=>run(login));
 app.querySelector('#logout')?.addEventListener('click',()=>run(async()=>{await logout();monthCache.clear();state.user=null;resetSharedPodcastChannels();podcast.episodes=podcast.episodes.filter(e=>['zhaohua','gooaye'].includes(e.channel_id));holdingsDetail=null;rankingDetail=null;rankingRequest++;state.preview=[];state.previewCompany=null;state.companies=[];state.news=[];state.selected='';state.summaryOpen=false;state.rankingPage=false;}));
+app.querySelector('#query').oninput=e=>{state.query=e.target.value;};
 app.querySelector('#search').onsubmit=e=>{e.preventDefault();state.query=app.querySelector('#query').value.trim();run(search);};
 app.querySelectorAll('[data-movement]').forEach(b=>b.onclick=()=>openMovement(b.dataset.movement));
 app.querySelectorAll('[data-refresh-movements]').forEach(b=>b.onclick=()=>void loadMovements(true));
