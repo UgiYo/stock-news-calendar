@@ -337,11 +337,6 @@ AI 按使用者操作才執行，沿用現有 OpenAI／Azure／LiteLLM／Python 
 
 ## 管理者後台
 
-網站登入區新增「管理者登入」入口，使用獨立帳號，不需 Google OAuth。第一次部署前，請在 Cloudflare Worker 的 Secrets 設定：
+網站登入區新增「管理者登入」入口，使用獨立帳號，不需 Google OAuth。管理者登入可部署於 Cloudflare Workers，或沿用既有 Cloudflare Pages Advanced Mode。Pages 部署設定與 Production bindings 請依 [`worker/CLOUDFLARE_PAGES.md`](worker/CLOUDFLARE_PAGES.md) 操作；現有專案需保留 `cloudflare-api` 輸出目錄，並使用 `npm ci && node scripts/build_cloudflare_pages.mjs` 產生最新 `_worker.js`。Pages 專案必須自行設定 `DB`、`ADMIN_USERNAME`、`ADMIN_PASSWORD` 及其他 Worker 所需環境變數／Secrets，這些設定不會由 Workers 自動共用。
 
-- `ADMIN_USERNAME`：管理者帳號
-- `ADMIN_PASSWORD`：管理者密碼（僅存為 Worker Secret）
-
-可在 Cloudflare Dashboard 的 Worker → Settings → Variables and Secrets 設定，或用 Wrangler 分別執行 `npx wrangler secret put ADMIN_USERNAME` 與 `npx wrangler secret put ADMIN_PASSWORD`。請勿把帳密放在 `wrangler.toml`、GitHub Pages 或 Git。未設定帳密時，管理者登入會拒絕服務。
-
-管理後台提供功能樹狀開關、帳號功能覆寫、登入紀錄及黑名單。封鎖帳號時會立即刪除其既有 Google session；解除封鎖後需重新使用 Google 登入。新功能資料表在首次呼叫時由 Worker 惰性建立。設定 Secret 後，從專案根目錄執行 `npx wrangler deploy --config worker/wrangler.toml` 部署 Worker；Wrangler 會一併打包新增的管理模組。若改用手動貼上單檔 Worker，須先依上方 bundle 指令重新產生 `worker/worker-bundle.js`。
+管理後台提供功能樹狀開關、帳號功能覆寫、登入紀錄及黑名單。封鎖帳號時會立即刪除其既有 Google session；解除封鎖後需重新使用 Google 登入。新功能資料表在首次呼叫時由後端惰性建立。
