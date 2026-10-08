@@ -67,7 +67,7 @@ export async function managementRoute(req,env,{sql,reply,randomToken,user}){
  if(path==='/management/features'&&req.method==='PUT'){
   const body=await req.json().catch(()=>({}));
   if(!Array.isArray(body.features)||body.features.length>ALL_KEYS.length||body.features.some(f=>!ALL_KEYS.includes(f.key)||typeof f.enabled!=='boolean'))return reply({error:'功能設定格式錯誤'},400);
-  for(const f of body.features)await sql('INSERT INTO feature_flags(feature_key,enabled,updated_at) VALUES(?,?,?) ON CONFLICT(feature_key) DO UPDATE SET enabled=excluded.enabled,updated_at=excluded.updated_at',f.key,f.enabled,Date.now()).run();
+  for(const f of body.features)await sql('INSERT INTO feature_flags(feature_key,enabled,updated_at) VALUES(?,?,?) ON CONFLICT(feature_key) DO UPDATE SET enabled=excluded.enabled,updated_at=excluded.updated_at',f.key,f.enabled?1:0,Date.now()).run();
   return reply({ok:true});
  }
  const userFeatures=path.match(/^\/management\/users\/([^/]+)\/features$/);
