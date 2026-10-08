@@ -33,7 +33,7 @@ export async function deviceRequest(path,options,remote){
 }
 // Completed results are private to their signed-in owner; settings and credentials are never synced.
 export function syncResultPayload(row,who=owner){
- if(!row||who==='guest'||row.owner!==who||row.state!=='complete')return null;
+ if(!row||who==='guest'||row.owner!==who||row.state!=='complete'||(row.id?.startsWith('stock-event:')&&row.local_only))return null;
  const episode=row.episode?Object.fromEntries(['id','title','date','url','audio_url','channel_id','channel_name'].filter(k=>typeof row.episode[k]==='string').map(k=>[k,row.episode[k]])):undefined;
  return {id:row.id,title:row.title,kind:row.kind,date:row.date||'',updated_at:row.updated_at,completed_at:row.completed_at||row.updated_at,answer:String(row.answer||''),text:String(row.text||''),transcription_model:String(row.transcription_model||''),partial:!!row.partial,failures:(row.failures||[]).map(String),...(episode?{episode}:{}),...(row.cloud_id?{cloud_id:String(row.cloud_id)}:{})};
 }

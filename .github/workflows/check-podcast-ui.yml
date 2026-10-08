@@ -2,7 +2,7 @@ name: Check podcast UI
 on:
   workflow_dispatch:
   push:
-    paths: ['src/podcast-ai.js', 'src/podcasts.js', 'src/ai-results.js', 'src/cloud-ai.js', 'src/style.css', 'src/main.js', 'src/local-ai.js', 'scripts/check_podcast_ui.mjs', '.github/workflows/check-podcast-ui.yml']
+    paths: ['src/podcast-ai.js', 'src/podcasts.js', 'src/ai-results.js', 'src/cloud-ai.js', 'src/style.css', 'src/main.js', 'src/local-ai.js', 'scripts/check_podcast_ui.mjs', 'scripts/check_company_ai_ui.mjs', 'scripts/check_stock_events_ui.mjs', 'tests/**', 'shared/**', 'worker/**', 'package*.json', '.github/workflows/check-podcast-ui.yml']
 permissions:
   contents: read
 jobs:
@@ -17,9 +17,11 @@ jobs:
       - run: npm ci
       - run: npm install --no-save --package-lock=false playwright@1.58.2
       - run: npx playwright install --with-deps chromium
+      - run: npm test
+      - run: npm run build
       - name: Check mobile calendar and podcast dialog
         run: |
-          npm run dev -- --host 127.0.0.1 > /tmp/podcast-vite.log 2>&1 &
+          VITE_WORKER_API_URL=https://ui-fixture.workers.dev npm run dev -- --host 127.0.0.1 > /tmp/podcast-vite.log 2>&1 &
           node scripts/check_podcast_ui.mjs
       - uses: actions/upload-artifact@v4
         if: always()

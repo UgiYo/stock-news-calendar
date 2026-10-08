@@ -321,3 +321,15 @@ D1 quota recovery: daily read/write exhaustion returns HTTP 503 with `D1_READ_QU
 An independent ChatGPT task checks the daily news collector at 06:17, 07:17, 08:17 and 09:17 Asia/Taipei. If no full daily collection has succeeded since 06:00, and no daily news job is queued or collecting, it updates `.automation/news-daily.json` on `main` with a `[news-daily-trigger]` commit. This file is an explicit workflow input: its push runs `news.yml` in daily mode without relying on GitHub cron delivery. Scheduled recovery and marked heartbeat pushes share the daily success guard inside the serialized news job. A successful news step suppresses duplicate daily collections even when price/AI maintenance fails. Queued per-company dispatches are never treated as a full daily refresh. Failed collection or an absent workflow remains eligible for a later attempt; the task reports unresolved failures. The heartbeat contains only request date/time and attempt metadata. It does not contain secrets and does not change user AI settings. Heartbeat-only pushes skip GitHub Pages deployment.
 
 GitHub cron remains a fallback. The independent task still depends on the connected GitHub account and GitHub push/Actions availability; monitor failures rather than assuming that a successful dispatch or maintenance job proves news freshness.
+
+### 個股異動事件追查（2026-10-08）
+
+追蹤清單、成交值前十及個股走勢可開啟「異動事件追查」。使用已完成日線計算近3交易日 ±8%／近5交易日 ±12%，不足交易日或無效價格不觸發；價格未還原，畫面提示除權息／減資／分割限制。月曆所選日期作為截止日，不使用未收盤或之後資料。
+
+`GET /stock-movements` 批次計算標記，沿用每日16:00排行工作最後補入的日線。`GET /stock-event-news` 從異動視窗起日前回溯30或45日，以分週、精確日期搜尋既有新聞來源，並合併已保存新聞；逐段失敗、資料日期及來源不完整均明示。結果不保證已完整收錄所有新聞。查歷史日期不包含截止日後新聞。
+
+AI 按使用者操作才執行，沿用現有 OpenAI／Azure／LiteLLM／Python 連線設定。嘗試取得最早與最近各6篇內文，保留其他新聞標題／摘要，長文節錄並明示限制。輸出包含最多3個候選事件、證據強弱、新進展、影響機制、反向證據與可點擊的來源索引；找不到證據不強行歸因。
+
+新功能不使用既有 `/summary-cache` 共用摘要。`POST /stock-event-cache` 的主鍵是伺服器驗證的 `(user_id,key)`；同帳號相同輸入跨裝置鎖定生成工作，其他帳號無法讀寫，模型與來源變更會形成不同鍵。完成結果沿用個人AI成果中心與帳號同步；刪除成果也刪除該帳號對應快取。公司LiteLLM模式不將本功能的分析結果送往雲端快取或帳號同步。API Key不進入快取、後端、同步成果或生成鍵。
+
+部署沿用既有GitHub Pages與Cloudflare Pages Git整合，包含更新 `worker/index.js`、新增模組與 `worker/worker-bundle.js`；資料表首次使用時自動建立，無需新Secret。測試包含正負報酬、交易日缺漏、45日搜尋、未來新聞排除及SQLite帳號隔離／並發鎖驗證。

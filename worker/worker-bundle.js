@@ -23,14 +23,170 @@ function d1QuotaError(error, now = Date.now()) {
   return { error: `D1 \u6BCF\u65E5${kind === "read" ? "\u8B80\u53D6" : "\u5BEB\u5165"}\u914D\u984D\u5DF2\u7528\u5B8C\uFF1B\u53F0\u7063\u6642\u9593\u65E9\u4E0A 8 \u9EDE\u91CD\u7F6E\u3002\u8CC7\u6599\u4ECD\u4FDD\u7559\uFF0C\u8ACB\u65BC\u91CD\u7F6E\u5F8C\u518D\u8A66\u3002`, code: kind === "read" ? "D1_READ_QUOTA" : "D1_WRITE_QUOTA", reset_at: new Date(reset).toISOString(), retry_after: Math.ceil((reset - now) / 1e3) };
 }
 
+// worker/ranking-refresh.js
+var schema = "CREATE TABLE IF NOT EXISTS ranking_refresh(slot INTEGER PRIMARY KEY CHECK(slot=1),id TEXT NOT NULL,status TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,data_date TEXT,error TEXT)";
+var expiry = 25 * 6e4;
+async function rankingRefreshRoute(req, { sql, reply, db, dispatch: dispatch2, env, admin = false, now = Date.now(), uuid = () => crypto.randomUUID() }) {
+  const url = new URL(req.url), path = url.pathname;
+  if (path !== (admin ? "/admin/ranking-refresh" : "/ranking-refresh")) return null;
+  if (!["GET", "POST"].includes(req.method) || admin && req.method !== "POST") return reply({ error: "Method not allowed" }, 405);
+  await ensureD1Index(db, "ranking_refresh_schema", schema);
+  if (admin) {
+    const body = await req.json();
+    if (typeof body.id !== "string" || !["running", "done", "failed"].includes(body.status) || body.data_date != null && !/^\d{4}-\d{2}-\d{2}$/.test(body.data_date)) return reply({ error: "Invalid ranking update" }, 400);
+    await sql("UPDATE ranking_refresh SET status=?,updated_at=?,data_date=?,error=? WHERE slot=1 AND id=? AND status IN ('pending','running')", body.status, now, body.data_date || null, String(body.error || "").slice(0, 500) || null, body.id).run();
+    return reply({ ok: true });
+  }
+  let job = await sql("SELECT * FROM ranking_refresh WHERE slot=1").first();
+  if (job && ["pending", "running"].includes(job.status) && job.created_at <= now - expiry) {
+    await sql("UPDATE ranking_refresh SET status='failed',updated_at=?,error=? WHERE slot=1 AND id=? AND status IN ('pending','running')", now, "\u66F4\u65B0\u7B49\u5F85\u903E\u6642\uFF0C\u8ACB\u91CD\u65B0\u6309\u300C\u7ACB\u5373\u66F4\u65B0\u6210\u4EA4\u503C\u300D\u3002", job.id).run();
+    job = { ...job, status: "failed", error: "\u66F4\u65B0\u7B49\u5F85\u903E\u6642\uFF0C\u8ACB\u91CD\u65B0\u6309\u300C\u7ACB\u5373\u66F4\u65B0\u6210\u4EA4\u503C\u300D\u3002" };
+  }
+  if (req.method === "GET") {
+    const id2 = url.searchParams.get("id");
+    if (id2 && job?.id !== id2) return reply({ error: "\u6B64\u66F4\u65B0\u4EFB\u52D9\u5DF2\u7D50\u675F\uFF0C\u8ACB\u91CD\u65B0\u8B80\u53D6\u6392\u884C\u699C\u3002" }, 404);
+    return reply({ job });
+  }
+  if (job && ["pending", "running"].includes(job.status)) return reply({ job }, 202);
+  const id = uuid();
+  await sql("INSERT INTO ranking_refresh(slot,id,status,created_at,updated_at) VALUES(1,?,'pending',?,?) ON CONFLICT(slot) DO UPDATE SET id=excluded.id,status='pending',created_at=excluded.created_at,updated_at=excluded.updated_at,data_date=NULL,error=NULL WHERE ranking_refresh.status NOT IN ('pending','running') OR ranking_refresh.created_at<=?", id, now, now, now - expiry).run();
+  job = await sql("SELECT * FROM ranking_refresh WHERE slot=1").first();
+  if (job.id !== id) return reply({ job }, 202);
+  try {
+    await dispatch2(env, "ranking.yml", { refresh_id: id });
+    return reply({ job }, 202);
+  } catch (error) {
+    const message = "\u6210\u4EA4\u503C\u66F4\u65B0\u7121\u6CD5\u555F\u52D5\uFF0C\u8ACB\u7A0D\u5F8C\u91CD\u8A66\u3002";
+    console.error("Ranking dispatch failed:", error.message);
+    await sql("UPDATE ranking_refresh SET status='failed',updated_at=?,error=? WHERE slot=1 AND id=?", now, message, id).run();
+    return reply({ error: message }, 502);
+  }
+}
+
+// worker/stock-event-cache.js
+async function stockEventCacheRoute(req, { sql, reply, user, randomToken: randomToken2 }) {
+  if (new URL(req.url).pathname !== "/stock-event-cache") return null;
+  if (!user?.id) return reply({ error: "\u8ACB\u5148\u767B\u5165" }, 401);
+  if (req.method !== "POST") return reply({ error: "Method not allowed" }, 405);
+  const raw = await req.text();
+  if (new TextEncoder().encode(raw).length > 15e4) return reply({ error: "\u5206\u6790\u7ED3\u679C\u904E\u5927" }, 413);
+  let b;
+  try {
+    b = JSON.parse(raw);
+  } catch {
+    return reply({ error: "Invalid JSON" }, 400);
+  }
+  if (!/^[a-f0-9]{64}$/.test(b.key || "") || !["read", "claim", "save", "release"].includes(b.action)) return reply({ error: "Invalid cache request" }, 400);
+  await sql("CREATE TABLE IF NOT EXISTS stock_event_cache(user_id TEXT NOT NULL,key TEXT NOT NULL,answer TEXT,lease TEXT,expires_at INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(user_id,key))").run();
+  const row = await sql("SELECT answer,lease,expires_at FROM stock_event_cache WHERE user_id=? AND key=?", user.id, b.key).first();
+  if (b.action === "read") return reply({ owner_id: user.id, answer: row?.answer || "" });
+  if (b.action === "claim") {
+    if (row?.answer) return reply({ owner_id: user.id, answer: row.answer });
+    const lease = randomToken2(), now = Date.now();
+    const changed = await sql("INSERT INTO stock_event_cache(user_id,key,lease,expires_at) VALUES(?,?,?,?) ON CONFLICT(user_id,key) DO UPDATE SET lease=excluded.lease,expires_at=excluded.expires_at WHERE stock_event_cache.answer IS NULL AND stock_event_cache.expires_at<? RETURNING lease", user.id, b.key, lease, now + 36e5, now).first();
+    return reply({ owner_id: user.id, lease: changed?.lease || null, busy: !changed });
+  }
+  if (typeof b.lease !== "string" || !b.lease) return reply({ error: "Invalid lease" }, 400);
+  if (b.action === "save") {
+    if (typeof b.answer !== "string" || !b.answer.trim()) return reply({ error: "Invalid answer" }, 400);
+    const changed = await sql("UPDATE stock_event_cache SET answer=?,lease=NULL,expires_at=0 WHERE user_id=? AND key=? AND lease=? AND expires_at>? RETURNING key", b.answer, user.id, b.key, b.lease, Date.now()).first();
+    return changed ? reply({ ok: true, owner_id: user.id }) : reply({ error: "\u5206\u6790\u5DE5\u4F5C\u5DF2\u5230\u671F\uFF0C\u8ACB\u91CD\u8A66" }, 409);
+  }
+  await sql("DELETE FROM stock_event_cache WHERE user_id=? AND key=? AND lease=? AND answer IS NULL", user.id, b.key, b.lease).run();
+  return reply({ ok: true });
+}
+
+// shared/stock-movements.js
+var shiftDay = (day, n) => new Date(Date.parse(day + "T00:00:00Z") + n * 864e5).toISOString().slice(0, 10);
+function completedDay(now = /* @__PURE__ */ new Date()) {
+  const taiwan = new Date(now.getTime() + 8 * 36e5), day = taiwan.toISOString().slice(0, 10);
+  return taiwan.getUTCHours() * 60 + taiwan.getUTCMinutes() < 810 ? shiftDay(day, -1) : day;
+}
+function detectMovement(prices, { code, date = completedDay(), three = 8, five = 12 } = {}) {
+  const bars = prices.filter((p) => (!code || p.code === code) && p.date <= date).sort((a, b) => a.date.localeCompare(b.date));
+  const benchmark = prices.filter((p) => p.code === "TAIEX" && p.date <= date).sort((a, b) => a.date.localeCompare(b.date)), market = new Map(benchmark.map((p) => [p.date, p]));
+  const last = bars.at(-1), missing = () => ({ triggered: false, requestedDate: date, date: last?.date || null, windows: [], reason: "\u6536\u76E4\u884C\u60C5\u4E0D\u8DB3\uFF0C\u8ACB\u66F4\u65B0\u8CC7\u6599" });
+  if (!last) return missing();
+  const windows = [3, 5].map((days) => {
+    const end = bars.length - 1, base = bars[end - days], start = bars[end - days + 1], threshold = days === 3 ? three : five;
+    if (!base || !start) return { days, threshold, reason: "\u4EA4\u6613\u65E5\u8CC7\u6599\u4E0D\u8DB3" };
+    const segment = bars.slice(end - days, end + 1);
+    if (segment.some((p) => !Number.isFinite(p.close) || p.close <= 0 || p.volume === 0) || benchmark.some((p) => p.date >= base.date && p.date <= last.date && !segment.some((b) => b.date === p.date))) return { days, threshold, reason: "\u7F3A\u4EA4\u6613\u65E5\u3001\u505C\u724C\u6216\u50F9\u683C\u8CC7\u6599\u7121\u6548" };
+    const change = (last.close / base.close - 1) * 100, marketChange = market.has(base.date) && market.has(last.date) ? (market.get(last.date).close / market.get(base.date).close - 1) * 100 : null;
+    const before = bars.slice(Math.max(0, end - days - 19), end - days + 1), period = bars.slice(end - days + 1), vol = (rows) => rows.reduce((a, p) => a + p.volume, 0) / rows.length;
+    const volumeRatio = before.length === 20 && [...before, ...period].every((p) => Number.isFinite(p.volume) && p.volume > 0) ? vol(period) / vol(before) : null;
+    const adjustmentRisk = segment.some((p, i) => i && Math.abs(p.close / segment[i - 1].close - 1) >= 0.4);
+    return { days, threshold, from: start.date, baseline: base.date, to: last.date, change, marketChange, excess: marketChange === null ? null : change - marketChange, volumeRatio, adjustmentRisk, triggered: Math.abs(change) + 1e-9 >= threshold };
+  });
+  const triggered = windows.filter((w) => w.triggered);
+  return { code: code || last.code, date: last.date, requestedDate: date, stale: benchmark.at(-1)?.date > last.date, windows, triggered: !!triggered.length, from: triggered.length ? triggered.map((w) => w.from).sort()[0] : windows.find((w) => w.from)?.from, adjustmentRisk: triggered.some((w) => w.adjustmentRisk), priceWarning: "\u672A\u9084\u539F\u80A1\u50F9\uFF1B\u9664\u6B0A\u606F\u3001\u6E1B\u8CC7\u8207\u5206\u5272\u53EF\u80FD\u5F71\u97FF\u6578\u503C\uFF0C\u4E8B\u4EF6\u95DC\u806F\u50C5\u4F9B\u6838\u5C0D\u3002" };
+}
+function newsWindow(movement, lookback = 45) {
+  if (!movement.from || !movement.date) throw Error("\u6C92\u6709\u5B8C\u6574\u7570\u52D5\u5340\u9593");
+  return { from: shiftDay(movement.from, -lookback), to: movement.date };
+}
+
+// worker/stock-events.js
+async function stockEventsRoute(req, { sql, reply, user, parsePreview: parsePreview2, curateNews: curateNews2, companyMention: companyMention2, fetcher = fetch }) {
+  const url = new URL(req.url);
+  if (!["/stock-movements", "/stock-event-news"].includes(url.pathname)) return null;
+  if (!user?.id) return reply({ error: "\u8ACB\u5148\u767B\u5165" }, 401);
+  if (!["GET", "POST"].includes(req.method)) return reply({ error: "Method not allowed" }, 405);
+  const date = url.searchParams.get("date") || completedDay(), cutoff = completedDay();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || date > cutoff) return reply({ error: "\u8ACB\u9078\u64C7\u5DF2\u6536\u76E4\u7684\u65E5\u671F" }, 400);
+  const readPrices = async (codes) => {
+    try {
+      const rows2 = [];
+      for (let at = 0; at < codes.length; at += 90) {
+        const batch = codes.slice(at, at + 90);
+        rows2.push(...(await sql(`SELECT * FROM prices WHERE code IN (${[...batch, "TAIEX"].map(() => "?").join(",")}) AND date BETWEEN ? AND ? ORDER BY date`, ...batch, "TAIEX", shiftDay(date, -180), date).all()).results);
+      }
+      return rows2;
+    } catch (e) {
+      if (String(e.message).includes("no such table")) return [];
+      throw e;
+    }
+  };
+  if (url.pathname === "/stock-movements") {
+    const codes = [...new Set((url.searchParams.get("codes") || "").split(",").filter(Boolean))];
+    if (!codes.length || codes.length > 100 || codes.some((c) => !/^\d{4,6}$/.test(c))) return reply({ error: "Invalid stock codes" }, 400);
+    const prices = await readPrices(codes);
+    return reply({ owner_id: user.id, date, movements: codes.map((code2) => detectMovement(prices, { code: code2, date })) });
+  }
+  const code = url.searchParams.get("code"), lookback = Number(url.searchParams.get("lookback") || 45);
+  if (!/^\d{4,6}$/.test(code || "") || ![30, 45].includes(lookback)) return reply({ error: "Invalid event range" }, 400);
+  const company = await sql("SELECT * FROM companies WHERE code=?", code).first();
+  if (!company) return reply({ error: "\u516C\u53F8\u4E0D\u5B58\u5728" }, 404);
+  const movement = detectMovement(await readPrices([code]), { code, date });
+  if (!movement.from) return reply({ error: "\u884C\u60C5\u4E0D\u8DB3\uFF0C\u8ACB\u5148\u5728\u500B\u80A1\u8D70\u52E2\u66F4\u65B0\u65E5\u7DDA" }, 422);
+  const range = newsWindow(movement, lookback), saved = (await sql("SELECT * FROM news WHERE company_code=? AND news_date BETWEEN ? AND ? ORDER BY published_at", code, range.from, range.to).all()).results;
+  const conflicts = (await sql("SELECT name FROM companies WHERE code<>? AND name<>? AND instr(name,?)>0", code, company.name, company.name).all()).results.map((r) => r.name), rows = [...saved], failures = [];
+  const chunks = [];
+  for (let from = range.from; from <= range.to; from = shiftDay(from, 7)) chunks.push({ from, to: shiftDay(from, 6) < range.to ? shiftDay(from, 6) : range.to });
+  for (let i = 0; i < chunks.length; i += 3) await Promise.all(chunks.slice(i, i + 3).map(async (chunk) => {
+    try {
+      const feed = new URL("https://news.google.com/rss/search");
+      feed.search = new URLSearchParams({ q: `("${company.name}" OR "${company.full_name || company.name}" OR "${code}") (site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com) after:${shiftDay(chunk.from, -1)} before:${shiftDay(chunk.to, 1)}`, hl: "zh-TW", gl: "TW", ceid: "TW:zh-Hant" }).toString();
+      const response = await fetcher(feed, { signal: AbortSignal.timeout(12e3) });
+      if (!response.ok) throw Error("RSS " + response.status);
+      rows.push(...parsePreview2(await response.text(), company, /* @__PURE__ */ new Date(chunk.to + "T15:59:59.999Z"), conflicts, /* @__PURE__ */ new Date(chunk.from + "T00:00:00+08:00")));
+    } catch (e) {
+      failures.push(`${chunk.from}\uFF5E${chunk.to}\uFF1A${e.message}`);
+    }
+  }));
+  const news = curateNews2(rows.filter((r) => r.news_date >= range.from && r.news_date <= range.to && companyMention2(r.title, company, conflicts))).sort((a, b) => String(a.published_at).localeCompare(String(b.published_at)));
+  return reply({ owner_id: user.id, company, movement, news, coverage: { ...range, lookback, searchSegments: chunks.length, failedSegments: failures.length, failures, count: news.length, first: news[0]?.news_date || null, last: news.at(-1)?.news_date || null, fetchedAt: (/* @__PURE__ */ new Date()).toISOString(), complete: false, note: "\u5DF2\u4F9D\u65E5\u671F\u5340\u9593\u67E5\u8A62\uFF1B\u641C\u5C0B\u4F86\u6E90\u4E0D\u4FDD\u8B49\u5B8C\u6574\u6536\u9304\uFF0C\u6C92\u6709\u56DE\u50B3\u65B0\u805E\u4E0D\u4EE3\u8868\u7576\u5929\u6C92\u6709\u4E8B\u4EF6\u3002" } });
+}
+
 // worker/account-results.js
-var fields = ["id", "title", "kind", "date", "updated_at", "answer", "text", "partial", "failures", "transcription_model"];
+var fields = ["id", "title", "kind", "date", "updated_at", "answer", "text", "partial", "failures", "transcription_model", "completed_at", "episode", "cloud_id"];
 function validAccountResult(row) {
-  return row && Object.keys(row).every((k) => fields.includes(k)) && typeof row.id === "string" && row.id.length > 0 && row.id.length <= 500 && (row.transcription_model === void 0 || typeof row.transcription_model === "string" && row.transcription_model.length <= 200) && typeof row.title === "string" && row.title.length <= 1e3 && ["news", "text", "podcast"].includes(row.kind) && typeof row.updated_at === "string" && /^\d{4}-\d\d-\d\dT/.test(row.updated_at) && Number.isFinite(Date.parse(row.updated_at)) && typeof row.answer === "string" && typeof row.text === "string" && typeof row.date === "string" && typeof row.partial === "boolean" && Array.isArray(row.failures) && row.failures.every((v) => typeof v === "string");
+  return row && Object.keys(row).every((k) => fields.includes(k)) && (row.cloud_id === void 0 || typeof row.cloud_id === "string" && row.cloud_id.length <= 200) && (row.completed_at === void 0 || typeof row.completed_at === "string" && Number.isFinite(Date.parse(row.completed_at))) && (row.episode === void 0 || row.episode && typeof row.episode === "object" && !Array.isArray(row.episode) && Object.entries(row.episode).every(([k, v]) => ["id", "title", "date", "url", "audio_url", "channel_id", "channel_name"].includes(k) && typeof v === "string" && v.length <= 3e3)) && typeof row.id === "string" && row.id.length > 0 && row.id.length <= 500 && (row.transcription_model === void 0 || typeof row.transcription_model === "string" && row.transcription_model.length <= 200) && typeof row.title === "string" && row.title.length <= 1e3 && ["news", "text", "podcast"].includes(row.kind) && typeof row.updated_at === "string" && /^\d{4}-\d\d-\d\dT/.test(row.updated_at) && Number.isFinite(Date.parse(row.updated_at)) && typeof row.answer === "string" && typeof row.text === "string" && typeof row.date === "string" && typeof row.partial === "boolean" && Array.isArray(row.failures) && row.failures.every((v) => typeof v === "string");
 }
 async function accountResultsRoute(req, { sql, reply, user, db }) {
   const url = new URL(req.url);
   if (!["/account-results", "/account-news"].includes(url.pathname)) return null;
+  if (!user?.id) return reply({ error: "\u8ACB\u5148\u767B\u5165" }, 401);
   if (url.pathname === "/account-news") {
     await sql("CREATE TABLE IF NOT EXISTS account_news(user_id TEXT NOT NULL,url TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(user_id,url))").run();
     if (req.method === "GET") return reply({ news: (await sql("SELECT payload FROM account_news WHERE user_id=? LIMIT 2000", user.id).all()).results.map((r) => JSON.parse(r.payload)) });
@@ -52,11 +208,20 @@ async function accountResultsRoute(req, { sql, reply, user, db }) {
   await sql("CREATE TABLE IF NOT EXISTS account_results(user_id TEXT NOT NULL,id TEXT NOT NULL,payload TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(user_id,id))").run();
   if (db) await ensureD1Index(db, "results_user_updated", "CREATE INDEX IF NOT EXISTS account_results_user_updated ON account_results(user_id,updated_at DESC)");
   if (req.method === "GET") {
-    const rows = (await sql("SELECT id,payload,updated_at FROM account_results WHERE user_id=? ORDER BY updated_at DESC LIMIT 200", user.id).all()).results;
-    return reply({ results: rows.filter((r) => !JSON.parse(r.payload).deleted).map((r) => JSON.parse(r.payload)), deleted: rows.filter((r) => JSON.parse(r.payload).deleted).map((r) => ({ id: r.id, updated_at: r.updated_at })) });
+    const offset = Number(url.searchParams.get("offset") || 0);
+    if (!Number.isSafeInteger(offset) || offset < 0) return reply({ error: "Invalid offset" }, 400);
+    const rows = (await sql("SELECT id,payload,updated_at FROM account_results WHERE user_id=? ORDER BY updated_at DESC,id DESC LIMIT 200 OFFSET ?", user.id, offset).all()).results;
+    const parsed = rows.map((r) => ({ ...r, value: JSON.parse(r.payload) }));
+    return reply({ owner_id: user.id, count: rows.length, has_more: rows.length === 200, results: parsed.filter((r) => !r.value.deleted).map((r) => r.value), deleted: parsed.filter((r) => r.value.deleted).map((r) => ({ id: r.id, updated_at: r.updated_at })) });
   }
   if (req.method === "DELETE") {
+    const id = url.searchParams.get("id");
+    if (!id || id.length > 500) return reply({ error: "Invalid result id" }, 400);
     await sql("INSERT INTO account_results(user_id,id,payload,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id,id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at", user.id, url.searchParams.get("id"), JSON.stringify({ deleted: true }), (/* @__PURE__ */ new Date()).toISOString()).run();
+    if (/^stock-event:[a-f0-9]{64}$/.test(id)) {
+      const exists = await sql("SELECT name FROM sqlite_master WHERE type='table' AND name='stock_event_cache'").first();
+      if (exists) await sql("DELETE FROM stock_event_cache WHERE user_id=? AND key=?", user.id, id.slice(12)).run();
+    }
     return reply({ ok: true });
   }
   const raw = await req.text();
@@ -264,13 +429,13 @@ function cloudConfig(config) {
   if (!config.key?.trim() || config.key.length > 1e3 || !config.model?.trim() || config.model.length > 200) throw Error("\u8ACB\u586B\u6709\u6548 API Key \u8207\u6A21\u578B\u3002");
   return { provider: config.provider, endpoint: u.href, model: config.model.trim(), key: config.key.trim(), version: String(config.version || "2024-10-21").slice(0, 40) };
 }
-var schema = "CREATE TABLE IF NOT EXISTS personal_ai_tasks(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,kind TEXT NOT NULL,title TEXT NOT NULL,date TEXT NOT NULL,status TEXT NOT NULL,progress TEXT NOT NULL,encrypted TEXT,output TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,read_at INTEGER,lease TEXT)";
+var schema2 = "CREATE TABLE IF NOT EXISTS personal_ai_tasks(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,kind TEXT NOT NULL,title TEXT NOT NULL,date TEXT NOT NULL,status TEXT NOT NULL,progress TEXT NOT NULL,encrypted TEXT,output TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,read_at INTEGER,lease TEXT)";
 var publicTask = (r) => ({ id: r.id, title: r.title, kind: r.kind, date: r.date, state: ["done", "partial"].includes(r.status) ? "complete" : ["failed", "interrupted"].includes(r.status) ? "interrupted" : r.status, progress: r.progress, updated_at: new Date(r.updated_at).toISOString(), read_at: r.read_at ? new Date(r.read_at).toISOString() : null, cloud_id: r.id, ...JSON.parse(r.output) });
 async function aiJobsRoute(req, env, { user, admin = false, reply, dispatch: dispatch2, readArticleURL: readArticleURL2 }) {
-  const path = new URL(req.url).pathname;
+  const url = new URL(req.url), path = url.pathname;
   if (!path.startsWith("/ai-jobs") && !path.startsWith("/admin/ai-jobs")) return null;
   const sql = (q, ...args) => env.DB.prepare(q).bind(...args);
-  await sql(schema).run();
+  await sql(schema2).run();
   await ensureD1Index(env.DB, "ai_user_updated", "CREATE INDEX IF NOT EXISTS personal_ai_user_updated ON personal_ai_tasks(user_id,updated_at DESC)");
   await ensureD1Index(env.DB, "ai_status_updated", "CREATE INDEX IF NOT EXISTS personal_ai_status_updated ON personal_ai_tasks(status,updated_at)");
   await ensureD1Index(env.DB, "ai_expires", "CREATE INDEX IF NOT EXISTS personal_ai_expires ON personal_ai_tasks(expires_at) WHERE encrypted IS NOT NULL");
@@ -302,7 +467,12 @@ async function aiJobsRoute(req, env, { user, admin = false, reply, dispatch: dis
     return reply({ error: "Not found" }, 404);
   }
   if (path === "/ai-jobs/capabilities") return reply({ enabled: !!env.COLLECTOR_SECRET && !!env.GITHUB_DISPATCH_TOKEN, providers: ["openai", "azure"] });
-  if (req.method === "GET") return reply({ tasks: (await sql("SELECT * FROM personal_ai_tasks WHERE user_id=? ORDER BY updated_at DESC LIMIT 100", user.id).all()).results.map(publicTask) });
+  if (req.method === "GET") {
+    const offset = Number(url.searchParams.get("offset") || 0);
+    if (!Number.isSafeInteger(offset) || offset < 0) return reply({ error: "Invalid offset" }, 400);
+    const rows = (await sql("SELECT * FROM personal_ai_tasks WHERE user_id=? ORDER BY updated_at DESC,id DESC LIMIT 100 OFFSET ?", user.id, offset).all()).results;
+    return reply({ owner_id: user.id, tasks: rows.map(publicTask), count: rows.length, has_more: rows.length === 100 });
+  }
   if (req.method === "DELETE") {
     await sql("DELETE FROM personal_ai_tasks WHERE id=? AND user_id=?", new URL(req.url).searchParams.get("id"), user.id).run();
     return reply({ ok: true });
@@ -371,51 +541,6 @@ async function summaryCacheRoute(req, { sql, reply, user, randomToken: randomTok
   const row = await sql("UPDATE summary_cache SET answer=?,owner=NULL,lease=NULL,expires=? WHERE key=? AND owner=? AND lease=? AND expires>? RETURNING key", b.answer, now + 30 * 864e5, b.key, user.id, b.lease, now).first();
   return row ? reply({ ok: true }) : reply({ error: "Cache lease expired" }, 409);
 }
-
-// worker/ranking-refresh.js
-const rankingRefreshRoute = (() => {
-
-const schema='CREATE TABLE IF NOT EXISTS ranking_refresh(slot INTEGER PRIMARY KEY CHECK(slot=1),id TEXT NOT NULL,status TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,data_date TEXT,error TEXT)';
-const expiry=25*60_000;
-async function rankingRefreshRoute(req,{sql,reply,db,dispatch,env,admin=false,now=Date.now(),uuid=()=>crypto.randomUUID()}){
- const url=new URL(req.url),path=url.pathname;
- if(path!==(admin?'/admin/ranking-refresh':'/ranking-refresh'))return null;
- if(!['GET','POST'].includes(req.method)||admin&&req.method!=='POST')return reply({error:'Method not allowed'},405);
- await ensureD1Index(db,'ranking_refresh_schema',schema);
- if(admin){
-  const body=await req.json();
-  if(typeof body.id!=='string'||!['running','done','failed'].includes(body.status)||body.data_date!=null&&!/^\d{4}-\d{2}-\d{2}$/.test(body.data_date))return reply({error:'Invalid ranking update'},400);
-  await sql("UPDATE ranking_refresh SET status=?,updated_at=?,data_date=?,error=? WHERE slot=1 AND id=? AND status IN ('pending','running')",body.status,now,body.data_date||null,String(body.error||'').slice(0,500)||null,body.id).run();
-  return reply({ok:true});
- }
- let job=await sql('SELECT * FROM ranking_refresh WHERE slot=1').first();
- if(job&&['pending','running'].includes(job.status)&&job.created_at<=now-expiry){
-  await sql("UPDATE ranking_refresh SET status='failed',updated_at=?,error=? WHERE slot=1 AND id=? AND status IN ('pending','running')",now,'更新等待逾時，請重新按「立即更新成交值」。',job.id).run();
-  job={...job,status:'failed',error:'更新等待逾時，請重新按「立即更新成交值」。'};
- }
- if(req.method==='GET'){
-  const id=url.searchParams.get('id');
-  if(id&&job?.id!==id)return reply({error:'此更新任務已結束，請重新讀取排行榜。'},404);
-  return reply({job});
- }
- if(job&&['pending','running'].includes(job.status))return reply({job},202);
- const id=uuid();
- await sql("INSERT INTO ranking_refresh(slot,id,status,created_at,updated_at) VALUES(1,?,'pending',?,?) ON CONFLICT(slot) DO UPDATE SET id=excluded.id,status='pending',created_at=excluded.created_at,updated_at=excluded.updated_at,data_date=NULL,error=NULL WHERE ranking_refresh.status NOT IN ('pending','running') OR ranking_refresh.created_at<=?",id,now,now,now-expiry).run();
- job=await sql('SELECT * FROM ranking_refresh WHERE slot=1').first();
- if(job.id!==id)return reply({job},202);
- try{
-  await dispatch(env,'ranking.yml',{refresh_id:id});
-  return reply({job},202);
- }catch(error){
-  const message='成交值更新無法啟動，請稍後重試。';
-  console.error('Ranking dispatch failed:',error.message);
-  await sql("UPDATE ranking_refresh SET status='failed',updated_at=?,error=? WHERE slot=1 AND id=?",now,message,id).run();
-  return reply({error:message},502);
- }
-}
-
-return rankingRefreshRoute;
-})();
 
 // worker/index.js
 function dailyBars(result, code) {
@@ -545,13 +670,14 @@ function xmlText(value) {
     return n > 0 && n <= 1114111 ? String.fromCodePoint(n) : "";
   });
 }
-function parsePreview(xml, company, now = /* @__PURE__ */ new Date(), conflicts = []) {
+function parsePreview(xml, company, now = /* @__PURE__ */ new Date(), conflicts = [], rangeStart = null) {
   if (!/<channel[\s>]/.test(xml)) throw Error("Invalid news feed");
   const start = new Date(now);
   const day = start.getUTCDate();
   start.setUTCDate(1);
   start.setUTCMonth(start.getUTCMonth() - 1);
   start.setUTCDate(Math.min(day, new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0)).getUTCDate()));
+  if (rangeStart) start.setTime(rangeStart.getTime());
   const rows = /* @__PURE__ */ new Map();
   for (const match of xml.matchAll(/<item[\s>]([\s\S]*?)<\/item>/g)) {
     const tag = (name) => xmlText(match[1].match(new RegExp("<" + name + "(?:\\s[^>]*)?>([\\s\\S]*?)<\\/" + name + ">"))?.[1]);
@@ -748,7 +874,7 @@ async function verifyGoogle(token, clientID) {
 async function dispatch(env, workflow = "news.yml", inputs) {
   if (!env.GITHUB_DISPATCH_TOKEN) throw Error("Pages Production \u5C1A\u672A\u8A2D\u5B9A GITHUB_DISPATCH_TOKEN");
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(env.GITHUB_REPO || "")) throw Error("GITHUB_REPO \u683C\u5F0F\u932F\u8AA4\uFF0C\u61C9\u70BA UgiYo/stock-news-calendar");
-  const r = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${workflow}/dispatches`, { method: "POST", headers: { Authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`, "User-Agent": "stock-news-calendar", "Accept": "application/vnd.github+json", "Content-Type": "application/json" }, body: JSON.stringify({ ref: "main", ...(inputs ? { inputs } : workflow === "news.yml" ? { inputs: { mode: "queued" } } : {}) }), signal: AbortSignal.timeout(1e4) });
+  const r = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${workflow}/dispatches`, { method: "POST", headers: { Authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`, "User-Agent": "stock-news-calendar", "Accept": "application/vnd.github+json", "Content-Type": "application/json" }, body: JSON.stringify({ ref: "main", ...inputs ? { inputs } : workflow === "news.yml" ? { inputs: { mode: "queued" } } : {} }), signal: AbortSignal.timeout(1e4) });
   if (!r.ok) {
     const reason = { 401: "token \u7121\u6548\u6216\u5DF2\u904E\u671F", 403: "token \u6B0A\u9650\u4E0D\u8DB3\uFF0C\u9700 Actions: Read and write\uFF1B\u6216 GitHub \u5B58\u53D6\u9650\u5236", 404: "repo\u3001news.yml \u4E0D\u5B58\u5728\uFF0C\u6216 token \u672A\u7372\u6388\u6B0A\u5B58\u53D6\u6B64 repo", 422: "workflow \u7684 main \u5206\u652F\u6216 workflow_dispatch \u8A2D\u5B9A\u4E0D\u7B26" };
     throw Error("GitHub HTTP " + r.status + "\uFF1A" + (reason[r.status] || "\u555F\u52D5\u8ACB\u6C42\u5931\u6557"));
@@ -844,8 +970,8 @@ var index_default = { async fetch(req, env) {
     if (path.startsWith("/admin/")) {
       const provided = req.headers.get("Authorization") || "";
       if (!env.COLLECTOR_SECRET || await hash(provided) !== await hash("Bearer " + env.COLLECTOR_SECRET)) return reply({ error: "Forbidden" }, 403);
-      const rankingUpdate = await rankingRefreshRoute(req, {sql,reply,db:env.DB,dispatch,env,admin:true});
-      if(rankingUpdate) return rankingUpdate;
+      const rankingUpdate2 = await rankingRefreshRoute(req, { sql, reply, db: env.DB, dispatch, env, admin: true });
+      if (rankingUpdate2) return rankingUpdate2;
       const podcasts2 = await sharedPodcastsRoute(req, { sql, reply, admin: true, hash });
       if (podcasts2) return podcasts2;
       const personal2 = await aiJobsRoute(req, env, { admin: true, reply, dispatch, readArticleURL });
@@ -1041,8 +1167,12 @@ var index_default = { async fetch(req, env) {
     if (!token) return reply({ error: "\u8ACB\u5148\u767B\u5165" }, 401);
     const user = await sql("SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?", await hash(token), Date.now()).first();
     if (!user) return reply({ error: "\u767B\u5165\u5DF2\u904E\u671F\uFF0C\u8ACB\u91CD\u65B0\u767B\u5165" }, 401);
-    const rankingUpdate = await rankingRefreshRoute(req, {sql,reply,db:env.DB,dispatch,env});
-    if(rankingUpdate) return rankingUpdate;
+    const rankingUpdate = await rankingRefreshRoute(req, { sql, reply, db: env.DB, dispatch, env });
+    if (rankingUpdate) return rankingUpdate;
+    const eventCache = await stockEventCacheRoute(req, { sql, reply, user, randomToken });
+    if (eventCache) return eventCache;
+    const stockEvents = await stockEventsRoute(req, { sql, reply, user, parsePreview, curateNews, companyMention });
+    if (stockEvents) return stockEvents;
     const accountResults = await accountResultsRoute(req, { sql, reply, user, db: env.DB });
     if (accountResults) return accountResults;
     const podcasts = await sharedPodcastsRoute(req, { sql, reply, user, hash });
@@ -1230,7 +1360,7 @@ var index_default = { async fetch(req, env) {
     const personal = await aiJobsRoute(req, env, { user, reply, dispatch, readArticleURL });
     if (personal) return personal;
     if (path === "/summary-cache") return summaryCacheRoute(req, { sql, reply, user, randomToken, db: env.DB });
-    if (path === "/me") return reply({ user });
+    if (path === "/me") return reply({ user: { id: user.id, email: String(user.email || "").trim() } });
     if (path === "/logout" && req.method === "POST") {
       await sql("DELETE FROM sessions WHERE token_hash=?", await hash(token)).run();
       return reply({ ok: true });
@@ -1341,4 +1471,3 @@ export {
   trustedSource,
   verifyGoogle
 };
-
