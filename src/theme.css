@@ -1,0 +1,32 @@
+/* Light theme retains each component's original colour fallback. */
+:root{color-scheme:light}
+:root[data-theme="dark"]{
+ color-scheme:dark;
+ --theme-page:#0c1520;--theme-surface:#152230;--theme-surface-muted:#1b2c3b;--theme-surface-raised:#273b4c;
+ --theme-text:#e7eff6;--theme-text-secondary:#b0c2d1;--theme-border:#395062;--theme-border-strong:#62798a;
+ --theme-accent:#65d8d1;--theme-accent-surface:#153e43;
+ --theme-info:#91bfff;--theme-info-surface:#203952;
+ --theme-warm:#ffc785;--theme-warm-surface:#46331e;
+ --theme-success:#74dfae;--theme-success-surface:#163c32;
+ --theme-danger:#ffada8;--theme-danger-surface:#462c31;
+ --theme-purple:#d5b3ff;--theme-purple-surface:#362d4b;
+ --theme-price-up:#ff8585;--theme-price-down:#69d69c;
+ --theme-ma-1:#ffc36b;--theme-ma-2:#8ab1ff;--theme-ma-3:#d5a7fa;--theme-ma-4:#65d8d1;--theme-ma-5:#ff9dd3;--theme-ma-6:#ccd78a;
+}
+input,textarea,select{background:var(--theme-surface,#fff);color:var(--theme-text,#163047);border-color:var(--theme-border,#c7d5e0);accent-color:#0e777e}
+input::placeholder,textarea::placeholder{color:var(--theme-text-secondary,#647b8b);opacity:1}
+:root[data-theme="dark"] header{background:#101f2f}
+:root[data-theme="dark"] a{color:var(--theme-accent)}
+:root[data-theme="dark"] .summary-dialog svg text{fill:var(--theme-text-secondary)}
+:root[data-theme="dark"] .summary-dialog svg text[fill]{fill:var(--theme-text)}
+:root[data-theme="dark"] .turnover-scatter .scatter-bubble text{fill:#fff}
+:root[data-theme="dark"] .turnover-scatter .scatter-bubble circle{stroke:var(--theme-surface)}
+:root[data-theme="dark"] .day.today .daynum{background:#305366}
+:root[data-theme="dark"] .account-switch-track:after{background:#fff}
+.theme-toggle{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;white-space:nowrap;flex-shrink:0}
+.theme-toggle [data-theme-icon]{font-size:1.25rem;line-height:1}
+.visually-hidden{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+@media(max-width:600px){.theme-toggle{padding:8px 10px}.theme-toggle [data-theme-label]{font-size:.875rem}}
+:root[data-theme="dark"] .flow-controls{background:var(--theme-surface-muted)}
+:root[data-theme="dark"] input[type="checkbox"],:root[data-theme="dark"] input[type="range"]{accent-color:#65d8d1}
+@media(max-width:850px){.account{flex-wrap:wrap}}
