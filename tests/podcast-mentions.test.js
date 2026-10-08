@@ -27,3 +27,11 @@ test('merge mention matches from duplicate saved copies so every tracked stock m
   assert.deepEqual(selected[0].stocks.map(c=>c.code),[code]);
  }
 });
+
+test('merge generated summary copies without episode metadata by title and date',()=>{
+ const first={...record,id:'local:copy',text:'台積電討論先進封裝',answer:'台積電討論先進封裝'};
+ const second={...record,id:'cloud:copy',text:'欣興討論 ABF 載板',answer:'欣興討論 ABF 載板',updated_at:'2026-10-09'};
+ const entry=podcastMentionIndex([first,second],companies).get(record.date);
+ assert.equal(entry.length,1);
+ assert.deepEqual(entry[0].stocks.map(c=>c.code).sort(),['2330','3037']);
+});
