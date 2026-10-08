@@ -42,11 +42,24 @@ export function podcastMentions(record,companies=watchlist){
  if(record.id){if(cache.size>=100)cache.clear();cache.set(key,{answer:record.answer,text:record.text,state:record.state,signature,mentions});}return mentions;
 }
 export function podcastMentionIndex(records,companies=watchlist,selected=''){
- const dates=new Map(),seen=new Set();for(const record of [...records].sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at)))){
-  const date=record.date||record.episode?.date;if(!/^\d{4}-\d{2}-\d{2}$/.test(date||''))continue;
+ const dates=new Map(),episodes=new Map();
+ for(const record of [...records].sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at)))){
+  const date=record.date||record.episode?.date;if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(date||''))continue;
   const stocks=podcastMentions(record,companies).filter(c=>!selected||c.code===selected);if(!stocks.length)continue;
-  const key=date+':'+record.title;if(seen.has(key))continue;seen.add(key);if(!dates.has(date))dates.set(date,[]);dates.get(date).push({record,stocks});
- }return dates;
+  const episodeId=record.episode?.id||String(record.id||'').replace(/^podcast:/,'');
+  const key=date+':'+(episodeId||normalize(record.title));
+  let entry=episodes.get(key);
+  if(!entry){entry={record,stocks:[]};episodes.set(key,entry);if(!dates.has(date))dates.set(date,[]);dates.get(date).push(entry);}
+  for(const stock of stocks){
+   const existing=entry.stocks.find(item=>item.code===stock.code);
+   if(!existing)entry.stocks.push({...stock,sourceRecord:record});
+   else{
+    existing.passages=[...new Set([...existing.passages,...stock.passages])];
+    existing.evidence=[...new Map([...existing.evidence,...stock.evidence].map(item=>[item.time+'|'+item.text,item])).values()];
+   }
+  }
+ }
+ return dates;
 }
 export function decoratePodcastSummary(body,record,focusCode=''){
  const stocks=podcastMentions({...record,kind:'podcast',state:'complete'});if(!stocks.length)return;
