@@ -12,3 +12,26 @@ test('transcript preliminary matches become AI aligned when a completed answer a
 
 test('multiple watchstocks keep independent paragraphs and evidence even in one episode',()=>{const row={...record,text:'[2～4 分鐘]\n台積電先進封裝。\n[8～10 分鐘]\n欣興載板需求。',answer:'## 台積電\n台積電與欣興分別談封裝與載板。\n欣興需求觀察。'};const stocks=podcastMentions(row,[...companies,{code:'2454',name:'聯發科'},{code:'2317',name:'鴻海'}]);assert.deepEqual(stocks.map(c=>c.code),['2330','3037']);assert.equal(stocks[0].evidence[0].time,'[2～4 分鐘]');assert.equal(stocks[1].evidence[0].time,'[8～10 分鐘]');assert.ok(stocks[0].passages.includes('台積電'));assert.ok(stocks[1].passages.includes('欣興需求觀察。'));});
 test('a mention late in a long transcript line remains visible in its own source excerpt',()=>{const row={...record,text:'市場背景。'.repeat(200)+'欣興需求回溫',answer:''};const stocks=podcastMentions(row,companies);assert.match(stocks[0].evidence[0].text,/欣興/);assert.ok(stocks[0].evidence[0].text.length<=502);});
+
+test('merge mention matches from duplicate saved copies so every tracked stock marks the episode',()=>{
+ const episode={id:'soundon:episode-1',date:record.date,title:record.title};
+ const first={...record,id:'podcast:copy-1',episode,text:'[1 分鐘]\n台積電討論先進封裝。',answer:'## 本集總結\n台積電討論先進封裝。'};
+ const second={...record,id:'podcast:copy-2',episode,text:'[2 分鐘]\n欣興討論 ABF 載板。',answer:'## 本集總結\n欣興討論 ABF 載板。'};
+ const all=podcastMentionIndex([first,second],companies).get(record.date);
+ assert.equal(all.length,1);
+ assert.deepEqual(all[0].stocks.map(c=>c.code).sort(),['2330','3037']);
+ assert.equal(all[0].stocks.find(c=>c.code==='2330').sourceRecord.id,first.id);
+ assert.equal(all[0].stocks.find(c=>c.code==='3037').sourceRecord.id,second.id);
+ for(const code of ['2330','3037']){
+  const selected=podcastMentionIndex([first,second],companies,code).get(record.date);
+  assert.deepEqual(selected[0].stocks.map(c=>c.code),[code]);
+ }
+});
+
+test('merge generated summary copies without episode metadata by title and date',()=>{
+ const first={...record,id:'local:copy',text:'台積電討論先進封裝',answer:'台積電討論先進封裝'};
+ const second={...record,id:'cloud:copy',text:'欣興討論 ABF 載板',answer:'欣興討論 ABF 載板',updated_at:'2026-10-09'};
+ const entry=podcastMentionIndex([first,second],companies).get(record.date);
+ assert.equal(entry.length,1);
+ assert.deepEqual(entry[0].stocks.map(c=>c.code).sort(),['2330','3037']);
+});

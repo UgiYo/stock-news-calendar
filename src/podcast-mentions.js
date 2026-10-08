@@ -7,7 +7,7 @@ function aliases(c){return [...new Set([c.name,c.full_name].filter(s=>s&&s.lengt
 function contains(text,c){
  let value=normalize(text);for(const other of [...(c.conflicting_names||[]),...(c.code==='2303'?['台聯電']:[])])value=value.split(normalize(other)).join(' ');
  if(aliases(c).some(n=>value.includes(n)&&(!['世界','中華','大同','大成','中興'].includes(n)||new RegExp(c.code).test(value))))return true;
- return new RegExp('(?:股號|代號|股票|ticker)[：:\\s]*'+c.code+'(?!\\d)','i').test(value)||new RegExp('(?<!\\d)'+c.code+'\\s*(?:股票|個股|股價|公司)').test(value);
+ return new RegExp('(?:股號|代號|股票|ticker)[：:\\s]*'+c.code+'(?!\d)','i').test(value)||new RegExp('(?<!\d)'+c.code+'\\s*(?:股票|個股|股價|公司)').test(value);
 }
 export function summaryPassages(answer){
  let excluded=false,inCode=false;const rows=[];
@@ -42,11 +42,23 @@ export function podcastMentions(record,companies=watchlist){
  if(record.id){if(cache.size>=100)cache.clear();cache.set(key,{answer:record.answer,text:record.text,state:record.state,signature,mentions});}return mentions;
 }
 export function podcastMentionIndex(records,companies=watchlist,selected=''){
- const dates=new Map(),seen=new Set();for(const record of [...records].sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at)))){
+ const dates=new Map(),episodes=new Map();
+ for(const record of [...records].sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at)))){
   const date=record.date||record.episode?.date;if(!/^\d{4}-\d{2}-\d{2}$/.test(date||''))continue;
   const stocks=podcastMentions(record,companies).filter(c=>!selected||c.code===selected);if(!stocks.length)continue;
-  const key=date+':'+record.title;if(seen.has(key))continue;seen.add(key);if(!dates.has(date))dates.set(date,[]);dates.get(date).push({record,stocks});
- }return dates;
+  const key=date+':'+(record.episode?.id||normalize(record.title)||record.id);
+  let entry=episodes.get(key);
+  if(!entry){entry={record,stocks:[]};episodes.set(key,entry);if(!dates.has(date))dates.set(date,[]);dates.get(date).push(entry);}
+  for(const stock of stocks){
+   const existing=entry.stocks.find(item=>item.code===stock.code);
+   if(!existing)entry.stocks.push({...stock,sourceRecord:record});
+   else{
+    existing.passages=[...new Set([...existing.passages,...stock.passages])];
+    existing.evidence=[...new Map([...existing.evidence,...stock.evidence].map(item=>[item.time+'|'+item.text,item])).values()];
+   }
+  }
+ }
+ return dates;
 }
 export function decoratePodcastSummary(body,record,focusCode=''){
  const stocks=podcastMentions({...record,kind:'podcast',state:'complete'});if(!stocks.length)return;
