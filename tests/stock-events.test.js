@@ -48,3 +48,12 @@ test('event prompt separates evidence, old events, later reports and unknown cau
  const prompt=eventPrompt({code:'2330',name:'台積電'},{date:'2026-10-05'},[{news_date:'2026-09-01',title:'訂單',url:'https://www.cna.com.tw/story',source:'中央社'}],{complete:false});
  assert.match(prompt,/目前證據不足/);assert.match(prompt,/不可倒推/);assert.match(prompt,/僅標題/);assert.match(prompt,/\[1\]/);
 });
+
+test('capped event evidence retains oldest and newest full-text candidates', async()=>{
+ const {eventEvidence,eventFullTextCandidates}=await import('../shared/stock-movements.js');
+ const news=Array.from({length:130},(_,i)=>({url:'https://example.test/'+i}));
+ const evidence=eventEvidence(news);
+ assert.equal(evidence.length,100);
+ for(const row of eventFullTextCandidates(news))assert.ok(evidence.includes(row));
+ assert.equal(evidence[0],news[0]);assert.equal(evidence.at(-1),news.at(-1));
+});
