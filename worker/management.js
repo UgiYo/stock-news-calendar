@@ -29,6 +29,7 @@ export async function managementRoute(req,env,{sql,reply,randomToken,user}){
   const attempt=await sql('SELECT count,window_started FROM admin_login_attempts WHERE ip_hash=?',ipHash).first();
   if(attempt&&now-attempt.window_started<15*60_000&&attempt.count>=8)return reply({error:'登入嘗試過多，請 15 分鐘後重試'},429);
   const body=await req.json().catch(()=>({})),username=String(body.username||''),password=String(body.password||'');
+  if(username.length>128||password.length>256)return reply({error:'帳號或密碼錯誤'},401);
   const valid=constantEqual(await hash(username),await hash(env.ADMIN_USERNAME))&&constantEqual(await hash(password),await hash(env.ADMIN_PASSWORD));
   if(!valid){
    if(attempt&&now-attempt.window_started<15*60_000)await sql('UPDATE admin_login_attempts SET count=count+1 WHERE ip_hash=?',ipHash).run();
