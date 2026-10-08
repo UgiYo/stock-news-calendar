@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+import {countPodcastDayEntries} from '../shared/podcast-day.js';
 
 const source=readFileSync(new URL('../src/main.js',import.meta.url),'utf8');
 const fn=source.slice(source.indexOf('function dayWindow('),source.indexOf('\nconst esc='));
 
-function renderDay({tab='news',rows=[{company_code:'2330',title:'台積電新聞',published_at:'2026-10-07T03:00:00Z',url:'https://example.com'}]}={}){
+function renderDay({tab='news',rows=[{company_code:'2330',title:'台積電新聞',published_at:'2026-10-07T03:00:00Z',url:'https://example.com'}],mentions=[]}={}){
  const state={date:'2026-10-07',selected:'',dayTab:tab,companies:[{code:'2330',name:'台積電'},{code:'2317',name:'鴻海'}]};
- const ctx=vm.createContext({state,movementCache:new Map([['ctx',{movements:[
+ const ctx=vm.createContext({state,podcastMentionDates:new Map([['2026-10-07',mentions]]),countPodcastDayEntries,movementCache:new Map([['ctx',{movements:[
   {code:'2330',triggered:true,date:'2026-10-07'},
   {code:'2317',triggered:true,date:'2026-10-07'},
   {code:'2327',triggered:true,date:'2026-10-07'},
@@ -35,4 +36,10 @@ test('day movement details start collapsed and include only stocks with same-day
  assert.match(html,/<details class="day-movements"><summary>⚡ 當日個股異動（1）/);
  assert.match(html,/2330 · \+8%/);
  assert.doesNotMatch(html,/2317 · \+8%|2327 · \+8%/);
+});
+
+test('date popup counts a saved Podcast mention even when its RSS episode is missing',()=>{
+ const html=renderDay({tab:'podcast',rows:[],mentions:[{record:{id:'podcast:ep-1',date:'2026-10-07',title:'已整理的 Podcast'}}]});
+ assert.match(html,/0 則新聞 · 1 集 Podcast/);
+ assert.doesNotMatch(html,/當日沒有已匯入的 Podcast/);
 });
