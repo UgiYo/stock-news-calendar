@@ -333,3 +333,15 @@ AI 按使用者操作才執行，沿用現有 OpenAI／Azure／LiteLLM／Python 
 新功能不使用既有 `/summary-cache` 共用摘要。`POST /stock-event-cache` 的主鍵是伺服器驗證的 `(user_id,key)`；同帳號相同輸入跨裝置鎖定生成工作，其他帳號無法讀寫，模型與來源變更會形成不同鍵。完成結果沿用個人AI成果中心與帳號同步；刪除成果也刪除該帳號對應快取。公司LiteLLM模式不將本功能的分析結果送往雲端快取或帳號同步。API Key不進入快取、後端、同步成果或生成鍵。
 
 部署沿用既有GitHub Pages與Cloudflare Pages Git整合，包含更新 `worker/index.js`、新增模組與 `worker/worker-bundle.js`；資料表首次使用時自動建立，無需新Secret。測試包含正負報酬、交易日缺漏、45日搜尋、未來新聞排除及SQLite帳號隔離／並發鎖驗證。
+
+
+## 管理者後台
+
+網站登入區新增「管理者登入」入口，使用獨立帳號，不需 Google OAuth。第一次部署前，請在 Cloudflare Worker 的 Secrets 設定：
+
+- `ADMIN_USERNAME`：管理者帳號
+- `ADMIN_PASSWORD`：管理者密碼（僅存為 Worker Secret）
+
+可在 Cloudflare Dashboard 的 Worker → Settings → Variables and Secrets 設定，或用 Wrangler 分別執行 `npx wrangler secret put ADMIN_USERNAME` 與 `npx wrangler secret put ADMIN_PASSWORD`。請勿把帳密放在 `wrangler.toml`、GitHub Pages 或 Git。未設定帳密時，管理者登入會拒絕服務。
+
+管理後台提供功能樹狀開關、帳號功能覆寫、登入紀錄及黑名單。封鎖帳號時會立即刪除其既有 Google session；解除封鎖後需重新使用 Google 登入。新功能資料表在首次呼叫時由 Worker 惰性建立。
