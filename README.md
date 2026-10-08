@@ -344,4 +344,4 @@ AI 按使用者操作才執行，沿用現有 OpenAI／Azure／LiteLLM／Python 
 
 可在 Cloudflare Dashboard 的 Worker → Settings → Variables and Secrets 設定，或用 Wrangler 分別執行 `npx wrangler secret put ADMIN_USERNAME` 與 `npx wrangler secret put ADMIN_PASSWORD`。請勿把帳密放在 `wrangler.toml`、GitHub Pages 或 Git。未設定帳密時，管理者登入會拒絕服務。
 
-管理後台提供功能樹狀開關、帳號功能覆寫、登入紀錄及黑名單。封鎖帳號時會立即刪除其既有 Google session；解除封鎖後需重新使用 Google 登入。新功能資料表在首次呼叫時由 Worker 惰性建立。
+管理後台提供功能樹狀開關、帳號功能覆寫、登入紀錄及黑名單。封鎖帳號時會立即刪除其既有 Google session；解除封鎖後需重新使用 Google 登入。新功能資料表在首次呼叫時由 Worker 惰性建立。設定 Secret 後，從專案根目錄執行 `npx wrangler deploy --config worker/wrangler.toml` 部署 Worker；Wrangler 會一併打包新增的管理模組。若改用手動貼上單檔 Worker，須先依上方 bundle 指令重新產生 `worker/worker-bundle.js`。
