@@ -282,7 +282,7 @@ export default {async fetch(req,env){
  if(path==='/summary-cache')return summaryCacheRoute(req,{sql,reply,user,randomToken,db:env.DB});
  if(path==='/me')return reply({user:{id:user.id,email:String(user.email||'').trim()}});
  if(path==='/logout'&&req.method==='POST'){await sql('DELETE FROM sessions WHERE token_hash=?',await hash(token)).run();return reply({ok:true});}
- if(path==='/companies'){const q=(url.searchParams.get('q')||'').trim().slice(0,60);return reply({companies:(await sql("SELECT * FROM companies WHERE code=? OR instr(name,?)>0 OR instr(full_name,?)>0 ORDER BY code LIMIT 20",q,q,q).all()).results});}
+ if(path==='/companies'){const q=(url.searchParams.get('q')||'').trim().slice(0,60);if(!q)return reply({companies:[]});const companies=await sql("SELECT * FROM companies WHERE code=? OR instr(code,?)>0 OR instr(name,?)>0 OR instr(full_name,?)>0 ORDER BY CASE WHEN code=? THEN 0 WHEN code LIKE ? THEN 1 WHEN name=? THEN 2 WHEN name LIKE ? THEN 3 WHEN full_name LIKE ? THEN 4 ELSE 5 END,code LIMIT 20",q,q,q,q,q,q+'%',q,q+'%',q+'%').all();return reply({companies:companies.results});}
  if(path==='/preview'&&req.method==='GET'){
  const code=url.searchParams.get('code');if(!/^\d{4,6}$/.test(code||''))return reply({error:'股號格式錯誤'},400);
  const company=await sql('SELECT * FROM companies WHERE code=?',code).first();if(!company)return reply({error:'公司不存在'},404);
