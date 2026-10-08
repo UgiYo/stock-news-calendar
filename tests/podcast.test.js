@@ -1,4 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
+import {countPodcastDayEntries} from '../shared/podcast-day.js';
 import {podcastDay,normalizeEpisodes,validPodcastLink,episodeGuests,filterPodcastEpisodes,podcastChannelLink,fetchPodcastEpisodes,parsePodcastRSS,importPodcastRSS,podcastChannels} from '../src/podcasts.js';
 import {transcriptionRequest,monoWav,transcribePodcast,summarizePodcast,generatePodcastHighlights,transcriptSegments,missingAudioRanges} from '../src/podcast-ai.js';
 const config={provider:'openai',endpoint:'https://api.openai.com/v1',model:'gpt-4.1-mini',key:'device-only',transport:'direct'};
@@ -131,4 +132,11 @@ test('non-retryable speech permission errors stop immediately after retaining su
 test('speech rate limiting honors Retry-After before one bounded retry',async()=>{
  let calls=0;const progress=[];const result=await transcribePodcast(config,new Blob(['audio']),'whisper-1',{onProgress:s=>progress.push(s),fetcher:async()=>++calls===1?{ok:false,status:429,headers:{get:()=> '0'},json:async()=>({error:{code:'rate_limit_exceeded'}})}:{ok:true,json:async()=>({text:'recovered'})}});
  assert.equal(calls,2);assert.equal(result.text,'recovered');assert.ok(progress.some(s=>s.includes('0 秒後')));
+});
+
+test('day Podcast count includes saved summaries without double-counting imported episodes',()=>{
+ const episodes=[{id:'ep-1199',date:'2026-10-08',title:'EP1199｜台積電'}];
+ const mentions=[{record:{id:'podcast:ep-1199',date:'2026-10-08',title:'EP1199｜台積電'}},{record:{id:'podcast:ep-1200',date:'2026-10-08',title:'EP1200｜封關'}}];
+ assert.equal(countPodcastDayEntries('2026-10-08',episodes,mentions),2);
+ assert.equal(countPodcastDayEntries('2026-10-09',episodes,mentions),0);
 });
