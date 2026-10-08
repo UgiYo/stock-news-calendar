@@ -140,3 +140,5 @@ html{scrollbar-gutter:stable}body.modal-open{overflow:hidden}button,input,select
 /* Keep the signed-in account readable on narrow screens. */
 .personal-account>span{display:block}.personal-account>span:first-child{min-width:0;overflow-wrap:anywhere;text-align:left}.personal-account>.account-chevron{flex:0 0 auto;font-size:19px}
 @media(max-width:850px){.account>.personal-account{order:-1;flex:1 0 100%;width:100%;justify-content:space-between}.personal-account>span:first-child{flex:1;white-space:normal}}
+
+@media(max-width:850px){.podcast-daily{background:#fff;border:1px solid #dce4ec;border-radius:12px;padding:16px}.podcast-daily>.podcast-filter{margin:16px 0}.podcast-filter>.podcast-controls{margin-top:16px;padding-top:16px;border-top:1px solid #dce4ec}.podcast-filter>.podcast-controls h3{margin:0 0 12px}.podcast-filter #jump-podcast-filter,.podcast-filter #open-podcast-queue-sidebar{display:none}.podcast-filter>.podcast-controls>button{margin:4px 4px 4px 0}.podcast-filter .ai-check{display:flex;align-items:center;gap:8px}.podcast-filter .ai-check input{width:20px;height:20px;flex:0 0 auto}}
