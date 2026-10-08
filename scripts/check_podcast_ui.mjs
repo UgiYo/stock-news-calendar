@@ -1,7 +1,7 @@
 import {chromium} from 'playwright';
 const browser=await chromium.launch({headless:true});
 try{
- const page=await browser.newPage({viewport:{width:412,height:915}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const page=await browser.newPage({viewport:{width:412,height:915}}),errors=[];page.on('pageerror',e=>{errors.push(e.message);console.error('Browser page error:',e.message);});
  await page.clock.install({time:new Date('2026-10-03T00:00:00Z')});
  let downloads=0,transcriptions=0,summaries=0,releaseSummary;const summaryGate=new Promise(resolve=>releaseSummary=resolve);
  await page.addInitScript(()=>localStorage.setItem('stock-news-local-ai-v1',JSON.stringify({provider:'openai',endpoint:'https://api.openai.com/v1',model:'gpt-4.1-mini',key:'isolated-test-key',transport:'direct'})));
