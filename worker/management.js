@@ -20,7 +20,7 @@ const FEATURE_TREE=[
 const ALL_KEYS=FEATURE_TREE.flatMap(x=>[x.key,...x.children.map(y=>y.key)]);
 const json=(data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
 const tokenOf=req=>(req.headers.get('Authorization')||'').replace(/^Bearer /,'').trim();
-export async function managementRoute(req,env,{sql,reply,randomToken}){
+export async function managementRoute(req,env,{sql,reply,randomToken,user}){
  const {pathname:path}=new URL(req.url);
  if(path==='/admin/login'&&req.method==='POST'){
   if(!env.ADMIN_USERNAME||!env.ADMIN_PASSWORD)return reply({error:'管理者帳密尚未設定，請在 Worker Secrets 設定 ADMIN_USERNAME 與 ADMIN_PASSWORD'},503);
@@ -44,7 +44,7 @@ export async function managementRoute(req,env,{sql,reply,randomToken}){
   const token=tokenOf(req);if(token)await sql('DELETE FROM admin_sessions WHERE token_hash=?',await hash(token)).run();return reply({ok:true});
  }
  if(path==='/features'&&req.method==='GET'){
-  const user=arguments[2]?.user;if(!user)return reply({error:'請先登入'},401);
+  if(!user)return reply({error:'請先登入'},401);
   await ensureTables(sql);
   const flags=await sql('SELECT feature_key,enabled FROM feature_flags').all();
   const overrides=await sql('SELECT feature_key,enabled FROM user_feature_overrides WHERE user_id=?',user.id).all();
