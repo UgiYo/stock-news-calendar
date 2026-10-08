@@ -23,7 +23,7 @@ const tokenOf=req=>(req.headers.get('Authorization')||'').replace(/^Bearer /,'')
 export async function managementRoute(req,env,{sql,reply,randomToken,user}){
  const {pathname:path}=new URL(req.url);
  if(path==='/admin/login'&&req.method==='POST'){
-  if(!env.ADMIN_USERNAME||!env.ADMIN_PASSWORD)return reply({error:'管理者帳密尚未設定，請在 Worker Secrets 設定 ADMIN_USERNAME 與 ADMIN_PASSWORD'},503);
+  if(!env.ADMIN_USERNAME||!env.ADMIN_PASSWORD)return reply({error:'管理者帳密尚未設定，請在 Cloudflare Production Secrets 設定 ADMIN_USERNAME 與 ADMIN_PASSWORD'},503);
   await sql('CREATE TABLE IF NOT EXISTS admin_login_attempts (ip_hash TEXT PRIMARY KEY, count INTEGER NOT NULL, window_started INTEGER NOT NULL)').run();
   const ip=(req.headers.get('CF-Connecting-IP')||'unknown').slice(0,80),ipHash=await hash(ip),now=Date.now();
   const attempt=await sql('SELECT count,window_started FROM admin_login_attempts WHERE ip_hash=?',ipHash).first();
