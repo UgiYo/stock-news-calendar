@@ -48,6 +48,7 @@ export function openStockEvent({code,date=completedDay(),company={code,name:''},
    const key=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(fingerprint))),x=>x.toString(16).padStart(2,'0')).join(''),id='stock-event:'+key,meta={id,title:`${code} ${data.company.name} · ${data.movement.date} 異動追查（${view.lookback}天）`,kind:'text',date:data.movement.date,local_only:companyMode(config)};
    const saved=resultRecords(owner).find(r=>r.id===id&&r.state==='complete'&&r.answer);
    if(saved){view.answer=saved.answer;status('使用此帳號已保存結果，未呼叫 AI。');return;}
+   if(!sameAccount())throw Error('登入帳號已變更，停止建立分析工作');
    const output=await runResultJob(meta,async(signal,progress)=>{
     // Company gateways keep all generated content on the existing private path.
     const cloudCache=!companyMode(config),call=body=>api('/stock-event-cache',{body,sessionToken});let lease;
