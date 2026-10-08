@@ -13,7 +13,7 @@ export function movementSummary(m){return m?.windows?.map(w=>`${w.days} 日 ${pc
 export function movementPanel(m){return `<div class="movement-metrics">${(m?.windows||[]).map(w=>`<article><strong>${w.days} 日 ${pct(w.change)}</strong><p>${esc(w.from||'資料不足')}～${esc(w.to||'')} ${w.triggered?'· 符合異動門檻':''}</p><small>${w.reason?esc(w.reason):`相對加權指數 ${w.excess==null?'資料不足':w.excess.toFixed(2)+' 百分點'} · 量能 ${w.volumeRatio==null?'資料不足':w.volumeRatio.toFixed(2)+' 倍'}`}</small></article>`).join('')}</div><small>${esc(m?.priceWarning||'')}</small>${m?.adjustmentRisk?'<p class="notice">價格出現極大跳動，需先確認除權息、減資或分割，不能直接歸因新聞。</p>':''}`;}
 let active=null;
 export function closeStockEventOnOwnerChange(owner){if(active&&active.owner!==owner)active.close();}
-export function openStockEvent({code,date=completedDay(),company={code,name:''},owner=resultOwner(),onDate=()=>{}}){
+export function openStockEvent({code,date=completedDay(),company={code,name:''},owner=resultOwner(),onDate=()=>{},onMovement=()=>{}}){
  active?.close();if(owner==='guest')return;
  const focus=document.activeElement,wrap=document.createElement('div');wrap.className='modal-backdrop';
  wrap.innerHTML='<section id="stock-event-dialog" class="summary-dialog stock-event-dialog" role="dialog" aria-modal="true" aria-labelledby="stock-event-title"></section>';
@@ -36,7 +36,7 @@ export function openStockEvent({code,date=completedDay(),company={code,name:''},
  async function load(refresh=false){const version=++view.version;view.busy=true;view.data=null;view.answer='';view.message='讀取行情與回溯新聞…';draw();
   try{if(refresh)await api('/chart-prices?code='+code,{method:'POST'});
    const data=await api(`/stock-event-news?code=${code}&date=${view.date}&lookback=${view.lookback}`);
-   if(!current()||version!==view.version)return;if(data.owner_id!==owner)throw Error('登入身分已變更');view.data=data;view.company=data.company;view.message='新聞已整理，可檢視來源或生成事件分析。';
+   if(!current()||version!==view.version)return;if(data.owner_id!==owner)throw Error('登入身分已變更');view.data=data;view.company=data.company;onMovement(data.movement,view.date);view.message='新聞已整理，可檢視來源或生成事件分析。';
   }catch(e){if(current()&&version===view.version)view.message='讀取失敗：'+e.message;}
   finally{if(current()&&version===view.version){view.busy=false;draw();}}
  }

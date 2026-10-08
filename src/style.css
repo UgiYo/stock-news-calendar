@@ -150,3 +150,6 @@ html{scrollbar-gutter:stable}body.modal-open{overflow:hidden}button,input,select
 
 /* Podcast visibility and filters directly accompany calendar date markers. */
 .calendar>.podcast-controls{margin:0;padding:16px 20px;border-top:1px solid var(--theme-border,#dce4ec);border-bottom:1px solid var(--theme-border,#dce4ec);background:var(--theme-surface,#fff)}.calendar>.podcast-controls h3{margin:0 0 12px}.calendar>.podcast-controls>.podcast-filter{margin:16px 0 0;padding:16px 0 0;border:0;border-top:1px solid var(--theme-border,#dce4ec);border-radius:0}.calendar>.podcast-controls #jump-podcast-filter{display:none}.calendar>.podcast-controls .ai-check{display:flex;align-items:center;gap:8px}.calendar>.podcast-controls .ai-check input{flex:0 0 auto;width:20px;height:20px}.calendar>.podcast-controls button{max-width:100%;white-space:normal}@media(max-width:850px){.calendar>.podcast-controls{padding:16px 12px}}
+
+/* Give watchlist company information the full sidebar width. */
+.watchrow{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px;align-items:center}.watchrow>.watch{grid-column:1 / -1;margin-top:12px;min-width:0}.watchrow>[data-chart]{grid-column:2;justify-self:end}.watchrow>.remove{grid-column:3;justify-self:end;margin-left:0}.watchrow>.watch small{line-height:1.6}
