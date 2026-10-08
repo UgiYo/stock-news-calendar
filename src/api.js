@@ -10,7 +10,7 @@ export async function api(path,options={}){
 }
 export async function remoteAPI(path,options={}){
  if(!options.quotaProbe&&!['/podcasts/rss','/podcasts/transcript','/health'].some(p=>path.split('?')[0]===p))quotaGate.check();
- const token=localStorage.getItem(key);if(options.sessionToken!==undefined&&token!==options.sessionToken)throw Error('登入帳號已變更，已停止同步。');const response=await fetch(base+path,{method:options.method||(options.body?'POST':'GET'),headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:options.body?JSON.stringify(options.body):undefined,signal:AbortSignal.timeout((path==='/article-content'||path.startsWith('/stock-event-news'))?90000:30000)});
+ const token=localStorage.getItem(key);if(options.sessionToken!==undefined&&token!==options.sessionToken)throw Error('登入帳號已變更，已停止同步。');const response=await fetch(base+path,{method:options.method||(options.body?'POST':'GET'),headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:options.body?JSON.stringify(options.body):undefined,signal:AbortSignal.any([...(options.signal?[options.signal]:[]),AbortSignal.timeout((path==='/article-content'||path.startsWith('/stock-event-news'))?90000:30000)])});
  const data=await response.json();if(options.sessionToken!==undefined&&localStorage.getItem(key)!==options.sessionToken)throw Error('登入帳號已變更，已停止同步。');if(!response.ok){quotaGate.note(data);const error=Error(data.error||'後端服務無法使用');error.code=data.code;error.status=response.status;throw error;}if(options.quotaProbe)quotaGate.clear();return data;
 }
 export function login(){if(!base)throw Error('請先設定 Workers 網址');location.assign(base+'/auth/start');}
