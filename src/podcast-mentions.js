@@ -46,8 +46,7 @@ export function podcastMentionIndex(records,companies=watchlist,selected=''){
  for(const record of [...records].sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at)))){
   const date=record.date||record.episode?.date;if(!/^\d{4}-\d{2}-\d{2}$/.test(date||''))continue;
   const stocks=podcastMentions(record,companies).filter(c=>!selected||c.code===selected);if(!stocks.length)continue;
-  const episodeId=record.episode?.id||String(record.id||'').replace(/^podcast:/,'');
-  const key=date+':'+(episodeId||normalize(record.title));
+  const key=date+':'+(record.episode?.id||normalize(record.title)||record.id);
   let entry=episodes.get(key);
   if(!entry){entry={record,stocks:[]};episodes.set(key,entry);if(!dates.has(date))dates.set(date,[]);dates.get(date).push(entry);}
   for(const stock of stocks){
