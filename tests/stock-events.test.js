@@ -57,3 +57,32 @@ test('capped event evidence retains oldest and newest full-text candidates', asy
  for(const row of eventFullTextCandidates(news))assert.ok(evidence.includes(row));
  assert.equal(evidence[0],news[0]);assert.equal(evidence.at(-1),news.at(-1));
 });
+
+test('large watchlists load every code in bounded authenticated batches',async()=>{
+ const {loadMovementOverview}=await import('../shared/stock-movements.js');
+ const codes=Array.from({length:211},(_,i)=>String(1000+i)),sizes=[];
+ const result=await loadMovementOverview({codes,date:'2026-10-05',owner:'alice'},async path=>{
+  const batch=new URL('https://api.test'+path).searchParams.get('codes').split(',');sizes.push(batch.length);
+  return {owner_id:'alice',movements:batch.map(code=>({code}))};
+ });
+ assert.deepEqual(sizes,[90,90,31]);assert.deepEqual(result.movements.map(r=>r.code),codes);
+ await assert.rejects(()=>loadMovementOverview({codes,date:'2026-10-05',owner:'alice'},async()=>({owner_id:'bob',movements:[]})),/登入身分/);
+});
+test('movement routes support catalog codes and stay under D1 parameter limits',async()=>{
+ const requests=[],sql=(q,...args)=>{requests.push(args);return {all:async()=>({results:[]}),first:async()=>({code:args[0],name:'測試'})};};
+ const codes=[...Array.from({length:98},(_,i)=>String(1000+i)),'00500','123456'];
+ const overview=await stockEventsRoute(new Request('https://api.test/stock-movements?date=2026-10-05&codes='+codes.join(',')),{sql,reply,user:{id:'alice'}});
+ assert.equal(overview.status,200);assert.equal((await overview.json()).movements.length,100);assert.ok(requests.every(args=>args.length<100));
+ for(const code of ['00500','123456']){
+  const result=await stockEventsRoute(new Request('https://api.test/stock-event-news?date=2026-10-05&code='+code),{sql,reply,user:{id:'alice'}});
+  assert.equal(result.status,422); // Valid code, but no stored prices.
+ }
+});
+test('long event articles reserve real text for both oldest and newest evidence',async()=>{
+ const {eventEvidenceWithText,eventFullTextCandidates}=await import('../shared/stock-movements.js');
+ const news=Array.from({length:130},(_,i)=>({url:'https://example.test/'+i}));
+ const articles=eventFullTextCandidates(news).map(r=>({...r,text:'內容'.repeat(5000)}));
+ const evidence=eventEvidenceWithText(news,articles),selected=evidence.filter(r=>r.text);
+ assert.equal(selected.length,12);assert.ok(evidence.at(-1).text.startsWith('內容'));assert.ok(selected.every(r=>r.text.includes('內文節錄')));
+ assert.ok(selected.reduce((sum,r)=>sum+r.text.split('\n')[0].length,0)<=44000);
+});

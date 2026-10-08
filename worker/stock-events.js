@@ -5,14 +5,14 @@ export async function stockEventsRoute(req,{sql,reply,user,parsePreview,curateNe
  if(!['GET','POST'].includes(req.method))return reply({error:'Method not allowed'},405);
  const date=url.searchParams.get('date')||completedDay(),cutoff=completedDay();
  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||date>cutoff)return reply({error:'請選擇已收盤的日期'},400);
- const readPrices=async codes=>{try{return (await sql(`SELECT * FROM prices WHERE code IN (${[...codes,'TAIEX'].map(()=>'?').join(',')}) AND date BETWEEN ? AND ? ORDER BY date`,...codes,'TAIEX',shiftDay(date,-180),date).all()).results;}catch(e){if(String(e.message).includes('no such table'))return [];throw e;}};
+ const readPrices=async codes=>{try{const rows=[];for(let at=0;at<codes.length;at+=90){const batch=codes.slice(at,at+90);rows.push(...(await sql(`SELECT * FROM prices WHERE code IN (${[...batch,'TAIEX'].map(()=>'?').join(',')}) AND date BETWEEN ? AND ? ORDER BY date`,...batch,'TAIEX',shiftDay(date,-180),date).all()).results);}return rows;}catch(e){if(String(e.message).includes('no such table'))return [];throw e;}};
  if(url.pathname==='/stock-movements'){
   const codes=[...new Set((url.searchParams.get('codes')||'').split(',').filter(Boolean))];
-  if(!codes.length||codes.length>100||codes.some(c=>!/^\d{4}$/.test(c)))return reply({error:'Invalid stock codes'},400);
+  if(!codes.length||codes.length>100||codes.some(c=>!/^\d{4,6}$/.test(c)))return reply({error:'Invalid stock codes'},400);
   const prices=await readPrices(codes);return reply({owner_id:user.id,date,movements:codes.map(code=>detectMovement(prices,{code,date}))});
  }
  const code=url.searchParams.get('code'),lookback=Number(url.searchParams.get('lookback')||45);
- if(!/^\d{4}$/.test(code||'')||![30,45].includes(lookback))return reply({error:'Invalid event range'},400);
+ if(!/^\d{4,6}$/.test(code||'')||![30,45].includes(lookback))return reply({error:'Invalid event range'},400);
  const company=await sql('SELECT * FROM companies WHERE code=?',code).first();if(!company)return reply({error:'公司不存在'},404);
  const movement=detectMovement(await readPrices([code]),{code,date});if(!movement.from)return reply({error:'行情不足，請先在個股走勢更新日線'},422);
  const range=newsWindow(movement,lookback),saved=(await sql('SELECT * FROM news WHERE company_code=? AND news_date BETWEEN ? AND ? ORDER BY published_at',code,range.from,range.to).all()).results;

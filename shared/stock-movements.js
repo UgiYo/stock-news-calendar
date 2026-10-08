@@ -31,3 +31,20 @@ export function eventPrompt(company,movement,rows,coverage){
 // Keep chronological context at both ends when the evidence window is capped.
 export function eventEvidence(news,limit=100){return news.length<=limit?news:[...news.slice(0,Math.ceil(limit/2)),...news.slice(-Math.floor(limit/2))];}
 export function eventFullTextCandidates(news){return [...news.slice(0,6),...news.slice(-6)].filter((r,i,a)=>a.findIndex(x=>x.url===r.url)===i);}
+
+export async function loadMovementOverview({codes,date,owner},call){
+ const movements=[];
+ for(let at=0;at<codes.length;at+=90){
+  const data=await call('/stock-movements?date='+date+'&codes='+codes.slice(at,at+90).join(','));
+  if(data.owner_id!==owner)throw Error('登入身分不一致');
+  movements.push(...data.movements);
+ }
+ return {owner_id:owner,date,movements};
+}
+export function eventEvidenceWithText(news,articles){
+ const rows=eventEvidence(news),available=rows.filter(r=>articles.some(a=>a.url===r.url&&a.text));
+ const allowance=Math.min(6000,Math.floor(44000/Math.max(1,available.length)));
+ return rows.map(r=>{const article=articles.find(a=>a.url===r.url&&a.text);if(!article)return r;
+  const text=article.text.slice(0,allowance);return {...r,text:text+(text.length<article.text.length?'\n（內文節錄，未納入全文其餘部分）':'')};
+ });
+}

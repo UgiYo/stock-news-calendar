@@ -4,7 +4,7 @@ import {runResultJob,resultRecords,resultOwner,saveResult} from './ai-results.js
 import {syncAccountResults} from './result-sync.js';
 import {requireAISession} from './ai-auth.js';
 import {companyMode} from './ai-privacy.js';
-import {eventPrompt,completedDay,eventEvidence,eventFullTextCandidates} from '../shared/stock-movements.js';
+import {eventPrompt,completedDay,eventEvidence,eventFullTextCandidates,eventEvidenceWithText} from '../shared/stock-movements.js';
 import {showMarkdown} from './markdown-preview.js';
 import {safeURL} from './utils.js';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -44,7 +44,7 @@ export function openStockEvent({code,date=completedDay(),company={code,name:''},
   const data=view.data,config=currentAISettings(),sessionToken=localStorage.getItem('stock-news-session'),sameAccount=()=>resultOwner()===owner&&localStorage.getItem('stock-news-session')===sessionToken;
   try{const user=await requireAISession();if(user.id!==owner||!sameAccount())throw Error('登入帳號已變更');aiRequest(config,'驗證設定');
    status('檢查此帳號已保存分析…');await syncAccountResults();if(!sameAccount())throw Error('登入帳號已變更');
-   const fingerprint=JSON.stringify(['stock-event-v2',data.company.code,view.date,view.lookback,data.movement,config.provider,config.endpoint,config.model,data.coverage.failures,data.news.map(r=>[r.news_date,r.published_at,r.title,r.article_url||r.url,r.article_summary||''])]);
+   const fingerprint=JSON.stringify(['stock-event-v3',data.company.code,view.date,view.lookback,data.movement,config.provider,config.endpoint,config.model,data.coverage.failures,data.news.map(r=>[r.news_date,r.published_at,r.title,r.article_url||r.url,r.article_summary||''])]);
    const key=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(fingerprint))),x=>x.toString(16).padStart(2,'0')).join(''),id='stock-event:'+key,meta={id,title:`${code} ${data.company.name} · ${data.movement.date} 異動追查（${view.lookback}天）`,kind:'text',date:data.movement.date,local_only:companyMode(config)};
    const saved=resultRecords(owner).find(r=>r.id===id&&r.state==='complete'&&!r.partial&&r.answer);
    if(saved){view.answer=saved.answer;status('使用此帳號已保存結果，未呼叫 AI。');return;}
@@ -59,7 +59,7 @@ export function openStockEvent({code,date=completedDay(),company={code,name:''},
      try{({articles,failed}=await readFullNews(candidates,config,{signal,onProgress:update}));}
      catch(e){if(signal.aborted)throw e;failed=candidates.map(r=>({title:r.title,reason:e.message}));update('全文取得不足，將明示限制並使用已收錄標題／摘要');}
      if(!sameAccount())throw Error('登入帳號已變更，停止分析');
-     let budget=44000;const evidence=eventEvidence(data.news).map(r=>{const article=articles.find(a=>a.url===r.url);if(!article)return r;const text=article.text.slice(0,Math.min(6000,budget));budget-=text.length;return {...r,text:text+(text.length<article.text.length?'\n（內文節錄，未納入全文其餘部分）':'')};});
+     const evidence=eventEvidenceWithText(data.news,articles);
      const coverage={...data.coverage,fetchedAt:undefined,readableArticles:articles.length,failedArticles:failed.length,omittedArticles:Math.max(0,data.news.length-100),fullTextSelection:'選取最早與最近各6篇，其他保留標題／既有摘要；長文僅提供節錄'};
      update('AI 正在比對事件、新進展與異動時間…');const generated=await requestAI(config,eventPrompt(data.company,data.movement,evidence,coverage),{signal});
      const refs=[...generated.matchAll(/\[(\d+)\]/g)].map(m=>Number(m[1]));if(refs.some(n=>n<1||n>evidence.length))throw Error('AI 引用了不存在的來源編號，請重試');

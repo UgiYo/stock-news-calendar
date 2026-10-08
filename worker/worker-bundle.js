@@ -136,7 +136,12 @@ async function stockEventsRoute(req, { sql, reply, user, parsePreview: parsePrev
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || date > cutoff) return reply({ error: "\u8ACB\u9078\u64C7\u5DF2\u6536\u76E4\u7684\u65E5\u671F" }, 400);
   const readPrices = async (codes) => {
     try {
-      return (await sql(`SELECT * FROM prices WHERE code IN (${[...codes, "TAIEX"].map(() => "?").join(",")}) AND date BETWEEN ? AND ? ORDER BY date`, ...codes, "TAIEX", shiftDay(date, -180), date).all()).results;
+      const rows2 = [];
+      for (let at = 0; at < codes.length; at += 90) {
+        const batch = codes.slice(at, at + 90);
+        rows2.push(...(await sql(`SELECT * FROM prices WHERE code IN (${[...batch, "TAIEX"].map(() => "?").join(",")}) AND date BETWEEN ? AND ? ORDER BY date`, ...batch, "TAIEX", shiftDay(date, -180), date).all()).results);
+      }
+      return rows2;
     } catch (e) {
       if (String(e.message).includes("no such table")) return [];
       throw e;
@@ -144,12 +149,12 @@ async function stockEventsRoute(req, { sql, reply, user, parsePreview: parsePrev
   };
   if (url.pathname === "/stock-movements") {
     const codes = [...new Set((url.searchParams.get("codes") || "").split(",").filter(Boolean))];
-    if (!codes.length || codes.length > 100 || codes.some((c) => !/^\d{4}$/.test(c))) return reply({ error: "Invalid stock codes" }, 400);
+    if (!codes.length || codes.length > 100 || codes.some((c) => !/^\d{4,6}$/.test(c))) return reply({ error: "Invalid stock codes" }, 400);
     const prices = await readPrices(codes);
     return reply({ owner_id: user.id, date, movements: codes.map((code2) => detectMovement(prices, { code: code2, date })) });
   }
   const code = url.searchParams.get("code"), lookback = Number(url.searchParams.get("lookback") || 45);
-  if (!/^\d{4}$/.test(code || "") || ![30, 45].includes(lookback)) return reply({ error: "Invalid event range" }, 400);
+  if (!/^\d{4,6}$/.test(code || "") || ![30, 45].includes(lookback)) return reply({ error: "Invalid event range" }, 400);
   const company = await sql("SELECT * FROM companies WHERE code=?", code).first();
   if (!company) return reply({ error: "\u516C\u53F8\u4E0D\u5B58\u5728" }, 404);
   const movement = detectMovement(await readPrices([code]), { code, date });
