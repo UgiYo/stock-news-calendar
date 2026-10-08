@@ -1,5 +1,7 @@
 import {rankingRefreshRoute} from './ranking-refresh.js';
 import {ensureD1Index,d1QuotaError} from './d1-usage.js';
+import {stockEventCacheRoute} from './stock-event-cache.js';
+import {stockEventsRoute} from './stock-events.js';
 import {accountResultsRoute} from './account-results.js';
 import {sharedPodcastsRoute,publicPodcastTranscript} from './podcasts.js';
 import {aiJobsRoute} from './ai-jobs.js';
@@ -65,9 +67,10 @@ export function isGeneratedAnswer(value){try{const u=new URL(value);return ['new
 export function curateNews(rows){const rank={'中央社':0,'MoneyDJ':1,'鉅亨網':2};const candidates=rows.filter(n=>trustedSource(n.source)&&!isGeneratedAnswer(n.article_url||n.url)).map(n=>({...n,source:trustedSource(n.source)})).sort((a,b)=>Number(!!b.article_summary)-Number(!!a.article_summary)||rank[a.source]-rank[b.source]||String(b.published_at).localeCompare(String(a.published_at)));const kept=[];for(const n of candidates)if(!kept.some(k=>duplicateNews(k,n)))kept.push(n);return kept.sort((a,b)=>String(b.published_at).localeCompare(String(a.published_at)));}
 
 function xmlText(value){return String(value||'').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1').replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi,(_,entity)=>{const named={amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"};if(named[entity])return named[entity];const n=entity.startsWith('#x')?parseInt(entity.slice(2),16):Number(entity.slice(1));return n>0&&n<=0x10ffff?String.fromCodePoint(n):'';});}
-export function parsePreview(xml,company,now=new Date(),conflicts=[]){
+export function parsePreview(xml,company,now=new Date(),conflicts=[],rangeStart=null){
  if(!/<channel[\s>]/.test(xml))throw Error('Invalid news feed');
  const start=new Date(now);const day=start.getUTCDate();start.setUTCDate(1);start.setUTCMonth(start.getUTCMonth()-1);start.setUTCDate(Math.min(day,new Date(Date.UTC(start.getUTCFullYear(),start.getUTCMonth()+1,0)).getUTCDate()));
+ if(rangeStart)start.setTime(rangeStart.getTime());
  const rows=new Map();for(const match of xml.matchAll(/<item[\s>]([\s\S]*?)<\/item>/g)){
  const tag=name=>xmlText(match[1].match(new RegExp('<'+name+'(?:\\s[^>]*)?>([\\s\\S]*?)<\\/'+name+'>'))?.[1]);
  const title=tag('title'),link=tag('link'),published=new Date(tag('pubDate'));const sourceURL=xmlText(match[1].match(/<source\b[^>]*\burl=["']([^"']+)["']/)?.[1]);const source=sourceDomain(sourceURL);if(!source)continue;
@@ -219,6 +222,8 @@ export default {async fetch(req,env){
  const token=req.headers.get('Authorization')?.replace(/^Bearer /,'');if(!token)return reply({error:'請先登入'},401);
  const user=await sql('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?',await hash(token),Date.now()).first();if(!user)return reply({error:'登入已過期，請重新登入'},401);
  const rankingUpdate=await rankingRefreshRoute(req,{sql,reply,db:env.DB,dispatch,env});if(rankingUpdate)return rankingUpdate;
+ const eventCache=await stockEventCacheRoute(req,{sql,reply,user,randomToken});if(eventCache)return eventCache;
+ const stockEvents=await stockEventsRoute(req,{sql,reply,user,parsePreview,curateNews,companyMention});if(stockEvents)return stockEvents;
  const accountResults=await accountResultsRoute(req,{sql,reply,user,db:env.DB});if(accountResults)return accountResults;
  const podcasts=await sharedPodcastsRoute(req,{sql,reply,user,hash});if(podcasts)return podcasts;
  if(path==='/portfolio-quotes'){const codes=[...new Set((url.searchParams.get('codes')||'').split(',').filter(Boolean))];if(!codes.length)return reply({quotes:[]});if(codes.length>100||codes.some(c=>!/^\d{4,6}$/.test(c)))return reply({error:'Invalid codes'},400);try{return reply({quotes:(await sql(`SELECT p.code,p.date,p.close FROM prices p WHERE p.code IN (${codes.map(()=>'?').join(',')}) AND p.date=(SELECT MAX(q.date) FROM prices q WHERE q.code=p.code)`,...codes).all()).results});}catch(e){if(String(e.message).includes('no such table'))return reply({quotes:[]});throw e;}}
