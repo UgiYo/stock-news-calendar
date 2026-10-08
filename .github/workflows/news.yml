@@ -73,10 +73,6 @@ jobs:
         id: dependencies
         if: steps.guard.outputs.run_news == 'true'
         run: pip install -r scripts/requirements.txt
-      - name: Sync official company catalog
-        if: steps.guard.outputs.run_news == 'true' && env.RUN_MODE == 'daily'
-        continue-on-error: true
-        run: python scripts/sync_catalog.py
       # Prioritize news; background AI/audio preparation must not block daily collection.
       - name: Collect news and process queued summaries
         if: steps.guard.outputs.run_news == 'true'
@@ -108,6 +104,10 @@ jobs:
         run: pip install -r scripts/requirements.txt
       - name: Update shared daily stock prices
         run: python scripts/market_prices.py
+      - name: Sync official company catalog
+        if: always() && steps.dependencies.outcome == 'success' && env.RUN_MODE == 'daily'
+        continue-on-error: true
+        run: python scripts/sync_catalog.py
       - name: Ensure audio tools for background transcription
         if: always() && steps.dependencies.outcome == 'success'
         id: audio
