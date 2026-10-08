@@ -132,7 +132,7 @@ export default {async fetch(req,env){
  try{appURL=new URL(String(env.APP_URL||'').trim());if(!['https:','http:'].includes(appURL.protocol)||appURL.username||appURL.password||appURL.search||appURL.hash)throw Error('Invalid APP_URL');if(!appURL.pathname.endsWith('/'))appURL.pathname+='/';}
  catch{return Response.json({error:'APP_URL 尚未設定或格式錯誤。請在 Worker Settings → Variables and Secrets 新增 Text 變數 APP_URL，值為 https://ugiyo.github.io/stock-news-calendar/，儲存並重新部署。'},{status:503,headers:{'Cache-Control':'no-store'}});}
  const origin=appURL.origin;
- const headers={'Content-Type':'application/json','Access-Control-Allow-Origin':origin,'Access-Control-Allow-Headers':'authorization,content-type','Access-Control-Allow-Methods':'GET,POST,DELETE,OPTIONS','Cache-Control':'no-store','Vary':'Origin'};
+ const headers={'Content-Type':'application/json','Access-Control-Allow-Origin':origin,'Access-Control-Allow-Headers':'authorization,content-type','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS','Cache-Control':'no-store','Vary':'Origin'};
  const reply=(data,status=200)=>Response.json(data,{status,headers});
  const sql=(q,...args)=>env.DB.prepare(q).bind(...args);
  try{
