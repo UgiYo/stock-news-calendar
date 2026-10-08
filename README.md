@@ -337,10 +337,6 @@ AI 按使用者操作才執行，沿用現有 OpenAI／Azure／LiteLLM／Python 
 
 ## 管理者後台
 
-網站登入區新增「管理者登入」入口，使用獨立帳號，不需 Google OAuth。管理者登入與管理 API 可部署在 Cloudflare Workers，或使用 Cloudflare Pages Functions。Pages 專案必須以 repo 根目錄為 Root directory，並包含 `functions/[[path]].js`；只設定 `WORKER_API_URL` 指向 `pages.dev` 不會部署 API。
-
-`ADMIN_USERNAME` 與 `ADMIN_PASSWORD` 必須設為後端執行環境的 Production Secrets，不可放在 Git、`wrangler.toml`、前端或 GitHub Pages。Cloudflare Pages 與 Workers 的環境設定不會互相共用。Pages 專案還需要綁定相同的 D1 資料庫（binding 名稱 `DB`）及設定 `APP_URL`、Google OAuth 等既有 Worker 執行變數。
-
-Pages 專案的建置設定、D1 binding、Production variables/secrets 與部署步驟，請參考 [`worker/CLOUDFLARE_PAGES.md`](worker/CLOUDFLARE_PAGES.md)。Worker 部署仍沿用 `worker/wrangler.toml`，設定 Secret 後從專案根目錄執行 `npx wrangler deploy --config worker/wrangler.toml`。
+網站登入區新增「管理者登入」入口，使用獨立帳號，不需 Google OAuth。管理者登入可部署於 Cloudflare Workers，或沿用既有 Cloudflare Pages Advanced Mode。Pages 部署設定與 Production bindings 請依 [`worker/CLOUDFLARE_PAGES.md`](worker/CLOUDFLARE_PAGES.md) 操作；現有專案需保留 `cloudflare-api` 輸出目錄，並使用 `npm ci && node scripts/build_cloudflare_pages.mjs` 產生最新 `_worker.js`。Pages 專案必須自行設定 `DB`、`ADMIN_USERNAME`、`ADMIN_PASSWORD` 及其他 Worker 所需環境變數／Secrets，這些設定不會由 Workers 自動共用。
 
 管理後台提供功能樹狀開關、帳號功能覆寫、登入紀錄及黑名單。封鎖帳號時會立即刪除其既有 Google session；解除封鎖後需重新使用 Google 登入。新功能資料表在首次呼叫時由後端惰性建立。
