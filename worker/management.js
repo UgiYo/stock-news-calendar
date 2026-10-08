@@ -57,11 +57,12 @@ export async function managementRoute(req,env,{sql,reply,randomToken,user}){
  if(!session)return reply({error:'管理者登入已過期，請重新登入'},401);
  await ensureTables(sql);
  if(path==='/management'&&req.method==='GET'){
-  const [flags,users]=await Promise.all([
+  const [flags,users,overrides]=await Promise.all([
    sql('SELECT feature_key,enabled FROM feature_flags').all(),
-   sql('SELECT u.id,u.email,m.blacklisted,m.first_login_at,m.last_login_at FROM users u LEFT JOIN managed_users m ON m.user_id=u.id ORDER BY COALESCE(m.last_login_at,0) DESC LIMIT 500').all()
+   sql('SELECT u.id,u.email,m.blacklisted,m.first_login_at,m.last_login_at FROM users u LEFT JOIN managed_users m ON m.user_id=u.id ORDER BY COALESCE(m.last_login_at,0) DESC LIMIT 500').all(),
+   sql('SELECT user_id,feature_key,enabled FROM user_feature_overrides').all()
   ]);
-  return reply({tree:FEATURE_TREE,features:effectiveFlags(flags.results,[]),users:users.results.map(u=>({...u,blacklisted:!!u.blacklisted}))});
+  return reply({tree:FEATURE_TREE,features:effectiveFlags(flags.results,[]),users:users.results.map(u=>({...u,blacklisted:!!u.blacklisted})),overrides:overrides.results.map(o=>({...o,enabled:!!o.enabled}))});
  }
  if(path==='/management/features'&&req.method==='PUT'){
   const body=await req.json().catch(()=>({}));
