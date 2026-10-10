@@ -228,3 +228,14 @@ test('company search supports partial stock codes and ranks closest matches firs
  const empty=await (await call(env,'/companies?q=','alice')).json();
  assert.deepEqual(empty.companies,[]);
 });
+test('device collector queues public news without cloud tracking and exposes only collection status',async()=>{
+ const {db,env}=setup();db.prepare('INSERT INTO users VALUES(?,?)').run('alice','a@example.com');db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(await hash('alice'),'alice',Date.now()+60000);db.prepare('INSERT INTO companies(code,name,full_name,market) VALUES(?,?,?,?)').run('6515','穎崴','穎崴科技','上市');
+ assert.equal((await call(env,'/device-collect',null,{code:'6515'})).status,401);
+ assert.equal((await call(env,'/device-collect','alice',{code:'invalid'})).status,404);
+ assert.equal((await call(env,'/collect','alice',{code:'6515'})).status,403);
+ const queued=await (await call(env,'/device-collect','alice',{code:'6515'})).json();assert.ok(queued.job.id);assert.equal(db.prepare('SELECT count(*) n FROM watchlists').get().n,0);
+ const status=await (await call(env,'/device-collect?id='+queued.job.id,'alice')).json();assert.deepEqual(Object.keys(status.job).sort(),['error','id','status']);
+ db.prepare("INSERT INTO jobs(id,type,company_code,created_at) VALUES('private-summary','summarize','6515',?)").run(Date.now());assert.equal((await call(env,'/device-collect?id=private-summary','alice')).status,404);
+ const now=new Date().toISOString();await call(env,'/admin/news','secret',{news:[{company_code:'6515',title:'穎崴最新新聞',url:'https://www.cna.com.tw/story',source:'中央社',published_at:now,news_date:now.slice(0,10)}]});
+ const original=globalThis.fetch;globalThis.fetch=async()=>{throw Error('stored read must not call RSS');};try{const result=await (await call(env,'/preview?stored=1&code=6515','alice')).json();assert.equal(result.news.length,1);assert.equal(result.news[0].company_code,'6515');}finally{globalThis.fetch=original;db.close();}
+});

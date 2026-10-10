@@ -251,7 +251,7 @@ app.querySelectorAll('[data-day-local-ai]').forEach(b=>b.onclick=()=>openAINews(
 app.querySelectorAll('[data-preview]').forEach(b=>b.onclick=()=>run(()=>preview(b.dataset.preview)));
 app.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>run(()=>add(b.dataset.add)));
 app.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>run(async()=>{await api('/watchlists?code='+encodeURIComponent(b.dataset.remove),{method:'DELETE'});if(state.selected===b.dataset.remove){state.selected='';state.preview=[];state.previewCompany=null;}state.companies=state.companies.filter(c=>c.code!==b.dataset.remove);render();await load();}));
-app.querySelector('#refresh').onclick=()=>run(async()=>{if(state.previewCompany){const code=state.previewCompany.code;if(!state.companies.some(c=>c.code===code)){await preview(code);return;}state.preview=[];state.previewCompany=null;await collect(code);return;}await collect(state.selected||undefined);await load();state.message='新聞更新完成。';});
+app.querySelector('#refresh').onclick=()=>run(async()=>{if(state.previewCompany){const code=state.previewCompany.code;if(!state.companies.some(c=>c.code===code)){await preview(code);return;}state.preview=[];state.previewCompany=null;await collect(code);return;}await collect(state.selected||undefined);await load();});
 for(const [id,delta] of [['prev',-1],['next',1]])app.querySelector('#'+id).onclick=()=>void switchCalendarMonth(state.year,state.month+delta);
 if(oldDialog&&state.summaryOpen){const dialog=app.querySelector('#summary-dialog');dialog.scrollTop=scroll;const target=focus?document.getElementById(focus):null;(target||app.querySelector('#close-summary'))?.focus({preventScroll:true});}
 app.querySelector('#today').onclick=()=>{const d=new Date();void switchCalendarMonth(d.getFullYear(),d.getMonth(),dayKey(d));};
@@ -275,7 +275,17 @@ async function add(code){
  try{await collect(code);state.message=`已追蹤 ${code}，追蹤清單已保存。${state.message}`;}
  catch(e){state.message=`已追蹤 ${code}，追蹤清單已保存；新聞更新未完成：${e.message||'請稍後按「立即更新新聞」重試。'}`;}
 }
-async function collect(code){for(const stock of code?[code]:state.companies.map(c=>c.code)){state.message=syncEnabled()?`${stock} 新聞更新工作已排入，等待 GitHub Actions…`:`${stock} 正在讀取新聞並保存至此裝置…`;render();try{await jobRequest('/collect',{code:stock},first=>{state.message=first.dispatched===false?`${stock} 已排入任務，但 GitHub Actions 未啟動；請手動執行 Update company news，mode 選 queued，並檢查 Worker 的 GITHUB_DISPATCH_TOKEN。`:`${stock} 收集任務已建立，等待處理…`;render();});}finally{await load();render();}}state.message=syncEnabled()?'更新已處理；若工作仍排隊，請稍後重新整理。':'新聞已更新並保存至此裝置。';}
+async function collect(code){
+ const failures=[];let completed=0;
+ for(const stock of code?[code]:state.companies.map(c=>c.code)){
+  state.message=syncEnabled()?`${stock} 新聞更新工作已排入，等待 GitHub Actions…`:`${stock} 正在讀取新聞並保存至此裝置…`;render();
+  try{await jobRequest('/collect',{code:stock},first=>{state.message=first.dispatched===false?`${stock} 已排入任務，但 GitHub Actions 未啟動；請手動執行 Update company news，mode 選 queued，並檢查 Worker 的 GITHUB_DISPATCH_TOKEN。`:`${stock} ${first.deviceCollection?'新聞來源直讀失敗，已改由 GitHub Actions 收集，完成後保存至此裝置':'收集任務已建立，等待處理'}…`;render();});completed++;}
+  catch(e){failures.push(`${stock}：${e.message||'更新失敗'}`);}
+  finally{await load();render();}
+ }
+ state.message=`${completed} 檔新聞已更新${syncEnabled()?'':'並保存至此裝置'}。${failures.length?' 未完成 '+failures.join('；'):''}`;
+ if(failures.length)throw Error(state.message);
+}
 window.addEventListener('account-sync-status',e=>{if(e.detail.who===state.user?.id&&syncEnabled()){const label=app.querySelector('#account-sync-status');if(label)label.textContent=e.detail.message;}});
 let mentionRefreshTimer;for(const event of ['account-result-saved','account-result-deleted','podcast-results-changed'])window.addEventListener(event,e=>{if(event==='account-result-saved'&&(e.detail.row.kind!=='podcast'||!e.detail.row.text||![state.user?.id||'guest','local'].includes(e.detail.who)))return;clearTimeout(mentionRefreshTimer);mentionRefreshTimer=setTimeout(()=>render(),100);});
 render();const initialPodcasts=loadPodcasts();if(configured)run(async()=>{state.user=await restore();if(state.user){try{state.featureFlags=(await api('/features')).features;}catch{state.featureFlags=null;}}render();if(state.user){await initialPodcasts;const migrationError=await migrateLocalPodcastChannels();Object.assign(podcast,podcastPreferences());await loadPodcasts();if(migrationError){podcast.error=migrationError;render();}await Promise.all([load(),loadRanking()]);}});

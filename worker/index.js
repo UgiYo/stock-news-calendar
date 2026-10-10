@@ -286,6 +286,7 @@ export default {async fetch(req,env){
  if(path==='/preview'&&req.method==='GET'){
  const code=url.searchParams.get('code');if(!/^\d{4,6}$/.test(code||''))return reply({error:'股號格式錯誤'},400);
  const company=await sql('SELECT * FROM companies WHERE code=?',code).first();if(!company)return reply({error:'公司不存在'},404);
+ if(url.searchParams.get('stored')==='1'){const from=new Date(Date.now()-32*86400000).toISOString();return reply({company,news:(await sql('SELECT * FROM news WHERE company_code=? AND published_at>=? ORDER BY published_at DESC,id DESC',code,from).all()).results});}
  const feed=new URL('https://news.google.com/rss/search');feed.search=new URLSearchParams({q:`("${company.name}" OR "${company.full_name}" OR "${code}") (site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com) when:1m`,hl:'zh-TW',gl:'TW',ceid:'TW:zh-Hant'}).toString();
  const response=await fetch(feed,{headers:{'User-Agent':'StockNewsCalendar/2.0'},signal:AbortSignal.timeout(20000)});if(!response.ok)return reply({error:'新聞來源暫時無法讀取，請稍後重試'},502);
  const conflicts=(await sql('SELECT name FROM companies WHERE code<>? AND name<>? AND instr(name,?)>0',company.code,company.name,company.name).all()).results.map(x=>x.name);return reply({company,news:parsePreview(await response.text(),company,new Date(),conflicts)});
@@ -297,10 +298,12 @@ export default {async fetch(req,env){
  const from=url.searchParams.get('from'),to=url.searchParams.get('to'),offset=Number(url.searchParams.get('offset')||0);if(!/^\d{4}-\d{2}-\d{2}$/.test(from)||!/^\d{4}-\d{2}-\d{2}$/.test(to)||!Number.isSafeInteger(offset)||offset<0)return reply({error:'Invalid range'},400);
  return reply({news:(await sql('SELECT n.* FROM news n JOIN watchlists w ON w.company_code=n.company_code WHERE w.user_id=? AND n.news_date BETWEEN ? AND ? ORDER BY n.published_at DESC,n.id DESC LIMIT 500 OFFSET ?',user.id,from,to,offset).all()).results});
  }
- if((path==='/collect'||path==='/summarize')&&req.method==='POST'){
- const b=await req.json(),type=path.slice(1);let code=b.code,news;
+ if(path==='/device-collect'&&req.method==='GET'){const job=await sql("SELECT id,status,error FROM jobs WHERE id=? AND type='collect'",url.searchParams.get('id')).first();return job?reply({job}):reply({error:'Job not found'},404);}
+ if((path==='/collect'||path==='/device-collect'||path==='/summarize')&&req.method==='POST'){
+ const b=await req.json(),type=path==='/device-collect'?'collect':path.slice(1);let code=b.code,news;
  if(type==='summarize'){news=await sql('SELECT * FROM news WHERE id=?',b.id).first();if(!news)return reply({error:'新聞不存在'},404);code=news.company_code;}
- if(!await sql('SELECT 1 FROM watchlists WHERE user_id=? AND company_code=?',user.id,code).first())return reply({error:'尚未追蹤此公司'},403);
+ if(path==='/device-collect'){if(!/^\d{4,6}$/.test(code||'')||!await sql('SELECT code FROM companies WHERE code=?',code).first())return reply({error:'公司不存在'},404);}
+ else if(!await sql('SELECT 1 FROM watchlists WHERE user_id=? AND company_code=?',user.id,code).first())return reply({error:'尚未追蹤此公司'},403);
  const retryAI=b.retry_ai===true&&news?.summary_method!=='ai';if(news?.article_summary&&!retryAI)return reply({news});
  const existing=await sql("SELECT * FROM jobs WHERE type=? AND company_code=? AND news_id IS ? AND status IN ('pending','running') ORDER BY created_at DESC LIMIT 1",type,code,news?.id||null).first();
  if(existing){let dispatched,dispatchError;if(existing.status==='pending'){dispatched=false;try{dispatched=await dispatch(env);}catch(e){dispatchError=e.message||'GitHub 連線失敗';}}return reply({job:existing,news,dispatched,dispatchError},202);}

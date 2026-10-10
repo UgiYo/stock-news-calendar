@@ -303,7 +303,7 @@ async function resolveSpotifyPodcast(value, fetcher = globalThis.fetch) {
   }
   return { title, candidates: candidates.slice(0, 10) };
 }
-async function sharedPodcastsRoute(req, { sql, reply, user, admin = false, hash: hash2 }) {
+async function sharedPodcastsRoute(req, { sql, reply, user, admin = false, hash: hash3 }) {
   const u = new URL(req.url), path = u.pathname;
   if (!["/podcasts/channels", "/podcasts/episodes", "/admin/podcasts/channels", "/admin/podcasts/update", "/podcasts/resolve"].includes(path)) return null;
   if (!admin && !user) return reply({ error: "\u8ACB\u5148\u767B\u5165" }, 401);
@@ -336,7 +336,7 @@ async function sharedPodcastsRoute(req, { sql, reply, user, admin = false, hash:
   }
   if (path === "/podcasts/channels" && req.method === "POST") {
     try {
-      const data = await req.json(), feed = podcastFeed(data.feed), id = "shared-" + (await hash2(feed)).slice(0, 24), existing = await sql("SELECT payload FROM podcast_channels WHERE feed=?", feed).first();
+      const data = await req.json(), feed = podcastFeed(data.feed), id = "shared-" + (await hash3(feed)).slice(0, 24), existing = await sql("SELECT payload FROM podcast_channels WHERE feed=?", feed).first();
       if (existing) return reply({ channel: JSON.parse(existing.payload), existing: true });
       const count = await sql("SELECT COUNT(*) AS total FROM podcast_channels").first();
       if (count.total >= 100) return reply({ error: "\u5171\u7528\u983B\u9053\u5DF2\u9054 100 \u500B\u4E0A\u9650" }, 409);
@@ -540,6 +540,127 @@ async function summaryCacheRoute(req, { sql, reply, user, randomToken: randomTok
   if (typeof b.answer !== "string" || !b.answer.trim() || b.answer.length > 6e4) return reply({ error: "Invalid summary" }, 400);
   const row = await sql("UPDATE summary_cache SET answer=?,owner=NULL,lease=NULL,expires=? WHERE key=? AND owner=? AND lease=? AND expires>? RETURNING key", b.answer, now + 30 * 864e5, b.key, user.id, b.lease, now).first();
   return row ? reply({ ok: true }) : reply({ error: "Cache lease expired" }, 409);
+}
+
+// worker/management.js
+var FEATURE_TREE = [
+  { key: "news_calendar", label: "\u65B0\u805E\u6708\u66C6", children: [
+    { key: "news_calendar.news", label: "\u65B0\u805E\u8207\u65E5\u671F\u6458\u8981" },
+    { key: "news_calendar.podcast", label: "Podcast \u65E5\u66C6\u8207\u63D0\u53CA\u8FFD\u8E64\u80A1" }
+  ] },
+  { key: "market_watch", label: "\u5E02\u5834\u89C0\u5BDF", children: [
+    { key: "market_watch.turnover", label: "\u6210\u4EA4\u503C\u6392\u884C\u8207\u7522\u696D\u8DA8\u52E2" },
+    { key: "market_watch.observation", label: "\u512A\u5148\u89C0\u5BDF\u80A1\u8207\u50F9\u503C\u93C8" },
+    { key: "market_watch.stock_events", label: "\u500B\u80A1\u7570\u52D5\u8FFD\u67E5" }
+  ] },
+  { key: "stock_tools", label: "\u500B\u80A1\u5DE5\u5177", children: [
+    { key: "stock_tools.candles", label: "K \u7DDA" },
+    { key: "stock_tools.broker_reports", label: "\u5238\u5546\u5831\u544A" }
+  ] },
+  { key: "ai_tools", label: "AI \u5DE5\u5177", children: [
+    { key: "ai_tools.assistant", label: "AI \u5C0F\u52A9\u624B" },
+    { key: "ai_tools.results", label: "AI \u6210\u679C\u4E2D\u5FC3\u8207\u901A\u77E5" }
+  ] }
+];
+var ALL_KEYS = FEATURE_TREE.flatMap((x) => [x.key, ...x.children.map((y) => y.key)]);
+var tokenOf = (req) => (req.headers.get("Authorization") || "").replace(/^Bearer /, "").trim();
+async function managementRoute(req, env, { sql, reply, randomToken: randomToken2, user }) {
+  const { pathname: path } = new URL(req.url);
+  if (path === "/admin/login" && req.method === "POST") {
+    if (!env.ADMIN_USERNAME || !env.ADMIN_PASSWORD) return reply({ error: "\u7BA1\u7406\u8005\u5E33\u5BC6\u5C1A\u672A\u8A2D\u5B9A\uFF0C\u8ACB\u5728 Cloudflare Production Secrets \u8A2D\u5B9A ADMIN_USERNAME \u8207 ADMIN_PASSWORD" }, 503);
+    await sql("CREATE TABLE IF NOT EXISTS admin_login_attempts (ip_hash TEXT PRIMARY KEY, count INTEGER NOT NULL, window_started INTEGER NOT NULL)").run();
+    const ip = (req.headers.get("CF-Connecting-IP") || "unknown").slice(0, 80), ipHash = await hash(ip), now = Date.now();
+    const attempt = await sql("SELECT count,window_started FROM admin_login_attempts WHERE ip_hash=?", ipHash).first();
+    if (attempt && now - attempt.window_started < 15 * 6e4 && attempt.count >= 8) return reply({ error: "\u767B\u5165\u5617\u8A66\u904E\u591A\uFF0C\u8ACB 15 \u5206\u9418\u5F8C\u91CD\u8A66" }, 429);
+    const body = await req.json().catch(() => ({})), username = String(body.username || ""), password = String(body.password || "");
+    if (username.length > 128 || password.length > 256) return reply({ error: "\u5E33\u865F\u6216\u5BC6\u78BC\u932F\u8AA4" }, 401);
+    const valid = constantEqual(await hash(username), await hash(env.ADMIN_USERNAME)) && constantEqual(await hash(password), await hash(env.ADMIN_PASSWORD));
+    if (!valid) {
+      if (attempt && now - attempt.window_started < 15 * 6e4) await sql("UPDATE admin_login_attempts SET count=count+1 WHERE ip_hash=?", ipHash).run();
+      else await sql("INSERT INTO admin_login_attempts(ip_hash,count,window_started) VALUES(?,1,?) ON CONFLICT(ip_hash) DO UPDATE SET count=1,window_started=excluded.window_started", ipHash, now).run();
+      return reply({ error: "\u5E33\u865F\u6216\u5BC6\u78BC\u932F\u8AA4" }, 401);
+    }
+    await sql("DELETE FROM admin_login_attempts WHERE ip_hash=?", ipHash).run();
+    await sql("CREATE TABLE IF NOT EXISTS admin_sessions (token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)").run();
+    const token2 = randomToken2();
+    await sql("DELETE FROM admin_sessions WHERE expires_at<?", now).run();
+    await sql("INSERT INTO admin_sessions VALUES(?,?)", await hash(token2), now + 8 * 60 * 6e4).run();
+    return reply({ token: token2, expiresAt: now + 8 * 60 * 6e4 });
+  }
+  if (path === "/admin/logout" && req.method === "POST") {
+    const token2 = tokenOf(req);
+    if (token2) await sql("DELETE FROM admin_sessions WHERE token_hash=?", await hash(token2)).run();
+    return reply({ ok: true });
+  }
+  if (path === "/features" && req.method === "GET") {
+    if (!user) return reply({ error: "\u8ACB\u5148\u767B\u5165" }, 401);
+    await ensureTables(sql);
+    const flags = await sql("SELECT feature_key,enabled FROM feature_flags").all();
+    const overrides = await sql("SELECT feature_key,enabled FROM user_feature_overrides WHERE user_id=?", user.id).all();
+    return reply({ features: effectiveFlags(flags.results, overrides.results) });
+  }
+  if (!path.startsWith("/management")) return null;
+  const token = tokenOf(req);
+  if (!token) return reply({ error: "\u7BA1\u7406\u8005\u5C1A\u672A\u767B\u5165" }, 401);
+  await sql("CREATE TABLE IF NOT EXISTS admin_sessions (token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)").run();
+  const session = await sql("SELECT expires_at FROM admin_sessions WHERE token_hash=? AND expires_at>?", await hash(token), Date.now()).first();
+  if (!session) return reply({ error: "\u7BA1\u7406\u8005\u767B\u5165\u5DF2\u904E\u671F\uFF0C\u8ACB\u91CD\u65B0\u767B\u5165" }, 401);
+  await ensureTables(sql);
+  if (path === "/management" && req.method === "GET") {
+    const [flags, users, overrides] = await Promise.all([
+      sql("SELECT feature_key,enabled FROM feature_flags").all(),
+      sql("SELECT u.id,u.email,m.blacklisted,m.first_login_at,m.last_login_at FROM users u LEFT JOIN managed_users m ON m.user_id=u.id ORDER BY COALESCE(m.last_login_at,0) DESC LIMIT 500").all(),
+      sql("SELECT user_id,feature_key,enabled FROM user_feature_overrides").all()
+    ]);
+    return reply({ tree: FEATURE_TREE, features: effectiveFlags(flags.results, []), users: users.results.map((u) => ({ ...u, blacklisted: !!u.blacklisted })), overrides: overrides.results.map((o) => ({ ...o, enabled: !!o.enabled })) });
+  }
+  if (path === "/management/features" && req.method === "PUT") {
+    const body = await req.json().catch(() => ({}));
+    if (!Array.isArray(body.features) || body.features.length > ALL_KEYS.length || body.features.some((f) => !ALL_KEYS.includes(f.key) || typeof f.enabled !== "boolean")) return reply({ error: "\u529F\u80FD\u8A2D\u5B9A\u683C\u5F0F\u932F\u8AA4" }, 400);
+    for (const f of body.features) await sql("INSERT INTO feature_flags(feature_key,enabled,updated_at) VALUES(?,?,?) ON CONFLICT(feature_key) DO UPDATE SET enabled=excluded.enabled,updated_at=excluded.updated_at", f.key, f.enabled ? 1 : 0, Date.now()).run();
+    return reply({ ok: true });
+  }
+  const userFeatures = path.match(/^\/management\/users\/([^/]+)\/features$/);
+  if (userFeatures && req.method === "PUT") {
+    const userId = decodeURIComponent(userFeatures[1]);
+    if (!await sql("SELECT id FROM users WHERE id=?", userId).first()) return reply({ error: "\u627E\u4E0D\u5230\u4F7F\u7528\u8005" }, 404);
+    const body = await req.json().catch(() => ({}));
+    if (!ALL_KEYS.includes(body.key) || !(typeof body.enabled === "boolean" || body.enabled === null)) return reply({ error: "\u4F7F\u7528\u8005\u529F\u80FD\u8A2D\u5B9A\u683C\u5F0F\u932F\u8AA4" }, 400);
+    if (body.enabled === null) await sql("DELETE FROM user_feature_overrides WHERE user_id=? AND feature_key=?", userId, body.key).run();
+    else await sql("INSERT INTO user_feature_overrides(user_id,feature_key,enabled,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id,feature_key) DO UPDATE SET enabled=excluded.enabled,updated_at=excluded.updated_at", userId, body.key, body.enabled ? 1 : 0, Date.now()).run();
+    return reply({ ok: true });
+  }
+  const block = path.match(/^\/management\/users\/([^/]+)\/blacklist$/);
+  if (block && req.method === "PUT") {
+    const userId = decodeURIComponent(block[1]), body = await req.json().catch(() => ({}));
+    if (typeof body.blacklisted !== "boolean" || !await sql("SELECT id FROM users WHERE id=?", userId).first()) return reply({ error: "\u9ED1\u540D\u55AE\u8A2D\u5B9A\u683C\u5F0F\u932F\u8AA4\u6216\u4F7F\u7528\u8005\u4E0D\u5B58\u5728" }, 400);
+    await sql("INSERT INTO managed_users(user_id,blacklisted) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET blacklisted=excluded.blacklisted", userId, body.blacklisted ? 1 : 0).run();
+    if (body.blacklisted) await sql("DELETE FROM sessions WHERE user_id=?", userId).run();
+    return reply({ ok: true });
+  }
+  return reply({ error: "Not found" }, 404);
+}
+async function ensureTables(sql) {
+  await sql("CREATE TABLE IF NOT EXISTS managed_users(user_id TEXT PRIMARY KEY REFERENCES users(id),blacklisted INTEGER NOT NULL DEFAULT 0,first_login_at INTEGER,last_login_at INTEGER)").run();
+  await sql("CREATE TABLE IF NOT EXISTS feature_flags(feature_key TEXT PRIMARY KEY,enabled INTEGER NOT NULL,updated_at INTEGER NOT NULL)").run();
+  await sql("CREATE TABLE IF NOT EXISTS user_feature_overrides(user_id TEXT NOT NULL REFERENCES users(id),feature_key TEXT NOT NULL,enabled INTEGER NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(user_id,feature_key))").run();
+}
+function effectiveFlags(flags, overrides) {
+  const global = Object.fromEntries(flags.map((x) => [x.feature_key, !!x.enabled])), personal = Object.fromEntries(overrides.map((x) => [x.feature_key, !!x.enabled]));
+  const out = {};
+  for (const key of ALL_KEYS) out[key] = Object.hasOwn(personal, key) ? personal[key] : Object.hasOwn(global, key) ? global[key] : true;
+  for (const node of FEATURE_TREE) out[node.key] = node.children.some((c) => out[c.key]);
+  return out;
+}
+async function hash(value) {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(value)));
+  return [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+function constantEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return mismatch === 0;
 }
 
 // worker/index.js
@@ -854,7 +975,7 @@ async function readArticleURL(value) {
 }
 var encoder = new TextEncoder();
 var randomToken = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), (x) => x.toString(16).padStart(2, "0")).join("");
-async function hash(value) {
+async function hash2(value) {
   return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value))), (x) => x.toString(16).padStart(2, "0")).join("");
 }
 var b642 = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
@@ -892,7 +1013,7 @@ var index_default = { async fetch(req, env) {
     return Response.json({ error: "APP_URL \u5C1A\u672A\u8A2D\u5B9A\u6216\u683C\u5F0F\u932F\u8AA4\u3002\u8ACB\u5728 Worker Settings \u2192 Variables and Secrets \u65B0\u589E Text \u8B8A\u6578 APP_URL\uFF0C\u503C\u70BA https://ugiyo.github.io/stock-news-calendar/\uFF0C\u5132\u5B58\u4E26\u91CD\u65B0\u90E8\u7F72\u3002" }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
   const origin = appURL.origin;
-  const headers = { "Content-Type": "application/json", "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Headers": "authorization,content-type", "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS", "Cache-Control": "no-store", "Vary": "Origin" };
+  const headers = { "Content-Type": "application/json", "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Headers": "authorization,content-type", "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS", "Cache-Control": "no-store", "Vary": "Origin" };
   const reply = (data, status = 200) => Response.json(data, { status, headers });
   const sql = (q, ...args) => env.DB.prepare(q).bind(...args);
   try {
@@ -964,15 +1085,19 @@ var index_default = { async fetch(req, env) {
       await sql("INSERT INTO users VALUES(?,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email", identity.sub, identity.email).run();
       const token2 = randomToken();
       await sql("DELETE FROM sessions WHERE expires_at<?", Date.now()).run();
-      await sql("INSERT INTO sessions VALUES(?,?,?)", await hash(token2), identity.sub, Date.now() + 30 * 864e5).run();
+      await sql("INSERT INTO sessions VALUES(?,?,?)", await hash2(token2), identity.sub, Date.now() + 30 * 864e5).run();
+      await sql("CREATE TABLE IF NOT EXISTS managed_users(user_id TEXT PRIMARY KEY REFERENCES users(id),blacklisted INTEGER NOT NULL DEFAULT 0,first_login_at INTEGER,last_login_at INTEGER)").run();
+      await sql("INSERT INTO managed_users(user_id,first_login_at,last_login_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET last_login_at=excluded.last_login_at", identity.sub, Date.now(), Date.now()).run();
       return new Response(null, { status: 302, headers: { Location: appURL.href + "#session=" + token2, "Set-Cookie": "oauth_state=; Secure; HttpOnly; SameSite=Lax; Max-Age=0; Path=/auth", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
     }
+    const managementAuth = await managementRoute(req, env, { sql, reply, randomToken });
+    if (managementAuth) return managementAuth;
     if (path.startsWith("/admin/")) {
       const provided = req.headers.get("Authorization") || "";
-      if (!env.COLLECTOR_SECRET || await hash(provided) !== await hash("Bearer " + env.COLLECTOR_SECRET)) return reply({ error: "Forbidden" }, 403);
+      if (!env.COLLECTOR_SECRET || await hash2(provided) !== await hash2("Bearer " + env.COLLECTOR_SECRET)) return reply({ error: "Forbidden" }, 403);
       const rankingUpdate2 = await rankingRefreshRoute(req, { sql, reply, db: env.DB, dispatch, env, admin: true });
       if (rankingUpdate2) return rankingUpdate2;
-      const podcasts2 = await sharedPodcastsRoute(req, { sql, reply, admin: true, hash });
+      const podcasts2 = await sharedPodcastsRoute(req, { sql, reply, admin: true, hash: hash2 });
       if (podcasts2) return podcasts2;
       const personal2 = await aiJobsRoute(req, env, { admin: true, reply, dispatch, readArticleURL });
       if (personal2) return personal2;
@@ -1165,8 +1290,20 @@ var index_default = { async fetch(req, env) {
     }
     const token = req.headers.get("Authorization")?.replace(/^Bearer /, "");
     if (!token) return reply({ error: "\u8ACB\u5148\u767B\u5165" }, 401);
-    const user = await sql("SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?", await hash(token), Date.now()).first();
+    const user = await sql("SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?", await hash2(token), Date.now()).first();
     if (!user) return reply({ error: "\u767B\u5165\u5DF2\u904E\u671F\uFF0C\u8ACB\u91CD\u65B0\u767B\u5165" }, 401);
+    let managed = null;
+    try {
+      managed = await sql("SELECT blacklisted FROM managed_users WHERE user_id=?", user.id).first();
+    } catch (error) {
+      if (!String(error?.message || error).includes("no such table")) throw error;
+    }
+    if (managed?.blacklisted) {
+      await sql("DELETE FROM sessions WHERE user_id=?", user.id).run();
+      return reply({ error: "\u6B64\u5E33\u865F\u5DF2\u505C\u7528" }, 403);
+    }
+    const featureReply = await managementRoute(req, env, { sql, reply, randomToken, user });
+    if (featureReply) return featureReply;
     const rankingUpdate = await rankingRefreshRoute(req, { sql, reply, db: env.DB, dispatch, env });
     if (rankingUpdate) return rankingUpdate;
     const eventCache = await stockEventCacheRoute(req, { sql, reply, user, randomToken });
@@ -1175,7 +1312,7 @@ var index_default = { async fetch(req, env) {
     if (stockEvents) return stockEvents;
     const accountResults = await accountResultsRoute(req, { sql, reply, user, db: env.DB });
     if (accountResults) return accountResults;
-    const podcasts = await sharedPodcastsRoute(req, { sql, reply, user, hash });
+    const podcasts = await sharedPodcastsRoute(req, { sql, reply, user, hash: hash2 });
     if (podcasts) return podcasts;
     if (path === "/portfolio-quotes") {
       const codes = [...new Set((url.searchParams.get("codes") || "").split(",").filter(Boolean))];
@@ -1362,18 +1499,24 @@ var index_default = { async fetch(req, env) {
     if (path === "/summary-cache") return summaryCacheRoute(req, { sql, reply, user, randomToken, db: env.DB });
     if (path === "/me") return reply({ user: { id: user.id, email: String(user.email || "").trim() } });
     if (path === "/logout" && req.method === "POST") {
-      await sql("DELETE FROM sessions WHERE token_hash=?", await hash(token)).run();
+      await sql("DELETE FROM sessions WHERE token_hash=?", await hash2(token)).run();
       return reply({ ok: true });
     }
     if (path === "/companies") {
       const q = (url.searchParams.get("q") || "").trim().slice(0, 60);
-      return reply({ companies: (await sql("SELECT * FROM companies WHERE code=? OR instr(name,?)>0 OR instr(full_name,?)>0 ORDER BY code LIMIT 20", q, q, q).all()).results });
+      if (!q) return reply({ companies: [] });
+      const companies = await sql("SELECT * FROM companies WHERE code=? OR instr(code,?)>0 OR instr(name,?)>0 OR instr(full_name,?)>0 ORDER BY CASE WHEN code=? THEN 0 WHEN code LIKE ? THEN 1 WHEN name=? THEN 2 WHEN name LIKE ? THEN 3 WHEN full_name LIKE ? THEN 4 ELSE 5 END,code LIMIT 20", q, q, q, q, q, q + "%", q, q + "%", q + "%").all();
+      return reply({ companies: companies.results });
     }
     if (path === "/preview" && req.method === "GET") {
       const code = url.searchParams.get("code");
       if (!/^\d{4,6}$/.test(code || "")) return reply({ error: "\u80A1\u865F\u683C\u5F0F\u932F\u8AA4" }, 400);
       const company = await sql("SELECT * FROM companies WHERE code=?", code).first();
       if (!company) return reply({ error: "\u516C\u53F8\u4E0D\u5B58\u5728" }, 404);
+      if (url.searchParams.get("stored") === "1") {
+        const from = new Date(Date.now() - 32 * 864e5).toISOString();
+        return reply({ company, news: (await sql("SELECT * FROM news WHERE company_code=? AND published_at>=? ORDER BY published_at DESC,id DESC", code, from).all()).results });
+      }
       const feed = new URL("https://news.google.com/rss/search");
       feed.search = new URLSearchParams({ q: `("${company.name}" OR "${company.full_name}" OR "${code}") (site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com) when:1m`, hl: "zh-TW", gl: "TW", ceid: "TW:zh-Hant" }).toString();
       const response = await fetch(feed, { headers: { "User-Agent": "StockNewsCalendar/2.0" }, signal: AbortSignal.timeout(2e4) });
@@ -1401,15 +1544,21 @@ var index_default = { async fetch(req, env) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || !Number.isSafeInteger(offset) || offset < 0) return reply({ error: "Invalid range" }, 400);
       return reply({ news: (await sql("SELECT n.* FROM news n JOIN watchlists w ON w.company_code=n.company_code WHERE w.user_id=? AND n.news_date BETWEEN ? AND ? ORDER BY n.published_at DESC,n.id DESC LIMIT 500 OFFSET ?", user.id, from, to, offset).all()).results });
     }
-    if ((path === "/collect" || path === "/summarize") && req.method === "POST") {
-      const b = await req.json(), type = path.slice(1);
+    if (path === "/device-collect" && req.method === "GET") {
+      const job = await sql("SELECT id,status,error FROM jobs WHERE id=? AND type='collect'", url.searchParams.get("id")).first();
+      return job ? reply({ job }) : reply({ error: "Job not found" }, 404);
+    }
+    if ((path === "/collect" || path === "/device-collect" || path === "/summarize") && req.method === "POST") {
+      const b = await req.json(), type = path === "/device-collect" ? "collect" : path.slice(1);
       let code = b.code, news;
       if (type === "summarize") {
         news = await sql("SELECT * FROM news WHERE id=?", b.id).first();
         if (!news) return reply({ error: "\u65B0\u805E\u4E0D\u5B58\u5728" }, 404);
         code = news.company_code;
       }
-      if (!await sql("SELECT 1 FROM watchlists WHERE user_id=? AND company_code=?", user.id, code).first()) return reply({ error: "\u5C1A\u672A\u8FFD\u8E64\u6B64\u516C\u53F8" }, 403);
+      if (path === "/device-collect") {
+        if (!/^\d{4,6}$/.test(code || "") || !await sql("SELECT code FROM companies WHERE code=?", code).first()) return reply({ error: "\u516C\u53F8\u4E0D\u5B58\u5728" }, 404);
+      } else if (!await sql("SELECT 1 FROM watchlists WHERE user_id=? AND company_code=?", user.id, code).first()) return reply({ error: "\u5C1A\u672A\u8FFD\u8E64\u6B64\u516C\u53F8" }, 403);
       const retryAI = b.retry_ai === true && news?.summary_method !== "ai";
       if (news?.article_summary && !retryAI) return reply({ news });
       const existing = await sql("SELECT * FROM jobs WHERE type=? AND company_code=? AND news_id IS ? AND status IN ('pending','running') ORDER BY created_at DESC LIMIT 1", type, code, news?.id || null).first();
@@ -1459,7 +1608,7 @@ export {
   index_default as default,
   duplicateNews,
   extractArticleBody,
-  hash,
+  hash2 as hash,
   isGeneratedAnswer,
   normalizeArticleURL,
   parseCompanyProfile,
