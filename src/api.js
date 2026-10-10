@@ -1,5 +1,5 @@
 import {createQuotaGate} from './d1-quota.js';
-import {deviceRequest,syncEnabled,deviceData} from './account-sync.js';
+import {deviceRequest,syncEnabled,deviceData,finishDeviceCollection} from './account-sync.js';
 const base=(import.meta.env?.VITE_WORKER_API_URL||'').replace(/\/$/,'');
 const key='stock-news-session';
 const quotaGate=createQuotaGate({storage:globalThis.localStorage,key:'stock-d1-pause:'+base});
@@ -18,7 +18,7 @@ export async function logout(){try{await api('/logout',{body:{}});}finally{local
 export async function restore(){const params=new URLSearchParams(location.hash.slice(1));if(params.get('session')){localStorage.setItem(key,params.get('session'));history.replaceState(null,'',location.pathname+location.search);}if(!localStorage.getItem(key))return null;try{return (await api('/me')).user;}catch(e){if(e.status===401)localStorage.removeItem(key);throw e;}}
 export async function jobRequest(path,body,onQueued){
  const first=await api(path,{body});if(first.news?.article_summary&&(!body.retry_ai||first.news.summary_method==='ai'))return first;
- if(!first.job)return first;onQueued?.(first);if(first.dispatched===false)throw Error('任務已保存，但 GitHub Actions 未啟動：'+(first.dispatchError||'請確認 Pages Production 的 GITHUB_DISPATCH_TOKEN 與 GITHUB_REPO，並重新部署。')+' 可先手動執行 Update company news（queued）。');
- for(let i=0;i<24;i++){await new Promise(r=>setTimeout(r,5000));const result=await api('/jobs?id='+first.job.id);if(result.job.status==='failed')throw Error(result.job.error||'工作失敗');if(result.job.status==='done')return result;}
- throw Error('工作仍在排隊或處理中，稍後重新整理即可查看結果。');
+ if(!first.job)return first;const collection=first.deviceCollection,sessionToken=localStorage.getItem(key);onQueued?.(first);if(first.dispatched===false)throw Error('任務已保存，但 GitHub Actions 未啟動：'+(first.dispatchError||'請確認 Pages Production 的 GITHUB_DISPATCH_TOKEN 與 GITHUB_REPO，並重新部署。')+' 可先手動執行 Update company news（queued）。');
+ for(let i=0;i<24;i++){await new Promise(r=>setTimeout(r,5000));const result=await remoteAPI((collection?'/device-collect':'/jobs')+'?id='+first.job.id,{sessionToken});if(result.job.status==='failed')throw Error(result.job.error||'工作失敗');if(result.job.status==='done'){if(collection)await finishDeviceCollection(collection,(path,options={})=>remoteAPI(path,{...options,sessionToken}));return result;}}
+ throw Error(collection?'備援新聞收集仍在處理中；稍後再按「立即更新新聞」，即可取回完成結果並保存至此裝置。':'工作仍在排隊或處理中，稍後重新整理即可查看結果。');
 }

@@ -340,3 +340,9 @@ AI 按使用者操作才執行，沿用現有 OpenAI／Azure／LiteLLM／Python 
 網站登入區新增「管理者登入」入口，使用獨立帳號，不需 Google OAuth。管理者登入可部署於 Cloudflare Workers，或沿用既有 Cloudflare Pages Advanced Mode。Pages 部署設定與 Production bindings 請依 [`worker/CLOUDFLARE_PAGES.md`](worker/CLOUDFLARE_PAGES.md) 操作；現有專案需保留 `cloudflare-api` 輸出目錄，並使用 `npm ci && node scripts/build_cloudflare_pages.mjs` 產生最新 `_worker.js`。Pages 專案必須自行設定 `DB`、`ADMIN_USERNAME`、`ADMIN_PASSWORD` 及其他 Worker 所需環境變數／Secrets，這些設定不會由 Workers 自動共用。
 
 管理後台提供功能樹狀開關、帳號功能覆寫、登入紀錄及黑名單。封鎖帳號時會立即刪除其既有 Google session；解除封鎖後需重新使用 Google 登入。新功能資料表在首次呼叫時由後端惰性建立。
+
+### 裝置模式新聞更新備援
+
+關閉追蹤與新聞同步時，更新先透過 `/preview` 讀取近一個月新聞；來源拒絕請求或連線失敗時，自動改走 `/device-collect`，由既有 GitHub Actions 蒐集公開新聞，完成後從 `/preview?stored=1` 取回並保存於當前帳號的裝置資料。此流程不新增雲端追蹤清單，也不呼叫 AI。登入失效與 D1 額度不足不會啟動備援。若等待超過兩分鐘，再按「立即更新新聞」即可取回已完成的任務；單一公司失敗會顯示股號並繼續其他公司。
+
+需一併部署更新的前端與 Cloudflare API（Pages Git 整合沿用 `npm ci && node scripts/build_cloudflare_pages.mjs`）；既有 DB、GITHUB_DISPATCH_TOKEN 和 GITHUB_REPO 設定即可，無需新增 Secret 或資料庫遷移。
