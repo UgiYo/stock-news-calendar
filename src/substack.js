@@ -1,12 +1,13 @@
 import {api} from './api.js';
 import {isUS} from '../shared/markets.js';
-import {DEFAULT_SUBSTACK,substackMentions,substackPrompt,substackChunks} from '../shared/substack.js';
+import {substackMentions,substackPrompt,substackChunks} from '../shared/substack.js';
 import {currentAISettings,requestAI} from './local-ai.js';
 import {requireAISession} from './ai-auth.js';
 import {companyMode} from './ai-privacy.js';
 import {runResultJob,resultRecords,openResultsCenter} from './ai-results.js';
 
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let importOpen=false,draftURL='',draftTitle='',importCandidates=[],importWarning='',importBusy=false,progressTimer=null,progressLoading=false;
 let owner=null,authors=[],articles=[],loading=false,error='',message='',authorFilter='',stockFilter='',dateOnly=false,query='',limit=30,context={},onChange=()=>{},loaded=false,generation=0;
 export function substackDateArticles(date,companies=[],selected=''){
  if(context.market!=='US'||context.flags?.['news_calendar.substack']===false)return [];
@@ -21,7 +22,7 @@ export function substackDayPanel(date,companies,selected){
  const rows=substackDateArticles(date,companies,selected);
  return rows.length?`<section class="substack-day"><h3>★ Substack 提及追蹤股（${rows.length} 篇）</h3>${rows.map(a=>card(a,companies)).join('')}</section>`:'';
 }
-function reset(next){owner=next;generation++;authors=[];articles=[];loaded=false;loading=false;error='';message='';authorFilter='';stockFilter='';query='';limit=30;document.querySelector('#substack-article-dialog')?.closest('.modal-backdrop')?.remove();}
+function reset(next){clearTimeout(progressTimer);progressTimer=null;progressLoading=false;importOpen=false;draftURL='';draftTitle='';importCandidates=[];importWarning='';importBusy=false;owner=next;generation++;authors=[];articles=[];loaded=false;loading=false;error='';message='';authorFilter='';stockFilter='';query='';limit=30;document.querySelector('#substack-article-dialog')?.closest('.modal-backdrop')?.remove();}
 async function load(){
  if(loading||!owner)return;loading=true;error='';const who=owner,version=generation;onChange();
  try{const data=await api('/substack/authors');let rows=[],offset=0;
@@ -30,22 +31,56 @@ async function load(){
  }catch(e){if(who===owner&&version===generation)error=e.message;}finally{if(who===owner&&version===generation){loading=false;onChange();}}
 }
 export function setSubstackContext(options){context=options;if(owner!==(options.owner||null))reset(options.owner||null);}
+function importControls(){
+ return `<button class="substack-import" data-substack-import-open ${!owner?'disabled':''}>匯入 Substack 作者的全部文章</button><details class="substack-import" ${importOpen?'open':''}><summary>新增作者與匯入設定</summary><p>貼上作者個人頁、刊物首頁或文章連結。匯入整個刊物的全部歷史文章，不受目前日期、個股或搜尋篩選限制。付費文章僅收錄公開預覽；匯入不會自動呼叫 AI。</p><form data-substack-import><label>Substack 作者／刊物網址<input name="url" type="url" required ${importBusy?'disabled':''} value="${esc(draftURL)}" placeholder="https://substack.com/@作者 或 https://刊物.substack.com"></label><label>作者顯示名稱（選填）<input name="title" maxlength="500" ${importBusy?'disabled':''} value="${esc(draftTitle)}" placeholder="留空使用刊物名稱"></label><button ${!owner||importBusy?'disabled':''}>${importBusy?'處理中…':'解析作者／刊物'}</button></form><p data-substack-import-status role="status">${esc(importWarning)}</p>${importCandidates.map((c,i)=>`<article class="substack-import-candidate"><strong>${esc(c.title)}</strong><small>${esc(c.url)}</small><button data-substack-import-candidate="${i}" ${importBusy?'disabled':''}>匯入此刊物的全部文章</button></article>`).join('')}</details>`;
+}
+function authorProgress(a){
+ const count=a.article_count??articles.filter(row=>row.author_id===a.id).length,full=a.public_count??articles.filter(row=>row.author_id===a.id&&row.access==='public').length;
+ const status=a.last_error?'匯入失敗／待重試':a.archive_complete?'全部歷史文章匯入完成':count?'正在分批匯入，背景會自動續抓':'等待背景匯入';
+ return `<article class="substack-author-progress"><strong>${esc(a.title)}</strong><p role="status">${status} · 已匯入 ${count} 篇${a.archive_complete?'':'（總篇數待匯入完成後確認）'}</p><small>公開內文 ${full} 篇 · 預覽／部分內容 ${Math.max(0,count-full)} 篇${a.updated_at?' · 最後更新 '+esc(a.updated_at):''}</small>${a.last_error?`<p class="notice">${esc(a.last_error)}</p>`:''}<button data-substack-author-refresh="${esc(a.id)}" ${!owner?'disabled':''}>${a.last_error?'重試匯入':a.archive_complete?'更新此作者的新文章':'繼續匯入全部文章'}</button></article>`;
+}
+async function refreshAuthor(id=''){
+ const who=owner,version=generation;try{const r=await api('/substack/refresh',{body:{author_id:id}});if(who!==owner||version!==generation)return;message=r.message;error='';await load();}catch(e){if(who===owner&&version===generation){error=e.message;onChange();}}
+}
+function scheduleProgress(){
+ const active=owner&&context.market==='US'&&context.flags?.['news_calendar.substack']!==false&&authors.some(a=>!a.archive_complete&&!a.last_error);
+ if(!active){clearTimeout(progressTimer);progressTimer=null;return;}
+ if(progressTimer||progressLoading||loading)return;
+ const who=owner,version=generation;
+ progressTimer=setTimeout(async()=>{progressTimer=null;if(who!==owner||version!==generation)return;
+  if(document.visibilityState==='hidden'){scheduleProgress();return;}
+  progressLoading=true;try{const data=await api('/substack/authors');if(who!==owner||version!==generation)return;
+   const changed=JSON.stringify(data.authors)!==JSON.stringify(authors);if(changed){authors=data.authors;await load();}
+  }catch(e){if(who===owner&&version===generation){error='匯入進度暫時無法更新：'+e.message;onChange();}}finally{if(who===owner&&version===generation){progressLoading=false;scheduleProgress();}}
+ },30000);
+}
 export function mountSubstack(host,options,changed){
  setSubstackContext(options);onChange=changed;
  if(!host)return;
- if(options.market!=='US'||options.flags?.['news_calendar.substack']===false){host.hidden=true;return;}host.hidden=false;
+ if(options.market!=='US'||options.flags?.['news_calendar.substack']===false){host.hidden=true;scheduleProgress();return;}host.hidden=false;
  const rows=articles.filter(a=>(!authorFilter||a.author_id===authorFilter)&&(!dateOnly||a.date===options.date)&&(!(options.selected||stockFilter)||(a.mentions||[]).some(c=>c.code===(options.selected||stockFilter)))&&(!query||[a.title,a.author_title,...(a.mentions||[]).map(c=>c.name+' '+c.code)].join(' ').toLowerCase().includes(query.toLowerCase())));
  const stocks=[...new Map(articles.filter(a=>!authorFilter||a.author_id===authorFilter).flatMap(a=>a.mentions||[]).map(c=>[c.code,c])).values()].sort((a,b)=>a.code.localeCompare(b.code));
- host.innerHTML=`<section class="substack-panel"><div class="modal-heading"><h2>Substack 作者與美股觀點</h2><button data-substack-reload ${loading||!owner?'disabled':''}>${loading?'載入中…':'重新載入文章'}</button></div><p>★ 為你追蹤的美股。原文提及與作者立場分開呈現；匯入不消耗 AI Token，生成整理使用你的 AI 設定。</p><p role="status">${esc(error||message||(!owner?'請先登入以查看作者文章':`${articles.length} 篇已匯入文章`))}</p><div class="substack-filters"><label>作者<select data-substack-author><option value="">全部作者</option>${authors.map(a=>`<option value="${esc(a.id)}" ${a.id===authorFilter?'selected':''}>${esc(a.title)}</option>`).join('')}</select></label><label>標的<select data-substack-stock ${options.selected?'disabled':''}><option value="">全部標的</option>${stocks.map(c=>`<option value="${esc(c.code)}" ${c.code===(options.selected||stockFilter)?'selected':''}>${esc(c.code.replace('US:',''))} ${esc(c.name)}</option>`).join('')}</select></label><label>標題／標的搜尋<input data-substack-search value="${esc(query)}" maxlength="100" placeholder="例如 NVDA、輝達"></label><label class="ai-check"><input type="checkbox" data-substack-date ${dateOnly?'checked':''}>只看選定日期 ${esc(options.date)}</label></div><div class="stock-actions"><button data-substack-refresh ${!owner?'disabled':''}>更新作者文章</button></div>${options.flags?.['news_calendar.substack_import']===false?'':`<details class="substack-import"><summary>新增作者／匯入全部歷史文章</summary><form data-substack-import><label>Substack 刊物網址<input name="url" type="url" required value="${DEFAULT_SUBSTACK.url}" placeholder="https://作者.substack.com"></label><label>作者顯示名稱<input name="title" maxlength="500" placeholder="${esc(DEFAULT_SUBSTACK.title)}"></label><button ${!owner?'disabled':''}>追蹤作者並匯入</button></form></details>`}<details><summary>作者更新狀態</summary>${authors.map(a=>`<p>${esc(a.title)} · ${a.archive_complete?'歷史匯入完成':'歷史匯入進行中，已處理 '+a.archive_offset+' 筆'} · ${esc(a.updated_at||'尚未更新')}${a.last_error?' · '+esc(a.last_error):''}</p>`).join('')}</details><p>顯示 ${Math.min(limit,rows.length)}／${rows.length} 篇${options.selected?' · 已套用左側選定個股':''}</p><div class="substack-articles">${rows.slice(0,limit).map(a=>card(a,options.companies)).join('')||'<p class="empty">尚無符合條件的文章。可更新文章或調整作者／日期／標的篩選。</p>'}</div>${rows.length>limit?'<button data-substack-more>顯示更多文章</button>':''}</section>`;
+ host.innerHTML=`<section class="substack-panel"><div class="modal-heading"><h2>Substack 作者與美股觀點</h2><button data-substack-reload ${loading||!owner?'disabled':''}>${loading?'載入中…':'重新載入文章'}</button></div><p>★ 為你追蹤的美股。原文提及與作者立場分開呈現；匯入不消耗 AI Token，生成整理使用你的 AI 設定。</p><p role="status">${esc(error||message||(!owner?'請先登入以查看作者文章':`${articles.length} 篇已匯入文章`))}</p>${options.flags?.['news_calendar.substack_import']===false?'':importControls()}<details class="substack-progress" ${authors.some(a=>!a.archive_complete||a.last_error)?'open':''}><summary>作者匯入進度（${authors.length} 位）</summary>${authors.map(authorProgress).join('')||'<p>尚無作者資料。</p>'}<small>匯入途中可以關閉網站。背景持續保存文章，開啟此頁時每 30 秒更新進度；沒有提供總篇數時不顯示估算百分比。</small></details><div class="substack-filters"><label>作者<select data-substack-author><option value="">全部作者</option>${authors.map(a=>`<option value="${esc(a.id)}" ${a.id===authorFilter?'selected':''}>${esc(a.title)}</option>`).join('')}</select></label><label>標的<select data-substack-stock ${options.selected?'disabled':''}><option value="">全部標的</option>${stocks.map(c=>`<option value="${esc(c.code)}" ${c.code===(options.selected||stockFilter)?'selected':''}>${esc(c.code.replace('US:',''))} ${esc(c.name)}</option>`).join('')}</select></label><label>標題／標的搜尋<input data-substack-search value="${esc(query)}" maxlength="100" placeholder="例如 NVDA、輝達"></label><label class="ai-check"><input type="checkbox" data-substack-date ${dateOnly?'checked':''}>只看選定日期 ${esc(options.date)}</label></div><div class="stock-actions"><button data-substack-refresh ${!owner?'disabled':''}>${authorFilter?'更新選定作者的文章':'更新全部作者的文章'}</button></div><p>顯示 ${Math.min(limit,rows.length)}／${rows.length} 篇${options.selected?' · 已套用左側選定個股':''}</p><div class="substack-articles">${rows.slice(0,limit).map(a=>card(a,options.companies)).join('')||'<p class="empty">尚無符合條件的文章。可更新文章或調整作者／日期／標的篩選。</p>'}</div>${rows.length>limit?'<button data-substack-more>顯示更多文章</button>':''}</section>`;
  host.querySelector('[data-substack-author]').onchange=e=>{authorFilter=e.target.value;stockFilter='';limit=30;onChange();};
  host.querySelector('[data-substack-stock]').onchange=e=>{stockFilter=e.target.value;limit=30;onChange();};
  host.querySelector('[data-substack-date]').onchange=e=>{dateOnly=e.target.checked;limit=30;onChange();};
  host.querySelector('[data-substack-search]').onchange=e=>{query=e.target.value.trim();limit=30;onChange();};
  host.querySelector('[data-substack-more]')?.addEventListener('click',()=>{limit+=30;onChange();});
  host.querySelector('[data-substack-reload]').onclick=()=>void load();
- host.querySelector('[data-substack-refresh]').onclick=async e=>{e.target.disabled=true;const who=owner;try{const r=await api('/substack/refresh',{body:{}});if(who===owner)message=r.message;}catch(e){if(who===owner)error=e.message;}if(who===owner)onChange();};
- host.querySelector('[data-substack-import]')?.addEventListener('submit',async e=>{e.preventDefault();const who=owner,form=e.target;form.querySelector('button').disabled=true;try{const r=await api('/substack/authors',{body:{url:form.elements.url.value,title:form.elements.title.value}});if(who!==owner)return;message=r.message+(r.warning?'：'+r.warning:'');await load();}catch(e){if(who===owner)error=e.message;}if(who===owner)onChange();});
- if(!loaded&&!loading&&!error&&owner)queueMicrotask(()=>void load());
+ host.querySelector('[data-substack-refresh]').onclick=e=>{e.target.disabled=true;void refreshAuthor(authorFilter);};
+ host.querySelectorAll('[data-substack-author-refresh]').forEach(b=>b.onclick=()=>{b.disabled=true;void refreshAuthor(b.dataset.substackAuthorRefresh);});
+ host.querySelector('[data-substack-import-open]')?.addEventListener('click',()=>{importOpen=true;onChange();host.querySelector('[name=url]')?.focus();});
+ const importDetails=host.querySelector('details.substack-import');if(importDetails)importDetails.ontoggle=()=>{importOpen=importDetails.open;};
+ const form=host.querySelector('[data-substack-import]');
+ if(form){form.querySelector('[name=url]').oninput=e=>{draftURL=e.target.value;importCandidates=[];importWarning='網址已變更，請重新解析作者／刊物';host.querySelectorAll('.substack-import-candidate').forEach(el=>el.remove());host.querySelector('[data-substack-import-status]').textContent=importWarning;};form.querySelector('[name=title]').oninput=e=>{draftTitle=e.target.value;};
+  form.onsubmit=async e=>{e.preventDefault();if(importBusy)return;const who=owner,version=generation;draftURL=form.querySelector('[name=url]').value;draftTitle=form.querySelector('[name=title]').value;importOpen=true;importBusy=true;importWarning='正在解析作者與刊物…';importCandidates=[];onChange();
+   try{const r=await api('/substack/resolve',{body:{url:draftURL}});if(who!==owner||version!==generation)return;importCandidates=r.candidates;importWarning=r.warning||'請核對刊物後，點下方按鈕匯入全部歷史文章。';}catch(e){if(who===owner&&version===generation)importWarning=e.message;}finally{if(who===owner&&version===generation){importBusy=false;onChange();}}
+  };
+ }
+ host.querySelectorAll('[data-substack-import-candidate]').forEach(b=>b.onclick=async()=>{if(importBusy)return;const candidate=importCandidates[Number(b.dataset.substackImportCandidate)],who=owner,version=generation;if(!candidate)return;importBusy=true;onChange();
+  try{const r=await api('/substack/authors',{body:{url:candidate.url,title:draftTitle.trim()||candidate.title}});if(who!==owner||version!==generation)return;message=r.message+(r.warning?'：'+r.warning:'');error='';authorFilter=r.author?.id||new URL(candidate.url).hostname.split('.')[0];dateOnly=false;stockFilter='';query='';limit=30;importCandidates=[];importOpen=!!r.warning;await load();}catch(e){if(who===owner&&version===generation)importWarning=e.message;}finally{if(who===owner&&version===generation){importBusy=false;onChange();}}
+ });
+ if(!loaded&&!loading&&!error&&owner)queueMicrotask(()=>void load());scheduleProgress();
 }
 export function bindSubstackActions(root){root.querySelectorAll('[data-substack-open]').forEach(b=>b.onclick=()=>void openArticle(b.dataset.substackOpen,b.dataset.substackCode));}
 async function openArticle(id,focus=''){

@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {parseHTML} from 'linkedom';
-import {DEFAULT_SUBSTACK,substackPublication,substackMentions,substackChunks,substackPrompt} from '../shared/substack.js';
-import {normalizeSubstackArticle,substackRoute} from '../worker/substack.js';
+import {DEFAULT_SUBSTACK,substackPublication,substackAuthorInput,substackMentions,substackChunks,substackPrompt} from '../shared/substack.js';
+import {normalizeSubstackArticle,substackRoute,resolveSubstackAuthor,substackProfileCandidates} from '../worker/substack.js';
 import {validAccountResult} from '../worker/account-results.js';
 import {decorateSubstackSummary} from '../src/substack-mentions.js';
 
@@ -11,6 +11,21 @@ test('verified profile resolves publication, while untrusted destinations are re
  assert.equal(substackPublication('https://substack.com/@unclestocknotes?utm_source=share'),DEFAULT_SUBSTACK.url);
  assert.equal(substackPublication(DEFAULT_SUBSTACK.url+'/p/post?utm_source=share'),DEFAULT_SUBSTACK.url);
  for(const url of ['http://x.substack.com','https://substack.com/@unknown','https://x.substack.com.evil.test','https://user:secret@x.substack.com','https://127.0.0.1'])assert.throws(()=>substackPublication(url));
+});
+test('arbitrary author profiles resolve observed publication links without assuming the handle is the publication',async()=>{
+ const html='<a href="https://actualletters.substack.com/">作者的投資筆記</a><a href="https://secondletters.substack.com/about">另一本刊物</a><a href="https://evil.test">惡意連結</a><a href="https://actualletters.substack.com/p/post">文章</a>';
+ const calls=[];const result=await resolveSubstackAuthor('https://substack.com/@differenthandle?utm_source=share',async url=>{calls.push(url);return new Response(html);});
+ assert.deepEqual(result.candidates.map(c=>c.url),['https://actualletters.substack.com','https://secondletters.substack.com']);assert.match(result.warning,/核對/);assert.deepEqual(calls,['https://substack.com/@differenthandle']);
+ assert.deepEqual(substackAuthorInput('https://open.substack.com/pub/actualletters/p/a?utm_source=share'),{kind:'publication',url:'https://actualletters.substack.com'});
+ assert.equal(substackAuthorInput('https://www.substack.com/%40differenthandle/posts').url,'https://substack.com/@differenthandle');
+ assert.equal(substackProfileCandidates('<a href="https://x.substack.com.evil.test">x</a>').length,0);
+ await assert.rejects(()=>resolveSubstackAuthor('https://substack.com/@empty',async()=>new Response('<html></html>')),/刊物頁/);
+ await assert.rejects(()=>resolveSubstackAuthor('https://substack.com/@redirect',async()=>new Response('',{status:302,headers:{Location:'https://127.0.0.1'}})),/转址|轉址/);
+});
+test('publication links get their RSS name, while unreachable metadata still permits explicit import',async()=>{
+ const data=await resolveSubstackAuthor('https://letters.substack.com/p/post',async()=>new Response('<rss><channel><title><![CDATA[Letters &amp; Stocks]]></title></channel></rss>'));
+ assert.equal(data.candidates[0].title,'Letters & Stocks');assert.equal(data.candidates[0].url,'https://letters.substack.com');
+ const fallback=await resolveSubstackAuthor('https://letters.substack.com',async()=>new Response('',{status:503}));assert.equal(fallback.candidates[0].url,'https://letters.substack.com');assert.ok(fallback.warning);
 });
 test('original paragraphs match US aliases, exclude Taiwan and ambiguous tickers, and distinguish mention from stance',()=>{
  const text='AI improves productivity. We are ON track.\nNVIDIA 與 $MSFT 被提及，但作者沒有表示持有。\n$ZZZZ is only a hypothetical symbol.\n'+'背景 '.repeat(400)+'$NVDA 看法放在長段落最後。';
@@ -46,7 +61,20 @@ test('shared archive upserts, exposes metadata separately, preserves failure sta
  assert.equal((await call('/substack/authors','POST',{url:'https://example.substack.com'},{flags:{'news_calendar.substack_import':false}})).status,403);
  await call('/admin/substack/update','POST',{author_id:DEFAULT_SUBSTACK.id,error:'Source unavailable'},{admin:true});
  const failed=(await call('/substack/authors')).data.authors[0];assert.equal(failed.archive_offset,1);assert.equal(failed.archive_complete,1);assert.match(failed.last_error,/unavailable/);assert.ok(failed.latest_published_at);
+ assert.equal(failed.article_count,1);assert.equal(failed.public_count,1);
  assert.equal((await call('/substack/articles?offset=-1')).status,400);db.close();
+});
+test('user author import dispatches a prioritized full archive and continuation queues only healthy incomplete sources',async()=>{
+ const db=new DatabaseSync(':memory:');const sql=(q,...args)=>({first:async()=>db.prepare(q).get(...args)||null,all:async()=>({results:db.prepare(q).all(...args)}),run:async()=>db.prepare(q).run(...args)}),dispatches=[];
+ const call=async(path,body,extra={})=>substackRoute(new Request('https://api.test'+path,{method:'POST',body:JSON.stringify(body)}),{sql,reply:(data,status=200)=>({data,status}),user:{id:'alice'},dispatch:async(...args)=>{dispatches.push(args);return true;},env:{},...extra});
+ const result=await call('/substack/authors',{url:'https://letters.substack.com',title:'Letters'});assert.equal(result.data.author.id,'letters');assert.match(result.data.message,/全部歷史文章/);assert.deepEqual(dispatches[0][2],{author_id:'letters',continuation:'false'});
+ db.prepare('UPDATE substack_authors SET updated_at=? WHERE id=?').run(new Date().toISOString(),'letters');
+ const refresh=await call('/substack/refresh',{author_id:'letters'});assert.equal(refresh.status,200);assert.equal(dispatches.length,2); // recent partial import must not be throttled
+ await call('/admin/substack/continue',{}, {admin:true});assert.deepEqual(dispatches.at(-1)[2],{author_id:'',continuation:'true'});
+ db.prepare("UPDATE substack_authors SET archive_complete=1").run();const before=dispatches.length;assert.equal((await call('/admin/substack/continue',{}, {admin:true})).data.continued,false);assert.equal(dispatches.length,before);
+ db.prepare("UPDATE substack_authors SET archive_complete=0,last_error='blocked'").run();assert.equal((await call('/admin/substack/continue',{}, {admin:true})).data.continued,false);
+ assert.equal((await call('/substack/resolve',{url:'https://letters.substack.com'},{flags:{'news_calendar.substack_import':false}})).status,403);
+ assert.equal((await call('/admin/substack/continue',{})).status,403);db.close();
 });
 test('Substack results use the same private account schema and source paragraph navigation',()=>{
  const row={id:'substack:a',title:'文章',kind:'substack',date:'2026-10-13',updated_at:'2026-10-14T00:00:00Z',answer:'作者觀點',text:'NVIDIA 是觀察標的。',partial:true,failures:[],episode:{id:'a',url:DEFAULT_SUBSTACK.url+'/p/a',channel_name:'作者'}};

@@ -1,5 +1,16 @@
 import {isUS,usCompanies,usMention,companyAliases,enrichCompany} from './markets.js';
 export const DEFAULT_SUBSTACK={id:'unclestocknotes',title:'大叔美股筆記 Uncle Stock Notes',url:'https://unclestocknotes.substack.com'};
+export function substackAuthorInput(value){
+ const u=new URL(String(value||'').trim());
+ if(u.protocol!=='https:'||u.username||u.password||u.port)throw Error('請使用 HTTPS Substack 作者或刊物網址');
+ if(['substack.com','www.substack.com','open.substack.com'].includes(u.hostname)){
+  const path=decodeURIComponent(u.pathname),profile=path.match(/^\/@([a-zA-Z0-9_.-]{1,80})(?:\/(?:posts|activity))?\/?$/);
+  if(profile)return {kind:'profile',handle:profile[1],url:'https://substack.com/@'+profile[1]};
+  const publication=path.match(/^\/pub\/([a-z0-9][a-z0-9-]*)(?:\/|$)/);
+  if(publication)return {kind:'publication',url:'https://'+publication[1]+'.substack.com'};
+ }
+ return {kind:'publication',url:substackPublication(u.href)};
+}
 export function substackPublication(value){
  const u=new URL(String(value||'').trim());
  if(u.protocol!=='https:'||u.username||u.password||u.port)throw Error('請使用 HTTPS Substack 刊物網址');

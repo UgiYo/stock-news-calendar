@@ -4,6 +4,15 @@ on:
     # 06:20 and 18:20 Asia/Taipei; actual start depends on GitHub scheduling.
     - cron: '20 22,10 * * *'
   workflow_dispatch:
+    inputs:
+      author_id:
+        description: Prioritize this publication; remaining authors are also processed
+        type: string
+        default: ''
+      continuation:
+        description: Automatically resume remaining historical archives
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -16,6 +25,8 @@ jobs:
     env:
       WORKER_API_URL: ${{ vars.WORKER_API_URL }}
       COLLECTOR_SECRET: ${{ secrets.COLLECTOR_SECRET }}
+      SUBSTACK_AUTHOR_ID: ${{ inputs.author_id }}
+      SUBSTACK_CONTINUATION: ${{ inputs.continuation }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

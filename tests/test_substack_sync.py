@@ -1,6 +1,8 @@
 import importlib.util
 import pathlib
 import unittest
+import urllib.error
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('substack_sync', pathlib.Path(__file__).parents[1] / 'scripts/sync_substack.py')
 sync = importlib.util.module_from_spec(spec); spec.loader.exec_module(sync)
@@ -54,5 +56,57 @@ class SubstackSyncTest(unittest.TestCase):
     def test_large_public_article_is_marked_partial_and_cannot_block_history(self):
         row=sync.article_row({**post(0),'body_html':'<p>'+'中'*100001+'</p>'},{'url':'https://example.substack.com'})
         self.assertEqual(len(row['text']),100000);self.assertEqual(row['access'],'preview')
+
+    def test_full_import_goes_past_200_posts_and_reads_final_page(self):
+        posts=[post(n) for n in range(225)];saved=[]
+        def fetch(url):
+            if '/archive?' in url:
+                offset=int(url.split('offset=')[1].split('&')[0]);return posts[offset:offset+20]
+            return posts[int(url.rsplit('-',1)[1])]
+        author={'id':'example','url':'https://example.substack.com','archive_offset':0,'archive_complete':0}
+        self.assertTrue(sync.sync_author(author,lambda path,data:saved.append(data),fetch,max_pages=None))
+        self.assertEqual(saved[-1]['archive_offset'],225);self.assertTrue(saved[-1]['archive_complete']);self.assertEqual(len({a['url'] for batch in saved for a in batch['articles']}),225)
+
+    def test_time_budget_preserves_page_cursor_and_resume_finishes(self):
+        posts=[post(n) for n in range(45)];saved=[];ticks=iter([0]*21+[2])
+        def fetch(url):
+            if '/archive?' in url:
+                offset=int(url.split('offset=')[1].split('&')[0]);return posts[offset:offset+20]
+            return posts[int(url.rsplit('-',1)[1])]
+        author={'id':'example','url':'https://example.substack.com','archive_offset':0,'archive_complete':0}
+        with self.assertRaises(sync.ImportBudgetExpired):sync.sync_author(author,lambda path,data:saved.append(data),fetch,max_pages=None,deadline=1,clock=lambda:next(ticks))
+        self.assertEqual(saved[-1]['archive_offset'],20);self.assertFalse(saved[-1]['archive_complete'])
+        author['archive_offset']=20;self.assertTrue(sync.sync_author(author,lambda path,data:saved.append(data),fetch,max_pages=None));self.assertEqual(saved[-1]['archive_offset'],45)
+        self.assertEqual(len({a['url'] for batch in saved for a in batch['articles']}),45)
+
+    def test_locked_article_retains_preview_and_does_not_block_older_posts(self):
+        saved=[]
+        def fetch(url):
+            if '/archive?' in url:return [{**post(0),'subtitle':'公開說明'},post(1)]
+            if url.endswith('post-0'):raise urllib.error.HTTPError(url,403,'Paid',{},None)
+            return post(1)
+        author={'id':'example','url':'https://example.substack.com','archive_offset':0,'archive_complete':0}
+        self.assertTrue(sync.sync_author(author,lambda path,data:saved.append(data),fetch,max_pages=None))
+        self.assertEqual(len(saved[-1]['articles']),2);self.assertEqual(saved[-1]['articles'][0]['access'],'preview');self.assertEqual(saved[-1]['articles'][0]['text'],'公開說明')
+        self.assertTrue(saved[-1]['archive_complete'])
+
+    def test_stalled_archive_pagination_stops_after_saved_page(self):
+        saved=[];posts=[post(n) for n in range(20)]
+        def fetch(url):
+            if '/archive?' in url:return posts
+            return posts[int(url.rsplit('-',1)[1])]
+        author={'id':'example','url':'https://example.substack.com','archive_offset':0,'archive_complete':0}
+        with self.assertRaisesRegex(ValueError,'did not advance'):sync.sync_author(author,lambda path,data:saved.append(data),fetch,max_pages=None)
+        self.assertEqual(len(saved),1);self.assertEqual(saved[0]['archive_offset'],20)
+
+    def test_workflow_pause_automatically_queues_remaining_archives(self):
+        calls=[];authors=[{'id':'first','archive_complete':0},{'id':'priority','archive_complete':0}]
+        def api(url,data=None,token=None):
+            calls.append((url,data))
+            return {'authors':authors} if url.endswith('/authors') else {'continued':True}
+        with patch.dict(sync.os.environ,{'WORKER_API_URL':'https://api.test','COLLECTOR_SECRET':'fixture','SUBSTACK_AUTHOR_ID':'priority','SUBSTACK_CONTINUATION':'false'}),patch.object(sync,'read_json',side_effect=api),patch.object(sync,'sync_author',side_effect=sync.ImportBudgetExpired()) as importer:
+            sync.main()
+            self.assertEqual(importer.call_args.args[0]['id'],'priority');self.assertIsNone(importer.call_args.kwargs['max_pages'])
+        self.assertEqual(calls[-1],('https://api.test/admin/substack/continue',{}))
 
 if __name__ == '__main__': unittest.main()

@@ -9,14 +9,16 @@ Object.defineProperty(window.SVGElement.prototype,'viewBox',{configurable:true,g
 window.HTMLElement.prototype.focus=function(){};window.HTMLElement.prototype.scrollIntoView=function(){};window.scrollTo=()=>{};window.matchMedia=globalThis.matchMedia;
 const storage=new Map();globalThis.localStorage={get length(){return storage.size},key:i=>[...storage.keys()][i],getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,String(v)),removeItem:k=>storage.delete(k)};
 localStorage.setItem('stock-news-session','alice');localStorage.setItem('stock-account-sync:alice:enabled','true');
-const intervals=globalThis.setInterval;globalThis.setInterval=()=>0;
+const intervals=globalThis.setInterval;globalThis.setInterval=()=>0;const timeouts=globalThis.setTimeout;let progressTick=null;globalThis.setTimeout=(fn,ms,...args)=>ms===30000?(progressTick=fn,-30000):timeouts(fn,ms,...args);
 const companies=[{code:'2330',name:'台積電',full_name:'台灣積體電路',market:'上市'},{code:'US:NVDA',name:'輝達',full_name:'NVIDIA',market:'美股'}];
 const substackFixture=[{id:'unclestocknotes:nvda',author_id:'unclestocknotes',author_title:'大叔美股筆記',title:'作者提及 NVIDIA',date:'2026-10-08',published_at:'2026-10-08T18:00:00Z',url:'https://unclestocknotes.substack.com/p/nvda',access:'public',mentions:[{code:'US:NVDA',name:'輝達'}]},{id:'unclestocknotes:msft',author_id:'unclestocknotes',author_title:'大叔美股筆記',title:'作者提及 Microsoft',date:'2026-10-07',published_at:'2026-10-07T18:00:00Z',url:'https://unclestocknotes.substack.com/p/msft',access:'preview',mentions:[{code:'US:MSFT',name:'微軟'}]}];
 const news=[{company_code:'2330',news_date:'2026-10-08',published_at:'2026-10-08T01:00:00Z',title:'台積電台股專用新聞',source:'中央社',url:'https://www.cna.com.tw/tw'},{company_code:'US:NVDA',news_date:'2026-10-08',published_at:'2026-10-08T18:00:00Z',title:'NVIDIA US only news',source:'Reuters',url:'https://www.reuters.com/us'}];
+let substackAuthorsFixture=[{id:'unclestocknotes',title:'大叔美股筆記',archive_offset:2,archive_complete:1,article_count:2,public_count:1}];
 let featureFlags={};let accountSyncEnabled=true;const calls=[];globalThis.fetch=async(value,options={})=>{const u=new URL(value,'https://ui.test');calls.push(u.pathname+u.search);let result={};
  if(u.pathname==='/industry-topology')result={document:publishedTopology(INITIAL_TOPOLOGY,featureFlags),revision:0};
  if(u.pathname==='/industry-topology/news')result={news:news.filter(n=>(u.searchParams.get('codes')||'').split(',').includes(n.company_code))};
- if(u.pathname==='/substack/authors')result={authors:[{id:'unclestocknotes',title:'大叔美股筆記',archive_offset:2,archive_complete:1}]};
+ if(u.pathname==='/substack/authors'){if(options.body){const body=JSON.parse(options.body),id=new URL(body.url).hostname.split('.')[0];if(!substackAuthorsFixture.some(a=>a.id===id))substackAuthorsFixture.push({id,title:body.title,archive_offset:0,archive_complete:0,article_count:0,public_count:0});result={author:{id},message:'已開始匯入全部歷史文章'};}else result={authors:substackAuthorsFixture};}
+ if(u.pathname==='/substack/resolve')result={candidates:[{url:'https://differentpublication.substack.com',title:'測試作者的刊物'}]};
  if(u.pathname==='/substack/articles')result={articles:substackFixture,has_more:false};
  if(u.pathname==='/substack/article')result={article:{...substackFixture.find(a=>a.id===u.searchParams.get('id')),text:'NVIDIA 是作者的觀察標的，沒有表示買進。'}};
  if(u.pathname==='/features')result={features:featureFlags};
@@ -46,6 +48,20 @@ try{
  await mod.switchMarket('US');assert.equal(document.querySelector('[data-market="US"]').getAttribute('aria-selected'),'true');assert.equal(document.querySelector('#ranking-tab').hidden,true);assert.ok(document.querySelector('.market-context').textContent.includes('USD'));
  for(let i=0;i<50&&document.querySelectorAll('.substack-card').length<2;i++)await new Promise(r=>setTimeout(r,5));
  assert.equal(document.querySelectorAll('.substack-card').length,2);assert.ok(document.querySelector('.substack-watch-badge'));assert.match(document.querySelector('.substack-card .stock-actions').textContent,/★ NVDA/);
+ assert.match(document.querySelector('.substack-author-progress').textContent,/已匯入 2 篇/);
+ document.querySelector('[data-substack-import-open]').click();assert.ok(document.querySelector('details.substack-import').hasAttribute('open'));
+ let importForm=document.querySelector('[data-substack-import]');importForm.querySelector('[name=url]').value='https://substack.com/@differentauthor';importForm.dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true}));
+ for(let i=0;i<60&&!document.querySelector('[data-substack-import-candidate]');i++)await new Promise(r=>setTimeout(r,5));
+ assert.match(document.querySelector('.substack-import-candidate').textContent,/differentpublication.substack.com/);assert.match(document.querySelector('.substack-import-candidate').textContent,/全部文章/);
+ document.querySelector('[data-substack-import-candidate]').click();for(let i=0;i<60&&!document.querySelector('[data-substack-author-refresh="differentpublication"]');i++)await new Promise(r=>setTimeout(r,5));
+ assert.match(document.querySelector('[data-substack-author-refresh="differentpublication"]').closest('article').textContent,/等待背景匯入/);assert.equal(document.querySelector('[data-substack-date]').hasAttribute('checked'),false);
+ substackAuthorsFixture.find(a=>a.id==='differentpublication').archive_complete=1;substackAuthorsFixture.find(a=>a.id==='differentpublication').article_count=225;
+ assert.equal(typeof progressTick,'function');await progressTick();for(let i=0;i<60&&!document.querySelector('[data-substack-author-refresh="differentpublication"]').closest('article').textContent.includes('225');i++)await new Promise(r=>setTimeout(r,5));
+ assert.match(document.querySelector('[data-substack-author-refresh="differentpublication"]').closest('article').textContent,/全部歷史文章匯入完成.*已匯入 225 篇/);
+ const authorSelect=document.querySelector('[data-substack-author]');Object.defineProperty(authorSelect,'value',{configurable:true,value:''});authorSelect.dispatchEvent(new window.Event('change'));
+ featureFlags={'news_calendar.substack_import':false};await mod.refreshFeatures();await Promise.resolve();assert.equal(document.querySelector('[data-substack-import-open]'),null);
+ featureFlags={};await mod.refreshFeatures();await Promise.resolve();
+
  document.querySelector('[data-substack-open="unclestocknotes:nvda"]').click();for(let i=0;i<50&&!document.querySelector('[data-substack-evidence="US:NVDA"]');i++)await new Promise(r=>setTimeout(r,5));
  assert.match(document.querySelector('#substack-article-dialog').textContent,/沒有表示買進/);document.querySelector('[data-substack-close]').click();
  mod.state.date='2026-10-08';mod.state.dayOpen=true;mod.render();assert.ok(document.querySelector('#day-dialog .substack-day'));mod.state.dayOpen=false;
@@ -88,4 +104,4 @@ try{
  assert.equal(document.querySelector('#site-assistant-panel').hidden,true);
  mod.state.user=null;mod.render();await Promise.resolve();assert.equal(document.querySelector('#site-assistant-launch').hidden,true);
  console.log('US market DOM integration passed: tabs, isolated news, mixed watchlist, filters, per-market dates, search, daily candle dialog and topology with admin feature control.');
-}finally{globalThis.setInterval=intervals;}
+}finally{globalThis.setInterval=intervals;globalThis.setTimeout=timeouts;}

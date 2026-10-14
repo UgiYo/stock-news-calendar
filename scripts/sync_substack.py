@@ -6,6 +6,8 @@ import datetime
 import html.parser
 import json
 import os
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -59,9 +61,20 @@ def upload_update(api, data):
         batch.append(row); size += count
     api('/admin/substack/update', {**data, 'articles': batch})
 
-def sync_author(author, api, fetch=read_json, max_pages=10):
+class ImportBudgetExpired(Exception):
+    """A clean pause; saved pages will be resumed by the next workflow."""
+
+def sync_author(author, api, fetch=read_json, max_pages=10, deadline=None, clock=time.monotonic):
+    def check_budget():
+        if deadline is not None and clock() >= deadline: raise ImportBudgetExpired()
     def detail_row(post):
-        detail = fetch(author['url'] + '/api/v1/posts/' + urllib.parse.quote(str(post['slug']), safe='-'))
+        check_budget()
+        try: detail = fetch(author['url'] + '/api/v1/posts/' + urllib.parse.quote(str(post['slug']), safe='-'))
+        except urllib.error.HTTPError as error:
+            # A locked/deleted article must not block every older article. Keep
+            # the archive title/date and only its public description as preview.
+            if error.code not in (401, 403, 404): raise
+            return article_row({**post, 'body_html': '', 'audience': 'only_paid'}, author)
         if not isinstance(detail, dict) or str(detail.get('slug')) != str(post['slug']): raise ValueError('Article source mismatch')
         return article_row(detail, author)
     # Collect new pages until the saved publication date. Commit oldest first:
@@ -71,6 +84,7 @@ def sync_author(author, api, fetch=read_json, max_pages=10):
         latest = datetime.datetime.fromisoformat(latest.replace('Z', '+00:00'))
         batches = []; offset = 0; seen_pages = set()
         while True:
+            check_budget()
             posts = fetch(author['url'] + '/api/v1/archive?sort=new&offset=' + str(offset) + '&limit=20')
             if not isinstance(posts, list): raise ValueError('Archive response is not a list')
             signature = tuple(str(p.get('slug', '')) for p in posts)
@@ -81,36 +95,49 @@ def sync_author(author, api, fetch=read_json, max_pages=10):
             if len(new) < len(posts) or len(posts) < 20: break
             offset += len(posts)
         for rows in reversed(batches): upload_update(api, {'author_id': author['id'], 'articles': sorted(rows, key=lambda r:r['published_at'])})
-    if author['archive_complete']: return
+    if author['archive_complete']: return True
     # Resume historical pages, overlapping one page to absorb archive shifts.
-    offsets = [max(0, author['archive_offset'] - 20)]
-    for page in range(max_pages):
-        offset = offsets.pop(0)
+    offset = max(0, author['archive_offset'] - 20)
+    page = 0; seen_pages = set()
+    while max_pages is None or page < max_pages:
+        check_budget()
         posts = fetch(author['url'] + '/api/v1/archive?sort=new&offset=' + str(offset) + '&limit=20')
         if not isinstance(posts, list): raise ValueError('Archive response is not a list')
         if posts and any(not p.get('slug') for p in posts): raise ValueError('Archive response missing article slugs')
+        signature = tuple(str(p['slug']) for p in posts)
+        if posts and signature in seen_pages: raise ValueError('Archive pagination did not advance')
+        seen_pages.add(signature)
         rows = []
         for post in posts:
             # Archive lists may omit bodies; use only anonymously accessible detail.
             rows.append(detail_row(post))
-        historical = True
-        update = {'author_id': author['id'], 'articles': rows}
-        if historical:
-            update.update(archive_offset=offset + len(posts), archive_complete=len(posts) < 20)
-        upload_update(api, update)
-        if historical and len(posts) == 20 and not offsets: offsets.append(offset + len(posts))
-        if not offsets: break
+        upload_update(api, {'author_id': author['id'], 'articles': rows,
+                            'archive_offset': offset + len(posts), 'archive_complete': len(posts) < 20})
+        page += 1
+        if len(posts) < 20: return True
+        offset += len(posts)
+    return False
 
 def main():
     base = os.environ['WORKER_API_URL'].rstrip('/'); token = os.environ['COLLECTOR_SECRET']
     def api(path, data=None): return read_json(base + path, data, token)
-    errors = []
-    for author in api('/admin/substack/authors')['authors']:
+    errors = []; priority = os.environ.get('SUBSTACK_AUTHOR_ID', ''); continuation = os.environ.get('SUBSTACK_CONTINUATION') == 'true'
+    deadline = time.monotonic() + 20 * 60
+    authors = api('/admin/substack/authors')['authors']
+    authors.sort(key=lambda a:(a['id'] != priority, bool(a['archive_complete']), a['id']))
+    for author in authors:
+        if continuation and author.get('last_error'): continue
         try:
-            sync_author(author, api)
+            sync_author(author, api, max_pages=None, deadline=deadline)
+        except ImportBudgetExpired:
+            print('Import time budget reached; saved pages will continue in the next workflow.'); break
         except Exception as error:
             message = str(error)[:400]; print(author['id'] + ': ' + message); errors.append(author['id'])
             api('/admin/substack/update', {'author_id': author['id'], 'error': '公開文章更新失敗：' + message})
+    # Global workflow concurrency prevents overlapping writes. The next run
+    # checks all authors again, so concurrent user requests cannot strand one.
+    result = api('/admin/substack/continue', {})
+    if result.get('continued'): print('Remaining historical archives queued for automatic continuation.')
     if errors: raise RuntimeError('Failed authors: ' + ', '.join(errors))
 
 if __name__ == '__main__': main()

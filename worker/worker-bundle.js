@@ -345,6 +345,17 @@ function newsQuery(c, range = "when:1m") {
 
 // shared/substack.js
 var DEFAULT_SUBSTACK = { id: "unclestocknotes", title: "\u5927\u53D4\u7F8E\u80A1\u7B46\u8A18 Uncle Stock Notes", url: "https://unclestocknotes.substack.com" };
+function substackAuthorInput(value) {
+  const u = new URL(String(value || "").trim());
+  if (u.protocol !== "https:" || u.username || u.password || u.port) throw Error("\u8ACB\u4F7F\u7528 HTTPS Substack \u4F5C\u8005\u6216\u520A\u7269\u7DB2\u5740");
+  if (["substack.com", "www.substack.com", "open.substack.com"].includes(u.hostname)) {
+    const path = decodeURIComponent(u.pathname), profile = path.match(/^\/@([a-zA-Z0-9_.-]{1,80})(?:\/(?:posts|activity))?\/?$/);
+    if (profile) return { kind: "profile", handle: profile[1], url: "https://substack.com/@" + profile[1] };
+    const publication = path.match(/^\/pub\/([a-z0-9][a-z0-9-]*)(?:\/|$)/);
+    if (publication) return { kind: "publication", url: "https://" + publication[1] + ".substack.com" };
+  }
+  return { kind: "publication", url: substackPublication(u.href) };
+}
 function substackPublication(value) {
   const u = new URL(String(value || "").trim());
   if (u.protocol !== "https:" || u.username || u.password || u.port) throw Error("\u8ACB\u4F7F\u7528 HTTPS Substack \u520A\u7269\u7DB2\u5740");
@@ -366,6 +377,58 @@ function substackMentions(text, companies = usCompanies) {
 }
 
 // worker/substack.js
+var decode = (v) => String(v || "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&apos;|&#39;/g, "'").replace(/&#(\d+);/g, (_, n) => Number(n) <= 1114111 ? String.fromCodePoint(Number(n)) : "").replace(/<[^>]*>/g, "").trim();
+function substackProfileCandidates(html) {
+  const candidates = /* @__PURE__ */ new Map();
+  for (const m of String(html || "").matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    try {
+      const link = new URL(decode(m[1]));
+      if (!["", "/", "/about", "/archive"].includes(link.pathname)) continue;
+      const url = substackPublication(link.href), title = decode(m[2]).slice(0, 500) || new URL(url).hostname.split(".")[0];
+      const old = candidates.get(url);
+      if (!old || old.title === new URL(url).hostname.split(".")[0]) candidates.set(url, { url, title });
+    } catch {
+    }
+  }
+  return [...candidates.values()].slice(0, 20);
+}
+async function readSubstackSource(url, fetcher) {
+  const expected = new URL(url);
+  let endpoint = url;
+  for (let i = 0; i < 3; i++) {
+    const r = await fetcher(endpoint, { redirect: "manual", headers: { "User-Agent": "Mozilla/5.0 (compatible; StockNewsCalendar/1.0)", "Accept": "text/html,application/rss+xml" }, signal: AbortSignal.timeout(12e3) });
+    if (r.status >= 300 && r.status < 400) {
+      const next = new URL(r.headers.get("Location") || "", endpoint);
+      if (next.protocol !== "https:" || next.hostname !== expected.hostname || next.username || next.password || next.port) throw Error("\u4F86\u6E90\u8F49\u5740\u7121\u6CD5\u78BA\u8A8D\uFF0C\u8ACB\u76F4\u63A5\u8CBC\u4E0A\u520A\u7269\u7DB2\u5740");
+      endpoint = next.href;
+      continue;
+    }
+    if (!r.ok) throw Error("Substack HTTP " + r.status);
+    const text = await r.text();
+    if (text.length > 2e6) throw Error("\u4F5C\u8005\u9801\u56DE\u61C9\u904E\u5927");
+    return text;
+  }
+  throw Error("\u4F86\u6E90\u8F49\u5740\u6B21\u6578\u904E\u591A");
+}
+async function resolveSubstackAuthor(value, fetcher = globalThis.fetch) {
+  const input = substackAuthorInput(value);
+  if (input.url === "https://substack.com/@unclestocknotes" || input.url === DEFAULT_SUBSTACK.url) return { candidates: [{ url: DEFAULT_SUBSTACK.url, title: DEFAULT_SUBSTACK.title }] };
+  if (input.kind === "publication") {
+    let title = new URL(input.url).hostname.split(".")[0], warning = "";
+    try {
+      const xml = await readSubstackSource(input.url + "/feed", fetcher);
+      const name = decode(xml.match(/<channel\b[^>]*>[\s\S]*?<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]);
+      if (!name) throw Error("\u672A\u53D6\u5F97\u6709\u6548 RSS");
+      title = name.slice(0, 500);
+    } catch {
+      warning = "\u66AB\u6642\u7121\u6CD5\u8B80\u53D6\u520A\u7269\u540D\u7A31\uFF0C\u4ECD\u53EF\u532F\u5165\uFF1B\u80CC\u666F\u5DE5\u4F5C\u5C07\u78BA\u8A8D\u4F86\u6E90\u4E26\u986F\u793A\u7D50\u679C\u3002";
+    }
+    return { candidates: [{ url: input.url, title }], ...warning ? { warning } : {} };
+  }
+  const html = await readSubstackSource(input.url, fetcher), candidates = substackProfileCandidates(html);
+  if (!candidates.length) throw Error("\u4F5C\u8005\u9801\u5C1A\u672A\u63D0\u4F9B\u53EF\u8FA8\u8B58\u7684\u520A\u7269\u9023\u7D50\uFF0C\u8ACB\u958B\u555F\u8A72\u4F5C\u8005\u7684\u520A\u7269\u9801\uFF0C\u8CBC\u4E0A https://\u520A\u7269.substack.com \u7DB2\u5740");
+  return { candidates, warning: "\u8ACB\u6838\u5C0D\u4F5C\u8005\u8207\u520A\u7269\u3002\u4F5C\u8005\u9801\u53EF\u80FD\u5217\u51FA\u591A\u500B\u520A\u7269\uFF0C\u53EA\u6709\u4F60\u9078\u64C7\u7684\u520A\u7269\u6703\u52A0\u5165\u532F\u5165\u3002" };
+}
 function normalizeSubstackArticle(data, author) {
   const u = new URL(data.url);
   if (u.origin !== author.url || !/^\/p\/[^/]+$/.test(u.pathname) || u.username || u.password) throw Error("\u6587\u7AE0\u5FC5\u9808\u4F86\u81EA\u5C0D\u61C9\u520A\u7269");
@@ -374,41 +437,75 @@ function normalizeSubstackArticle(data, author) {
   if (text.length > 1e5) throw Error("\u6587\u7AE0\u5167\u6587\u8D85\u904E\u4E0A\u9650");
   return { id: author.id + ":" + u.pathname.slice(3), author_id: author.id, author_title: author.title, url: u.origin + u.pathname, title: String(data.title), published_at: new Date(data.published_at).toISOString(), date: marketDay(new Date(data.published_at), "US"), access: data.access === "public" ? "public" : "preview", text, mentions: substackMentions(text) };
 }
-async function substackRoute(req, { sql, reply, user, admin = false, dispatch: dispatch2, env, flags = {} }) {
+async function substackRoute(req, { sql, reply, user, admin = false, dispatch: dispatch2, env, flags = {}, fetcher = globalThis.fetch }) {
   const u = new URL(req.url), path = u.pathname;
-  if (!["/substack/authors", "/substack/articles", "/substack/article", "/substack/refresh", "/admin/substack/authors", "/admin/substack/update"].includes(path)) return null;
+  if (!["/substack/authors", "/substack/articles", "/substack/article", "/substack/refresh", "/substack/resolve", "/admin/substack/authors", "/admin/substack/update", "/admin/substack/continue"].includes(path)) return null;
   if (!admin && !user) return reply({ error: "\u8ACB\u5148\u767B\u5165" }, 401);
   if (path.startsWith("/admin/") && !admin) return reply({ error: "Forbidden" }, 403);
   if (!admin && (flags["markets.us"] === false || flags["news_calendar.substack"] === false)) return reply({ error: "Substack \u529F\u80FD\u76EE\u524D\u672A\u958B\u653E" }, 403);
+  if (path === "/substack/resolve") {
+    if (flags["news_calendar.substack_import"] === false) return reply({ error: "\u4F5C\u8005\u532F\u5165\u76EE\u524D\u672A\u958B\u653E" }, 403);
+    if (req.method !== "POST") return reply({ error: "Method not allowed" }, 405);
+    try {
+      return reply(await resolveSubstackAuthor((await req.json()).url, fetcher));
+    } catch (e) {
+      return reply({ error: e.message }, 400);
+    }
+  }
   await sql("CREATE TABLE IF NOT EXISTS substack_authors(id TEXT PRIMARY KEY,url TEXT UNIQUE NOT NULL,title TEXT NOT NULL,archive_offset INTEGER NOT NULL DEFAULT 0,archive_complete INTEGER NOT NULL DEFAULT 0,updated_at TEXT,last_error TEXT)").run();
   await sql("CREATE TABLE IF NOT EXISTS substack_articles(id TEXT PRIMARY KEY,author_id TEXT NOT NULL,date TEXT NOT NULL,published_at TEXT NOT NULL,payload TEXT NOT NULL)").run();
   await sql("CREATE INDEX IF NOT EXISTS substack_articles_date ON substack_articles(date DESC,published_at DESC,id)").run();
+  await sql("CREATE INDEX IF NOT EXISTS substack_articles_author ON substack_articles(author_id,published_at)").run();
   await sql("INSERT INTO substack_authors(id,url,title) VALUES(?,?,?) ON CONFLICT(id) DO NOTHING", DEFAULT_SUBSTACK.id, DEFAULT_SUBSTACK.url, DEFAULT_SUBSTACK.title).run();
-  if (path.endsWith("/authors") && req.method === "GET") return reply({ authors: (await sql("SELECT a.*,(SELECT MAX(published_at) FROM substack_articles WHERE author_id=a.id) AS latest_published_at FROM substack_authors a ORDER BY title").all()).results });
+  if (path.endsWith("/authors") && req.method === "GET") return reply({ authors: (await sql("SELECT a.*,COUNT(b.id) AS article_count,COALESCE(SUM(CASE WHEN json_extract(b.payload,'$.access')='public' THEN 1 ELSE 0 END),0) AS public_count,MAX(b.published_at) AS latest_published_at FROM substack_authors a LEFT JOIN substack_articles b ON b.author_id=a.id GROUP BY a.id ORDER BY a.title").all()).results });
+  if (path === "/admin/substack/continue" && req.method === "POST") {
+    const pending = await sql("SELECT id FROM substack_authors WHERE archive_complete=0 AND last_error IS NULL LIMIT 1").first();
+    if (!pending) return reply({ continued: false });
+    try {
+      await dispatch2(env, "substack.yml", { author_id: "", continuation: "true" });
+      return reply({ continued: true });
+    } catch (e) {
+      await sql("UPDATE substack_authors SET last_error=? WHERE archive_complete=0 AND last_error IS NULL", "\u5F8C\u7E8C\u532F\u5165\u672A\u555F\u52D5\uFF1A" + e.message).run();
+      return reply({ error: "\u5F8C\u7E8C\u532F\u5165\u7121\u6CD5\u6392\u5165\uFF1A" + e.message }, 502);
+    }
+  }
   if (path === "/substack/authors" && req.method === "POST") {
     if (flags["news_calendar.substack_import"] === false) return reply({ error: "\u4F5C\u8005\u532F\u5165\u76EE\u524D\u672A\u958B\u653E" }, 403);
     try {
-      const data = await req.json(), url = substackPublication(data.url), id = new URL(url).hostname.split(".")[0];
+      const data = await req.json(), input = substackAuthorInput(data.url);
+      let url, title = data.title;
+      if (input.kind === "profile") {
+        const resolved = await resolveSubstackAuthor(input.url, fetcher);
+        if (resolved.candidates.length !== 1) throw Error("\u6B64\u4F5C\u8005\u9801\u5217\u51FA\u591A\u500B\u520A\u7269\uFF0C\u8ACB\u5148\u89E3\u6790\u4F5C\u8005\uFF0C\u518D\u9078\u64C7\u8981\u532F\u5165\u7684\u520A\u7269");
+        url = resolved.candidates[0].url;
+        title = title || resolved.candidates[0].title;
+      } else url = input.url;
+      const id = new URL(url).hostname.split(".")[0];
       const count = await sql("SELECT COUNT(*) AS total FROM substack_authors").first();
       if (count.total >= 50 && !await sql("SELECT id FROM substack_authors WHERE id=?", id).first()) throw Error("\u4F5C\u8005\u5DF2\u9054 50 \u4F4D\u4E0A\u9650");
-      await sql("INSERT INTO substack_authors(id,url,title) VALUES(?,?,?) ON CONFLICT(id) DO NOTHING", id, url, String(data.title || id).slice(0, 500)).run();
+      await sql("INSERT INTO substack_authors(id,url,title) VALUES(?,?,?) ON CONFLICT(id) DO NOTHING", id, url, String(title || id).slice(0, 500)).run();
+      await sql("UPDATE substack_authors SET last_error=NULL WHERE id=?", id).run();
       let warning = "";
       try {
-        await dispatch2(env, "substack.yml");
+        await dispatch2(env, "substack.yml", { author_id: id, continuation: "false" });
       } catch (e) {
         warning = e.message;
+        await sql("UPDATE substack_authors SET last_error=? WHERE id=?", "\u80CC\u666F\u532F\u5165\u672A\u555F\u52D5\uFF1A" + warning, id).run();
       }
-      return reply({ ok: true, warning, message: warning ? "\u4F5C\u8005\u5DF2\u4FDD\u5B58\uFF0C\u6392\u7A0B\u5C1A\u672A\u555F\u52D5" : "\u4F5C\u8005\u5DF2\u4FDD\u5B58\uFF0C\u6B77\u53F2\u6587\u7AE0\u532F\u5165\u5DF2\u6392\u5165\u80CC\u666F" });
+      return reply({ ok: true, author: { id, url, title: String(title || id).slice(0, 500) }, warning, message: warning ? "\u4F5C\u8005\u5DF2\u4FDD\u5B58\uFF0C\u6392\u7A0B\u5C1A\u672A\u555F\u52D5" : "\u5DF2\u958B\u59CB\u532F\u5165\u6B64\u520A\u7269\u7684\u5168\u90E8\u6B77\u53F2\u6587\u7AE0\uFF0C\u80CC\u666F\u6703\u81EA\u52D5\u7E8C\u6293\u81F3\u6700\u5F8C\u4E00\u9801" });
     } catch (e) {
       return reply({ error: e.message }, 400);
     }
   }
   if (path === "/substack/refresh" && req.method === "POST") {
-    const row = await sql("SELECT MAX(updated_at) AS latest FROM substack_authors").first();
-    if (row.latest && Date.now() - Date.parse(row.latest) < 15 * 6e4) return reply({ message: "\u6700\u8FD1 15 \u5206\u9418\u5DF2\u66F4\u65B0\uFF0C\u8ACB\u5148\u91CD\u65B0\u8F09\u5165\u6587\u7AE0" });
+    const data = await req.json(), id = String(data.author_id || "");
+    const row = id ? await sql("SELECT * FROM substack_authors WHERE id=?", id).first() : null;
+    if (id && !row) return reply({ error: "\u627E\u4E0D\u5230\u4F5C\u8005" }, 404);
+    if (row?.archive_complete && !row.last_error && row.updated_at && Date.now() - Date.parse(row.updated_at) < 15 * 6e4) return reply({ message: "\u6B64\u4F5C\u8005\u6700\u8FD1 15 \u5206\u9418\u5DF2\u66F4\u65B0\uFF0C\u8ACB\u5148\u91CD\u65B0\u8F09\u5165\u6587\u7AE0" });
     try {
-      await dispatch2(env, "substack.yml");
-      return reply({ message: "\u5DF2\u6392\u5165\u80CC\u666F\u66F4\u65B0\uFF1B\u5B8C\u6210\u5F8C\u8ACB\u91CD\u65B0\u8F09\u5165\u6587\u7AE0" });
+      await dispatch2(env, "substack.yml", { author_id: id, continuation: "false" });
+      if (row) await sql("UPDATE substack_authors SET last_error=NULL WHERE id=?", id).run();
+      return reply({ message: "\u5DF2\u6392\u5165\u80CC\u666F\u532F\u5165\uFF0F\u66F4\u65B0\uFF1B\u6B77\u53F2\u6587\u7AE0\u672A\u5B8C\u6210\u6642\u6703\u81EA\u52D5\u7E8C\u6293\uFF0C\u4F60\u53EF\u4EE5\u95DC\u9589\u9801\u9762" });
     } catch (e) {
       return reply({ error: e.message }, 502);
     }
