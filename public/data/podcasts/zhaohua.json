@@ -3,15 +3,26 @@
   "title": "兆華與股惑仔",
   "spotify": "https://open.spotify.com/show/6cMUsVRnTCrCqo4rs8LBjQ",
   "feed": "https://feeds.soundon.fm/podcasts/91be014b-9f55-4bf3-a910-b232eda82d11.xml",
-  "updated_at": "2026-10-13T17:16:20.170300+00:00",
+  "updated_at": "2026-10-14T14:48:29.619696+00:00",
   "episodes": [
+    {
+      "id": "2cea7ca6-efaf-4dda-9904-3a9f05fe3ba2",
+      "title": "EP1202｜塑化驚奇，傳產也有做夢行情？航運.紡織.汽零件有機會嗎？黃金右下角和資金效率的抉擇，如何判斷起風了？ft.選股教練 陳唯泰",
+      "published_at": "2026-10-14T08:25:01+00:00",
+      "date": "2026-10-14",
+      "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/2cea7ca6-efaf-4dda-9904-3a9f05fe3ba2",
+      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/2cea7ca6-efaf-4dda-9904-3a9f05fe3ba2/rssFileVip.mp3?timestamp=1791969532621",
+      "description": "塑化驚奇，傳產也有做夢行情？航運.紡織.汽零件有機會嗎？黃金右下角和資金效率的抉擇，如何判斷起風了？ \n \n \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
+      "duration": "2654",
+      "transcript_url": ""
+    },
     {
       "id": "dad52cdf-9dd1-42ab-9bbb-e8a40c41ec92",
       "title": "EP1201｜矽谷OCP峰會變AI緊張會？博通憂缺錢、英特爾說記憶體鬆動？韓股崩回7月低點，台股9月營收年增47%是底氣！ft.AI達人 蔡明翰",
       "published_at": "2026-10-13T08:35:14+00:00",
       "date": "2026-10-13",
       "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/dad52cdf-9dd1-42ab-9bbb-e8a40c41ec92",
-      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/dad52cdf-9dd1-42ab-9bbb-e8a40c41ec92/rssFileVip.mp3?timestamp=1791881100516",
+      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/dad52cdf-9dd1-42ab-9bbb-e8a40c41ec92/rssFileVip.mp3?timestamp=1791954797333",
       "description": "矽谷OCP峰會變AI緊張會？博通憂缺錢、英特爾說記憶體鬆動？韓股崩回7月低點，台股9月營收年增47%是底氣！ \n \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
       "duration": "2842",
       "transcript_url": ""
@@ -751,17 +762,6 @@
       "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/4702b99f-420e-4629-aa94-137fe3bf638f/rssFileVip.mp3?timestamp=1783468878042",
       "description": "鬼故事繼續，哪一條該怕？三星Q2獲利成長19倍，卻引發韓股大跌？熱門股全軍覆沒，6月營收出爐，檢驗該買該賣！ \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
       "duration": "3436",
-      "transcript_url": ""
-    },
-    {
-      "id": "2dddf0f1-ef0e-47d5-9339-23c148883efd",
-      "title": "EP1133｜洗籌碼時間，研調機構說輝達機櫃延後出，真假判斷？CCL、載板、被動被殺，勇敢接誰？籌碼躲在功率和軍工，要追嗎？ft.題材獵人 林漢偉",
-      "published_at": "2026-07-06T09:11:17+00:00",
-      "date": "2026-07-06",
-      "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/2dddf0f1-ef0e-47d5-9339-23c148883efd",
-      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/2dddf0f1-ef0e-47d5-9339-23c148883efd/rssFileVip.mp3?timestamp=1783378163071",
-      "description": "洗籌碼時間，研調機構說輝達機櫃延後出，真假判斷？CCL、載板、被動被殺，勇敢接誰？籌碼躲在功率和軍工，要追嗎？ \n  \n\n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
-      "duration": "2750",
       "transcript_url": ""
     }
   ]
