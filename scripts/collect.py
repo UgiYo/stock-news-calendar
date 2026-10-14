@@ -1,5 +1,5 @@
 """GitHub Actions worker: collect feeds and produce requested article summaries."""
-import os,json,time,re,unicodedata,calendar,socket,ipaddress,datetime,email.utils,xml.etree.ElementTree as ET
+import os,json,time,re,html,html.parser,unicodedata,calendar,socket,ipaddress,datetime,email.utils,xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -33,13 +33,15 @@ def previous_month(now):
  if m==0:y,m=y-1,12
  return now.replace(year=y,month=m,day=min(now.day,calendar.monthrange(y,m)[1]))
 def trusted_domain(url):
- return {**US_SOURCES,'www.cna.com.tw':'中央社','cna.com.tw':'中央社','www.moneydj.com':'MoneyDJ','moneydj.com':'MoneyDJ','news.cnyes.com':'鉅亨網'}.get((urlparse(url).hostname or '').lower())
+ return {**US_SOURCES,'www.cna.com.tw':'中央社','cna.com.tw':'中央社','www.moneydj.com':'MoneyDJ','moneydj.com':'MoneyDJ','news.cnyes.com':'鉅亨網','www.pocket.tw':'口袋證券','pocket.tw':'口袋證券'}.get((urlparse(url).hostname or '').lower())
 def duplicate_news(a,b):
  if a['company_code']!=b['company_code']:return False
  if a['url']==b['url']:return True
- if abs((datetime.datetime.fromisoformat(a['published_at'])-datetime.datetime.fromisoformat(b['published_at'])).total_seconds())>48*3600:return False
+ def instant(value):
+  value=datetime.datetime.fromisoformat(value);return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+ if abs((instant(a['published_at'])-instant(b['published_at'])).total_seconds())>48*3600:return False
  def norm(n):
-  t=re.sub(r'\s*[-–—|]\s*(中央社(?: CNA)?|MoneyDJ(?:理財網)?|(?:Anue)?鉅亨(?:網)?)\s*$','',n['title'],flags=re.I)
+  t=re.sub(r'\s*[-–—|]\s*(中央社(?: CNA)?|MoneyDJ(?:理財網)?|(?:Anue)?鉅亨(?:網)?|口袋(?:證券|證卷|學堂))\s*$','',n['title'],flags=re.I)
   return ''.join(c for c in unicodedata.normalize('NFKC',t).lower() if c.isalnum())
  x,y=norm(a),norm(b)
  if not x or not y:return False
@@ -48,9 +50,14 @@ def duplicate_news(a,b):
  gx={x[i:i+2] for i in range(len(x)-1)};gy={y[i:i+2] for i in range(len(y)-1)}
  return 2*len(gx&gy)/(len(gx)+len(gy))>=.9
 def curate_news(rows):
- rank={'中央社':0,'MoneyDJ':1,'鉅亨網':2,'Reuters':3,'CNBC':4,'Yahoo Finance':5,'MarketWatch':6};kept=[]
+ rank={'中央社':0,'MoneyDJ':1,'鉅亨網':2,'Reuters':3,'CNBC':4,'Yahoo Finance':5,'MarketWatch':6,'口袋證券':7};kept=[]
+ rows=[n for n in rows if n['source']!='口袋證券' or pocket_market_matches(n['title'],n['company_code']) and not re.match(r'^(?:【|\[)?(?:公告|重要公告|活動)',n['title'])]
  for n in sorted(rows,key=lambda n:(rank[n['source']],n['published_at'])):
-  if not any(duplicate_news(k,n) for k in kept):kept.append(n)
+  prior=next((k for k in kept if duplicate_news(k,n)),None)
+  if prior is None:kept.append(dict(n))
+  elif prior['source']=='口袋證券' and n['source']=='口袋證券':
+   if not prior.get('article_url') and trusted_domain(n.get('article_url') or n['url'])=='口袋證券':prior['article_url']=n.get('article_url') or n['url']
+   if re.fullmatch(r'\d{4}-\d{2}-\d{2}',prior['published_at']) and not re.fullmatch(r'\d{4}-\d{2}-\d{2}',n['published_at']):prior['published_at']=n['published_at'];prior['news_date']=n['news_date']
  return kept
 def company_mention(title,c,conflicts):
  if is_us(c):
@@ -62,6 +69,57 @@ def company_mention(title,c,conflicts):
  for name in sorted(set(conflicts+(['台聯電'] if c['code']=='2303' else [])),key=len,reverse=True):
   if name and name!=c['name']:cleaned=cleaned.replace(name,' ')
  return any(name and len(name)>=2 and name in cleaned for name in [c['name'],c['full_name']])
+def pocket_market_matches(title,code,category=''):
+ text=unicodedata.normalize('NFKC',str(title or ''));context=text+' '+str(category or '');us=code.startswith('US:');symbol=code[3:] if us else code
+ explicit=bool(re.search((r'(?<![A-Za-z0-9])'+re.escape(symbol)+r'(?![A-Za-z0-9.-])') if us else r'(?<!\d)'+re.escape(symbol)+r'(?!\d)',text,re.I))
+ us_context=bool(re.search(r'美股|美國股市|NYSE|NASDAQ',context,re.I));tw_context=bool(re.search(r'台股|臺股',context))
+ dual={'US:TSM':'2330','US:UMC':'2303','US:ASX':'3711','US:AUOTY':'2409'}
+ if us:
+  if code in dual and not explicit and not re.search('ADR',text,re.I) and (re.search(r'(?<!\d)'+dual[code]+r'(?!\d)',text) or not us_context):return False
+  if tw_context and not us_context and not explicit:return False
+ elif (re.search('ADR',text,re.I) or us_context and not tw_context) and not explicit:return False
+ return True
+
+def pocket_article_fields(value):
+ class Fields(html.parser.HTMLParser):
+  def __init__(self):super().__init__();self.row=None
+  def handle_starttag(self,tag,attrs):
+   if tag=='investnewscontent':self.row=dict(attrs)
+ parser=Fields();parser.feed(value);row=parser.row
+ if not row or not row.get('data-content'):return None
+ return {'title':row.get('data-title',''),'date':row.get('data-date',''),'category':row.get('data-news_type',''),'content':re.sub(r'\r\n|\n|\r','\n',row['data-content'])}
+
+POCKET_INDEX_CACHE={}
+def pocket_index_rows(data,c,start,now,conflicts):
+ if str(data.get('code'))!='0' or not isinstance(data.get('data'),list):raise ValueError('口袋證券新聞索引格式異常')
+ first=start.astimezone(TW).date().isoformat();today=now.astimezone(TW).date().isoformat();rows=[]
+ for item in data['data']:
+  title=str(item.get('Title') or '');date=str(item.get('date') or '');url='https://www.pocket.tw'+str(item.get('slug') or '')
+  try:datetime.date.fromisoformat(date)
+  except ValueError:continue
+  if not first<=date<=today or not company_mention(title,c,conflicts) or not pocket_market_matches(title,c['code']):continue
+  if not re.fullmatch(r'https://www\.pocket\.tw/school/report/[a-zA-Z0-9_-]+/\d+/?',url):continue
+  rows.append({'company_code':c['code'],'title':title,'url':url,'source':'口袋證券','published_at':date,'news_date':date})
+ return rows
+
+def collect_pocket(c,start,now,conflicts,diagnostics,max_pages=20):
+ values={};first=start.astimezone(TW).date().isoformat();keywords=list(dict.fromkeys([re.sub(r'\s*ADR$','',c['name'],flags=re.I),c['full_name'],c['code'][3:] if is_us(c) else c['code']]))
+ for keyword in filter(None,keywords):
+  for page in range(1,max_pages+1):
+   try:
+    key=(keyword,page)
+    if key not in POCKET_INDEX_CACHE:
+     diagnostics['requests']+=1
+     r=requests.get('https://www.pocket.tw/invest_news/api/invest_news/',params={'page':page,'category':'','keyword':keyword},headers={'Accept':'application/json','User-Agent':'StockNewsCalendar/2.0'},timeout=20,allow_redirects=False);r.raise_for_status();POCKET_INDEX_CACHE[key]=r.json()
+    data=POCKET_INDEX_CACHE[key]
+    for row in pocket_index_rows(data,c,start,now,conflicts):values[row['url']]=row
+    dates=[str(item.get('date') or '') for item in data['data']]
+    if not dates or page>=int(data.get('pages') or 0) or all(re.fullmatch(r'\d{4}-\d{2}-\d{2}',d) and d<first for d in dates):break
+   except Exception as error:
+    diagnostics.setdefault('source_errors',[]).append('口袋證券：'+str(error)[:200]);break
+ diagnostics['pocket_collected']=len(values)
+ return list(values.values())
+
 def collection_start(c,now):
  earliest=previous_month(now)
  try:
@@ -70,18 +128,18 @@ def collection_start(c,now):
  except (ValueError,TypeError):return earliest
 def collect(c,diagnostics=None):
  diagnostics=diagnostics if diagnostics is not None else {}
- diagnostics.update(requests=0,feed_items=0,matched_items=0,accepted_items=0,collected=0,rejected_source=0,rejected_company=0,rejected_date=0,rejected_url=0)
+ diagnostics.update(requests=0,feed_items=0,matched_items=0,accepted_items=0,collected=0,rejected_source=0,rejected_company=0,rejected_date=0,rejected_url=0,rejected_market=0)
  conflicts=api('/admin/company-aliases?code='+c['code'])['names']
  now=datetime.datetime.now(UTC);start=collection_start(c,now);rows={};cursor=start
  diagnostics.update(from_=start.isoformat(),to=now.isoformat());diagnostics['from']=diagnostics.pop('from_')
  while cursor<now:
   end=min(cursor+datetime.timedelta(days=1),now)
-  q=f'("{c["name"]}" OR "{c["full_name"]}" OR "{c["code"]}") (site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com) after:{(cursor-datetime.timedelta(days=1)).date()} before:{(end+datetime.timedelta(days=1)).date()}'
+  q=f'("{c["name"]}" OR "{c["full_name"]}" OR "{c["code"]}") (site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com OR site:pocket.tw/school/report) after:{(cursor-datetime.timedelta(days=1)).date()} before:{(end+datetime.timedelta(days=1)).date()}'
   if is_us(c):
    company_terms=' OR '.join('"'+name.replace('"','')+'"' for name in aliases(c)+[c['code'][3:]])
-   q=f'({company_terms}) (site:reuters.com OR site:cnbc.com OR site:finance.yahoo.com OR site:marketwatch.com OR site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com) after:{(cursor-datetime.timedelta(days=1)).date()} before:{(end+datetime.timedelta(days=1)).date()}'
+   q=f'({company_terms}) (site:reuters.com OR site:cnbc.com OR site:finance.yahoo.com OR site:marketwatch.com OR site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com OR site:pocket.tw/school/report) after:{(cursor-datetime.timedelta(days=1)).date()} before:{(end+datetime.timedelta(days=1)).date()}'
   # Separate broker query improves coverage when broad stock news fills RSS results.
-  broker_q=f'("{c["name"]}" OR "{c["full_name"]}" OR "{c["code"]}") (券商 OR 投顧 OR 外資 OR 目標價 OR 評等) (site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com) after:{(cursor-datetime.timedelta(days=1)).date()} before:{(end+datetime.timedelta(days=1)).date()}'
+  broker_q=f'("{c["name"]}" OR "{c["full_name"]}" OR "{c["code"]}") (券商 OR 投顧 OR 外資 OR 目標價 OR 評等) (site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com OR site:pocket.tw/school/report) after:{(cursor-datetime.timedelta(days=1)).date()} before:{(end+datetime.timedelta(days=1)).date()}'
   for query in ((q,) if is_us(c) else (q,broker_q)):
    diagnostics['requests']+=1
    r=requests.get('https://news.google.com/rss/search',params={'q':query,'hl':'en-US' if is_us(c) else 'zh-TW','gl':'US' if is_us(c) else 'TW','ceid':'US:en' if is_us(c) else 'TW:zh-Hant'},timeout=30);diagnostics['http_status']=r.status_code
@@ -92,7 +150,8 @@ def collect(c,diagnostics=None):
     diagnostics['feed_items']+=1
     title=item.findtext('title') or '';url=item.findtext('link') or ''
     source_element=item.find('source');source=trusted_domain(source_element.get('url','') if source_element is not None else '')
-    if not source or not is_us(c) and source not in ('中央社','MoneyDJ','鉅亨網'):diagnostics['rejected_source']+=1;continue
+    if not source or not is_us(c) and source not in ('中央社','MoneyDJ','鉅亨網','口袋證券'):diagnostics['rejected_source']+=1;continue
+    if source=='口袋證券' and not pocket_market_matches(title,c['code']):diagnostics['rejected_market']+=1;continue
     if not company_mention(title,c,conflicts):diagnostics['rejected_company']+=1;continue
     diagnostics['matched_items']+=1
     try:published=email.utils.parsedate_to_datetime(item.findtext('pubDate')).astimezone(UTC)
@@ -103,6 +162,10 @@ def collect(c,diagnostics=None):
     if start<=published<=now and url.startswith('https://'):
      rows[url]={'company_code':c['code'],'title':title,'url':url,'source':source,'published_at':published.isoformat(),'news_date':published.astimezone(US if is_us(c) else TW).date().isoformat()}
   cursor=end;time.sleep(.2)
+ for row in collect_pocket(c,start,now,conflicts,diagnostics):
+  prior=rows.get(row['url'])
+  if prior and not re.fullmatch(r'\d{4}-\d{2}-\d{2}',prior['published_at']):row={**row,'published_at':prior['published_at'],'news_date':prior['news_date']}
+  rows[row['url']]=row
  values=curate_news(list(rows.values()))
  for i in range(0,len(values),20):api('/admin/news',{'news':values[i:i+20]})
  api('/admin/company',{'code':c['code'],'updated_at':now.isoformat()})
@@ -141,8 +204,12 @@ def summarize(news):
   if not result.get('status'):raise ValueError('Google News 原文解析失敗')
   url=result['decoded_url']
  url,html=article_html(url)
+ if trusted_domain(url)=='口袋證券' and not re.fullmatch(r'/school/report/[a-zA-Z0-9_-]+/\d+/?',urlparse(url).path):raise ValueError('口袋來源不是個別研究／市場文章')
  if re.search(r'"isAccessibleForFree"\s*:\s*(false|"false")',html):raise ValueError('付費文章無法取得全文')
- text=trafilatura.extract(html,include_comments=False,include_tables=True) or ''
+ pocket=pocket_article_fields(html) if trusted_domain(url)=='口袋證券' else None
+ body_html=pocket['content'] if pocket else html
+ if re.search(r'"isAccessibleForFree"\s*:\s*(false|"false")',body_html):raise ValueError('付費文章無法取得全文')
+ text=trafilatura.extract(body_html,include_comments=False,include_tables=True) or ''
  if len(text)<350 or re.search('訂閱後閱讀|訂閱即可閱讀|解鎖全文|subscribe to continue',text,re.I):raise ValueError('無法取得全文：內容不足、付費牆或需 JavaScript')
  if len(text)>40000:raise ValueError('全文超過摘要長度限制')
  sentences=[s.strip() for s in re.findall(r'[^。！？.!?]+[。！？.!?]?',text) if len(s.strip())>15]

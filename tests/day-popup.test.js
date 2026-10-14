@@ -1,3 +1,4 @@
+import {newsSourceLabel} from '../src/news-policy.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -9,7 +10,7 @@ const fn=source.slice(source.indexOf('function dayWindow('),source.indexOf('\nco
 
 function renderDay({tab='news',rows=[{company_code:'2330',title:'台積電新聞',published_at:'2026-10-07T03:00:00Z',url:'https://example.com'}],mentions=[]}={}){
  const state={date:'2026-10-07',selected:'',dayTab:tab,companies:[{code:'2330',name:'台積電'},{code:'2317',name:'鴻海'}]};
- const ctx=vm.createContext({state,podcastMentionDates:new Map([['2026-10-07',mentions]]),countPodcastDayEntries,movementCache:new Map([['ctx',{movements:[
+ const ctx=vm.createContext({state,newsSourceLabel,podcastMentionDates:new Map([['2026-10-07',mentions]]),countPodcastDayEntries,movementCache:new Map([['ctx',{movements:[
   {code:'2330',triggered:true,date:'2026-10-07'},
   {code:'2317',triggered:true,date:'2026-10-07'},
   {code:'2327',triggered:true,date:'2026-10-07'},

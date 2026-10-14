@@ -1,8 +1,9 @@
+import {pocketArticleFields,isPocketURL,pocketArticleURL,pocketMarketMatches,fetchPocketNews} from '../shared/pocket-news.js';
 import {substackRoute} from './substack.js';
 import {recordCollectionTrigger,collectionTriggers} from './news-trigger-audit.js';
 import {accountSettingsRoute} from './account-settings.js';
 import {companyMention,trustedSource,sourceDomain,duplicateNews,isGeneratedAnswer,curateNews} from '../src/news-policy.js';
-import {isUS,validStockCode,enrichCompany,marketDay} from '../shared/markets.js';
+import {isUS,validStockCode,enrichCompany,marketDay,newsQuery} from '../shared/markets.js';
 import {saveUSPrices,usMarketRoute} from './us-market.js';
 import {recordNewsAttempt,newsAttempts} from './news-diagnostics.js';
 import {rankingRefreshRoute} from './ranking-refresh.js';
@@ -77,17 +78,18 @@ export function parsePreview(xml,company,now=new Date(),conflicts=[],rangeStart=
  const rows=new Map();for(const match of xml.matchAll(/<item[\s>]([\s\S]*?)<\/item>/g)){
  const tag=name=>xmlText(match[1].match(new RegExp('<'+name+'(?:\\s[^>]*)?>([\\s\\S]*?)<\\/'+name+'>'))?.[1]);
  const title=tag('title'),link=tag('link'),published=new Date(tag('pubDate'));const sourceURL=xmlText(match[1].match(/<source\b[^>]*\burl=["']([^"']+)["']/)?.[1]);const source=sourceDomain(sourceURL);if(!source)continue;
- if(!companyMention(title,company,conflicts))continue;
+ if(!companyMention(title,company,conflicts)||source==='口袋證券'&&!pocketMarketMatches(title,company.code))continue;
  if(!Number.isFinite(published.getTime())||published<start||published>now)continue;
  try{if(new URL(link).protocol!=='https:')continue;}catch{continue;}
  rows.set(link,{company_code:company.code,title,url:link,source,published_at:published.toISOString(),news_date:marketDay(published,isUS(company.code)?'US':'TW'),preview:true});
  }return curateNews([...rows.values()]);
 }
-const ARTICLE_HOSTS=new Set(['www.cna.com.tw','cna.com.tw','www.moneydj.com','moneydj.com','m.moneydj.com','news.cnyes.com','gfe-desktop.cnyes.com','www.reuters.com','reuters.com','www.cnbc.com','cnbc.com','finance.yahoo.com','www.marketwatch.com','marketwatch.com']);
+const ARTICLE_HOSTS=new Set(['www.cna.com.tw','cna.com.tw','www.moneydj.com','moneydj.com','m.moneydj.com','news.cnyes.com','gfe-desktop.cnyes.com','www.reuters.com','reuters.com','www.cnbc.com','cnbc.com','finance.yahoo.com','www.marketwatch.com','marketwatch.com','www.pocket.tw','pocket.tw']);
 export function normalizeArticleURL(value){let u=new URL(value);if(['www.google.com','google.com'].includes(u.hostname)&&u.pathname==='/url'){const target=u.searchParams.get('url')||u.searchParams.get('q');if(target)u=new URL(target);}if(ARTICLE_HOSTS.has(u.hostname)&&u.protocol==='http:'&&!u.port)u.protocol='https:';if(u.hostname==='gfe-desktop.cnyes.com')u.hostname='news.cnyes.com';if(u.hostname==='m.moneydj.com'&&/f1a\.aspx/i.test(u.pathname)){const id=[...u.searchParams].find(([key])=>key.toLowerCase()==='id')?.[1];if(id)u=new URL('https://www.moneydj.com/kmdj/news/newsviewer.aspx?a='+encodeURIComponent(id));}return checkedArticleURL(u.href);}
-export function checkedArticleURL(value){const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||(u.port&&u.port!=='443')||!ARTICLE_HOSTS.has(u.hostname)&&u.hostname!=='news.google.com')throw Error('來源網址未支援（'+u.hostname+'）；只接受支援的台美股新聞來源及 Google News 原文連結');return u.href;}
+export function checkedArticleURL(value){const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||(u.port&&u.port!=='443')||!ARTICLE_HOSTS.has(u.hostname)&&u.hostname!=='news.google.com')throw Error('來源網址未支援（'+u.hostname+'）；只接受支援的台美股新聞來源及 Google News 原文連結');if(isPocketURL(u.href))pocketArticleURL(u.href);return u.href;}
 export function extractArticleBody(html){
  if(/"isAccessibleForFree"\s*:\s*(false|"false")/i.test(html))throw Error('付費文章無法取得完整內文');
+ const pocket=pocketArticleFields(html);if(pocket)return extractArticleBody('<article>'+pocket.html+'</article>');
  const bodies=[];const walk=value=>{if(Array.isArray(value))value.forEach(walk);else if(value&&typeof value==='object'){if(typeof value.articleBody==='string')bodies.push(value.articleBody);Object.values(value).forEach(walk);}};
  for(const match of html.matchAll(/<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)){try{walk(JSON.parse(match[1]));}catch{}}
  let text;if(bodies.length)text=bodies.sort((a,b)=>b.length-a.length)[0];else{
@@ -212,18 +214,18 @@ export default {async fetch(req,env){
  await sql("UPDATE jobs SET status='pending' WHERE status='running' AND claimed_at<?",Date.now()-20*60000).run();
  const jobs=(await sql("UPDATE jobs SET status='running',claimed_at=? WHERE id IN (SELECT id FROM jobs WHERE status='pending' ORDER BY created_at LIMIT 1) RETURNING *",Date.now()).all()).results;return reply({jobs});}
  if(path==='/admin/job'&&req.method==='POST'){const b=await req.json();await sql('UPDATE jobs SET status=?,error=? WHERE id=?',b.error?'failed':'done',b.error||null,b.id).run();return reply({ok:true});}
- if(path==='/admin/news'&&req.method==='POST'){const b=await req.json();if(!Array.isArray(b.news)||b.news.length>20)return reply({error:'Invalid batch'},400);const candidates=curateNews(b.news),stored=[];for(const code of [...new Set(candidates.map(n=>n.company_code))]){const dates=candidates.filter(n=>n.company_code===code).map(n=>n.news_date).sort();if(!validStockCode(code)||dates.some(d=>!/^\d{4}-\d{2}-\d{2}$/.test(d)))return reply({error:'Invalid news'},400);const from=new Date(Date.parse(dates[0])-2*86400000).toISOString().slice(0,10),to=new Date(Date.parse(dates.at(-1))+2*86400000).toISOString().slice(0,10);stored.push(...(await sql('SELECT * FROM news WHERE news_date BETWEEN ? AND ? AND company_code=?',from,to,code).all()).results);}const accepted=[];for(const n of candidates)if(!stored.some(k=>trustedSource(k.source)&&k.url!==n.url&&duplicateNews(k,n)))accepted.push(n);if(accepted.length)await env.DB.batch(accepted.map(n=>{if(!validStockCode(n.company_code)||!/^https:\/\//.test(n.url)||!/^\d{4}-\d{2}-\d{2}$/.test(n.news_date))throw Error('Invalid news');return sql('INSERT INTO news(company_code,title,url,source,published_at,news_date) VALUES(?,?,?,?,?,?) ON CONFLICT(company_code,url) DO UPDATE SET title=excluded.title,source=excluded.source,published_at=excluded.published_at,news_date=excluded.news_date WHERE news.title IS NOT excluded.title OR news.source IS NOT excluded.source OR news.published_at IS NOT excluded.published_at OR news.news_date IS NOT excluded.news_date',n.company_code,n.title,n.url,n.source,n.published_at,n.news_date);}));return reply({ok:true});}
+ if(path==='/admin/news'&&req.method==='POST'){const b=await req.json();if(!Array.isArray(b.news)||b.news.length>20)return reply({error:'Invalid batch'},400);const candidates=curateNews(b.news),stored=[];for(const code of [...new Set(candidates.map(n=>n.company_code))]){const dates=candidates.filter(n=>n.company_code===code).map(n=>n.news_date).sort();if(!validStockCode(code)||dates.some(d=>!/^\d{4}-\d{2}-\d{2}$/.test(d)))return reply({error:'Invalid news'},400);const from=new Date(Date.parse(dates[0])-2*86400000).toISOString().slice(0,10),to=new Date(Date.parse(dates.at(-1))+2*86400000).toISOString().slice(0,10);stored.push(...(await sql('SELECT * FROM news WHERE news_date BETWEEN ? AND ? AND company_code=?',from,to,code).all()).results);}const accepted=[];for(const n of candidates)if(!stored.some(k=>trustedSource(k.source)&&k.url!==n.url&&duplicateNews(k,n)))accepted.push(n);if(accepted.length)await env.DB.batch(accepted.map(n=>{if(!validStockCode(n.company_code)||!/^https:\/\//.test(n.url)||!/^\d{4}-\d{2}-\d{2}$/.test(n.news_date))throw Error('Invalid news');let article=null;if(n.source==='口袋證券'&&n.article_url){article=normalizeArticleURL(n.article_url);if(sourceDomain(article)!=='口袋證券')throw Error('原文來源不符');}return sql('INSERT INTO news(company_code,title,url,source,published_at,news_date,article_url) VALUES(?,?,?,?,?,?,?) ON CONFLICT(company_code,url) DO UPDATE SET title=excluded.title,source=excluded.source,published_at=excluded.published_at,news_date=excluded.news_date,article_url=COALESCE(excluded.article_url,news.article_url) WHERE news.title IS NOT excluded.title OR news.source IS NOT excluded.source OR news.published_at IS NOT excluded.published_at OR news.news_date IS NOT excluded.news_date OR (excluded.article_url IS NOT NULL AND news.article_url IS NOT excluded.article_url)',n.company_code,n.title,n.url,n.source,n.published_at,n.news_date,article);}));return reply({ok:true});}
  if(path==='/admin/company'&&req.method==='POST'){const b=await req.json();await sql('UPDATE companies SET last_collected_at=COALESCE(?,last_collected_at),last_error=? WHERE code=?',b.updated_at||null,b.error||null,b.code).run();return reply({ok:true});}
  if(path==='/admin/article-links'){
  if(req.method==='POST'){const b=await req.json();let direct;try{direct=normalizeArticleURL(b.url);}catch{return reply({error:'Invalid article link'},400);}if(!ARTICLE_HOSTS.has(new URL(direct).hostname)||!Number.isSafeInteger(b.id))return reply({error:'Invalid article link'},400);await sql('UPDATE news SET article_url=? WHERE id=? AND article_url IS NOT ?',direct,b.id,direct).run();return reply({ok:true});}
- const code=url.searchParams.get('code');if(code&&!/^\d{4,6}$/.test(code))return reply({error:'Invalid code'},400);
- const query="SELECT id,title,url,article_url FROM news WHERE source IN ('MoneyDJ','MoneyDJ理財網','中央社','中央社 CNA','鉅亨網','鉅亨','Anue鉅亨','news.cnyes.com') AND (article_url IS NULL OR article_url LIKE 'https://news.google.com/%')";
+ const code=url.searchParams.get('code');if(code&&!validStockCode(code))return reply({error:'Invalid code'},400);
+ const query="SELECT id,title,url,article_url FROM news WHERE source IN ('MoneyDJ','MoneyDJ理財網','中央社','中央社 CNA','鉅亨網','鉅亨','Anue鉅亨','news.cnyes.com','口袋證券','口袋學堂') AND (article_url IS NULL OR article_url LIKE 'https://news.google.com/%')";
  return reply({news:(await sql(query+(code?' AND company_code=?':'')+' ORDER BY news_date DESC,id DESC LIMIT 100',...(code?[code]:[])).all()).results});
  }
  if(path==='/admin/article-probe'){
  if(req.method==='POST'){const b=await req.json();try{const result=await readArticleURL(b.url);return reply({ok:true,url:result.url,characters:result.text.length});}catch(e){return reply({ok:false,error:e.message},422);}}
  const code=url.searchParams.get('code'),date=url.searchParams.get('date');if(!/^\d{4,6}$/.test(code||'')||!/^\d{4}-\d{2}-\d{2}$/.test(date||''))return reply({error:'Invalid probe range'},400);
- return reply({news:(await sql("SELECT id,title,url,article_url FROM news WHERE company_code=? AND news_date=? AND source IN ('MoneyDJ','MoneyDJ理財網','鉅亨網','news.cnyes.com','中央社') ORDER BY id LIMIT 10",code,date).all()).results});
+ return reply({news:(await sql("SELECT id,title,url,article_url FROM news WHERE company_code=? AND news_date=? AND source IN ('MoneyDJ','MoneyDJ理財網','鉅亨網','news.cnyes.com','中央社','口袋證券','口袋學堂') ORDER BY id LIMIT 10",code,date).all()).results});
  }
  if(path==='/admin/summary-cache')return summaryCacheRoute(req,{sql,reply,user:{id:'collector'},randomToken,db:env.DB});
  if(path==='/admin/article')return reply({news:await sql('SELECT * FROM news WHERE id=?',url.searchParams.get('id')).first()});
@@ -298,11 +300,13 @@ export default {async fetch(req,env){
  const code=url.searchParams.get('code');if(!/^\d{4,6}$/.test(code||''))return reply({error:'股號格式錯誤'},400);
  const company=await sql('SELECT * FROM companies WHERE code=?',code).first();if(!company)return reply({error:'公司不存在'},404);
  if(url.searchParams.get('stored')==='1'){const from=new Date(Date.now()-32*86400000).toISOString();return reply({company,news:(await sql('SELECT * FROM news WHERE company_code=? AND published_at>=? ORDER BY published_at DESC,id DESC',code,from).all()).results});}
- const feed=new URL('https://news.google.com/rss/search');feed.search=new URLSearchParams({q:`("${company.name}" OR "${company.full_name}" OR "${code}") (site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com) when:1m`,hl:'zh-TW',gl:'TW',ceid:'TW:zh-Hant'}).toString();
+ const feed=new URL('https://news.google.com/rss/search');feed.search=new URLSearchParams({q:newsQuery(company),hl:'zh-TW',gl:'TW',ceid:'TW:zh-Hant'}).toString();
+ const conflicts=(await sql('SELECT name FROM companies WHERE code<>? AND name<>? AND instr(name,?)>0',company.code,company.name,company.name).all()).results.map(x=>x.name);
+ const pocketPromise=fetchPocketNews(company,{from:new Date(Date.now()-32*86400000),mention:(title,c)=>companyMention(title,c,conflicts)});
  let httpStatus=0;
  try{const response=await fetch(feed,{headers:{'User-Agent':'StockNewsCalendar/2.0'},signal:AbortSignal.timeout(20000)});httpStatus=response.status;if(!response.ok)throw Error('Google News RSS HTTP '+httpStatus);
- const conflicts=(await sql('SELECT name FROM companies WHERE code<>? AND name<>? AND instr(name,?)>0',company.code,company.name,company.name).all()).results.map(x=>x.name);return reply({company,news:parsePreview(await response.text(),company,new Date(),conflicts)});
- }catch(e){const quota=d1QuotaError(e);if(quota)throw e;const error=httpStatus&&httpStatus!==200?'Google News RSS HTTP '+httpStatus:e.name==='TimeoutError'||e.name==='AbortError'?'Google News RSS 讀取逾時':httpStatus===200?'Google News RSS 格式異常':'Google News RSS 連線失敗';
+ const rss=parsePreview(await response.text(),company,new Date(),conflicts),pocket=await pocketPromise;return reply({company,news:curateNews([...rss,...pocket.news]),...(pocket.warnings.length?{warnings:pocket.warnings}:{})});
+ }catch(e){const quota=d1QuotaError(e);if(quota)throw e;const pocket=await pocketPromise;if(pocket.news.length)return reply({company,news:curateNews(pocket.news),warnings:['Google News 暫時無法讀取，已提供口袋證券來源',...pocket.warnings]});const error=httpStatus&&httpStatus!==200?'Google News RSS HTTP '+httpStatus:e.name==='TimeoutError'||e.name==='AbortError'?'Google News RSS 讀取逾時':httpStatus===200?'Google News RSS 格式異常':'Google News RSS 連線失敗';
  await recordNewsAttempt(sql,{code,stage:'preview',status:'failed',details:{http_status:httpStatus,error}});return reply({error,code:'NEWS_SOURCE_UNAVAILABLE'},502);}
 
  }
