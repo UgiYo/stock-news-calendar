@@ -1,3 +1,4 @@
+import {fetchPocketNews} from '../shared/pocket-news.js';
 import {isUS,validStockCode,marketOf,newsQuery,enrichCompany} from '../shared/markets.js';
 import {readUSPrices,fetchUSFilings} from './us-market.js';
 import {completedDay,detectMovement,newsWindow,shiftDay} from '../shared/stock-movements.js';
@@ -28,6 +29,7 @@ export async function stockEventsRoute(req,{sql,reply,user,parsePreview,curateNe
    rows.push(...parsePreview(await response.text(),company,new Date(shiftDay(chunk.to,1)+(market==='US'?'T05:00:00Z':'T00:00:00+08:00')),conflicts,new Date(chunk.from+(market==='US'?'T00:00:00Z':'T00:00:00+08:00'))));
   }catch(e){failures.push(`${chunk.from}～${chunk.to}：${e.message}`);}
  }));
+ const pocket=await fetchPocketNews(company,{from:new Date(range.from+'T00:00:00+08:00'),now:new Date(range.to+'T23:59:59+08:00'),mention:(title,c)=>companyMention(title,c,conflicts),fetcher,maxPages:8,timeout:12000});rows.push(...pocket.news);failures.push(...pocket.warnings);
  let filings=[];if(market==='US')try{filings=(await fetchUSFilings(company,env,fetcher)).filter(r=>r.news_date>=range.from&&r.news_date<=range.to);}catch(e){failures.push('SEC 公告：'+e.message);}
  const news=[...curateNews(rows.filter(r=>r.news_date>=range.from&&r.news_date<=range.to&&companyMention(r.title,company,conflicts))),...filings].sort((a,b)=>String(a.published_at).localeCompare(String(b.published_at)));
  return reply({owner_id:user.id,company,movement,news,coverage:{...range,lookback,searchSegments:chunks.length,failedSegments:failures.length,failures,count:news.length,first:news[0]?.news_date||null,last:news.at(-1)?.news_date||null,fetchedAt:new Date().toISOString(),market,timezone:market==='US'?'America/New_York':'Asia/Taipei',complete:false,note:'已依日期區間查詢；搜尋來源不保證完整收錄，沒有回傳新聞不代表當天沒有事件。'}});

@@ -340,7 +340,87 @@ var US_NEWS_DOMAINS = { "www.reuters.com": "Reuters", "reuters.com": "Reuters", 
 function newsQuery(c, range = "when:1m") {
   const names = companyAliases(enrichCompany(c)).filter((n) => n.length >= 2).map((n) => '"' + n.replaceAll('"', "") + '"');
   const us = isUS(c.code);
-  return "(" + [...names, '"' + symbolOf(c.code) + '"'].join(" OR ") + ") " + (us ? "(site:reuters.com OR site:cnbc.com OR site:finance.yahoo.com OR site:marketwatch.com OR site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com)" : "(site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com)") + " " + range;
+  return "(" + [...names, '"' + symbolOf(c.code) + '"'].join(" OR ") + ") " + (us ? "(site:reuters.com OR site:cnbc.com OR site:finance.yahoo.com OR site:marketwatch.com OR site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com OR site:pocket.tw/school/report)" : "(site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com OR site:pocket.tw/school/report)") + " " + range;
+}
+
+// shared/pocket-news.js
+var POCKET_HOSTS = ["www.pocket.tw", "pocket.tw"];
+function isPocketURL(value) {
+  try {
+    return POCKET_HOSTS.includes(new URL(value).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+function pocketArticleURL(value) {
+  const u = new URL(value);
+  if (u.protocol !== "https:" || u.username || u.password || u.port || !POCKET_HOSTS.includes(u.hostname) || !/^\/school\/report\/[a-zA-Z0-9_-]+\/\d+\/?$/.test(u.pathname)) throw Error("\u50C5\u652F\u63F4\u53E3\u888B\u5B78\u5802\u500B\u5225\u7814\u7A76\uFF0F\u5E02\u5834\u6587\u7AE0");
+  u.search = "";
+  u.hash = "";
+  return u.href;
+}
+function pocketMarketMatches(title, code, category = "") {
+  const text = String(title || "").normalize("NFKC"), context = text + " " + String(category || ""), us = String(code || "").startsWith("US:"), symbol = us ? code.slice(3) : code;
+  const explicit = new RegExp(us ? "(?<![A-Za-z0-9])" + symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![A-Za-z0-9.-])" : "(?<!\\d)" + symbol + "(?!\\d)", "i").test(text);
+  const usContext = /美股|美國股市|NYSE|NASDAQ/i.test(context), twContext = /台股|臺股/.test(context);
+  const dual = { "US:TSM": "2330", "US:UMC": "2303", "US:ASX": "3711", "US:AUOTY": "2409" };
+  if (us) {
+    if (dual[code] && !explicit && !/ADR/i.test(text) && (new RegExp("(?<!\\d)" + dual[code] + "(?!\\d)").test(text) || !usContext)) return false;
+    if (twContext && !usContext && !explicit) return false;
+  } else if ((/ADR/i.test(text) || usContext && !twContext) && !explicit) return false;
+  return true;
+}
+function decode(value) {
+  return String(value || "").replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (_, entity) => {
+    const named = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+    if (named[entity.toLowerCase()]) return named[entity.toLowerCase()];
+    const n = /^#x/i.test(entity) ? parseInt(entity.slice(2), 16) : Number(entity.slice(1));
+    return n > 0 && n <= 1114111 ? String.fromCodePoint(n) : "";
+  });
+}
+function pocketArticleFields(html) {
+  const tag = String(html || "").match(/<InvestNewsContent\b(?:[^"'<>]|"[^"]*"|'[^']*')*>/i)?.[0];
+  if (!tag) return null;
+  const fields4 = {};
+  for (const m of tag.matchAll(/\b(data-[\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) fields4[m[1]] = decode(m[2] ?? m[3]);
+  if (!fields4["data-content"]) return null;
+  return { title: fields4["data-title"] || "", date: fields4["data-date"] || "", category: fields4["data-news_type"] || "", html: fields4["data-content"].replace(/\\r\\n|\\n|\\r/g, "\n") };
+}
+function pocketIndexRows(payload2, company2, { from, now = /* @__PURE__ */ new Date(), mention } = {}) {
+  if (String(payload2?.code) !== "0" || !Array.isArray(payload2.data)) throw Error("\u53E3\u888B\u8B49\u5238\u65B0\u805E\u7D22\u5F15\u683C\u5F0F\u7570\u5E38");
+  const start = from ? marketDay(from, "TW") : "0000-01-01", today = marketDay(now, "TW"), rows = [];
+  for (const item of payload2.data) {
+    const title = String(item.Title || ""), date = String(item.date || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < start || date > today || !title || !mention(title, company2) || !pocketMarketMatches(title, company2.code)) continue;
+    try {
+      const url = pocketArticleURL(new URL(item.slug, "https://www.pocket.tw").href);
+      rows.push({ company_code: company2.code, title, url, article_url: url, source: "\u53E3\u888B\u8B49\u5238", published_at: date, news_date: date });
+    } catch {
+    }
+  }
+  return rows;
+}
+async function fetchPocketNews(company2, { from, now = /* @__PURE__ */ new Date(), mention, fetcher = globalThis.fetch, maxPages = 5, timeout = 15e3 } = {}) {
+  const rows = /* @__PURE__ */ new Map(), warnings = [], deadline = AbortSignal.timeout(timeout), keywords = [...new Set([String(company2.name || "").replace(/\s*ADR$/i, ""), company2.full_name, symbolOf(company2.code)].filter(Boolean))];
+  for (const keyword of keywords) {
+    for (let page = 1; page <= maxPages; page++) {
+      try {
+        const url = new URL("https://www.pocket.tw/invest_news/api/invest_news/");
+        url.search = new URLSearchParams({ page: String(page), category: "", keyword }).toString();
+        const response = await fetcher(url, { signal: deadline, redirect: "error", headers: { Accept: "application/json", "User-Agent": "StockNewsCalendar/2.0" } });
+        if (!response.ok) throw Error("HTTP " + response.status);
+        const data = await response.json();
+        for (const row of pocketIndexRows(data, company2, { from, now, mention })) rows.set(row.url, row);
+        const dates = data.data.map((r) => r.date).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+        if (!data.data.length || page >= Number(data.pages) || from && dates.length === data.data.length && dates.every((d) => d < marketDay(from, "TW"))) break;
+      } catch (e) {
+        warnings.push("\u53E3\u888B\u8B49\u5238\uFF1A" + e.message);
+        break;
+      }
+    }
+    if (deadline.aborted) break;
+  }
+  return { news: [...rows.values()], warnings: [...new Set(warnings)] };
 }
 
 // shared/substack.js
@@ -377,14 +457,14 @@ function substackMentions(text, companies = usCompanies) {
 }
 
 // worker/substack.js
-var decode = (v) => String(v || "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&apos;|&#39;/g, "'").replace(/&#(\d+);/g, (_, n) => Number(n) <= 1114111 ? String.fromCodePoint(Number(n)) : "").replace(/<[^>]*>/g, "").trim();
+var decode2 = (v) => String(v || "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&apos;|&#39;/g, "'").replace(/&#(\d+);/g, (_, n) => Number(n) <= 1114111 ? String.fromCodePoint(Number(n)) : "").replace(/<[^>]*>/g, "").trim();
 function substackProfileCandidates(html) {
   const candidates = /* @__PURE__ */ new Map();
   for (const m of String(html || "").matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
     try {
-      const link = new URL(decode(m[1]));
+      const link = new URL(decode2(m[1]));
       if (!["", "/", "/about", "/archive"].includes(link.pathname)) continue;
-      const url = substackPublication(link.href), title = decode(m[2]).slice(0, 500) || new URL(url).hostname.split(".")[0];
+      const url = substackPublication(link.href), title = decode2(m[2]).slice(0, 500) || new URL(url).hostname.split(".")[0];
       const old = candidates.get(url);
       if (!old || old.title === new URL(url).hostname.split(".")[0]) candidates.set(url, { url, title });
     } catch {
@@ -417,7 +497,7 @@ async function resolveSubstackAuthor(value, fetcher = globalThis.fetch) {
     let title = new URL(input.url).hostname.split(".")[0], warning = "";
     try {
       const xml = await readSubstackSource(input.url + "/feed", fetcher);
-      const name = decode(xml.match(/<channel\b[^>]*>[\s\S]*?<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]);
+      const name = decode2(xml.match(/<channel\b[^>]*>[\s\S]*?<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]);
       if (!name) throw Error("\u672A\u53D6\u5F97\u6709\u6548 RSS");
       title = name.slice(0, 500);
     } catch {
@@ -596,17 +676,17 @@ function companyMention(title, company2, conflicts = []) {
 }
 function trustedSource(source) {
   const key = String(source || "").normalize("NFKC").replace(/\s/g, "").toLowerCase();
-  return { "\u4E2D\u592E\u793E": "\u4E2D\u592E\u793E", "\u4E2D\u592E\u793Ecna": "\u4E2D\u592E\u793E", "cna": "\u4E2D\u592E\u793E", "moneydj": "MoneyDJ", "moneydj\u7406\u8CA1\u7DB2": "MoneyDJ", "\u9245\u4EA8\u7DB2": "\u9245\u4EA8\u7DB2", "\u9245\u4EA8": "\u9245\u4EA8\u7DB2", "anue\u9245\u4EA8": "\u9245\u4EA8\u7DB2", "anue\u9245\u4EA8\u7DB2": "\u9245\u4EA8\u7DB2", "reuters": "Reuters", "cnbc": "CNBC", "yahoofinance": "Yahoo Finance", "marketwatch": "MarketWatch" }[key] || null;
+  return { "\u4E2D\u592E\u793E": "\u4E2D\u592E\u793E", "\u4E2D\u592E\u793Ecna": "\u4E2D\u592E\u793E", "cna": "\u4E2D\u592E\u793E", "moneydj": "MoneyDJ", "moneydj\u7406\u8CA1\u7DB2": "MoneyDJ", "\u9245\u4EA8\u7DB2": "\u9245\u4EA8\u7DB2", "\u9245\u4EA8": "\u9245\u4EA8\u7DB2", "anue\u9245\u4EA8": "\u9245\u4EA8\u7DB2", "anue\u9245\u4EA8\u7DB2": "\u9245\u4EA8\u7DB2", "reuters": "Reuters", "cnbc": "CNBC", "yahoofinance": "Yahoo Finance", "marketwatch": "MarketWatch", "\u53E3\u888B\u8B49\u5238": "\u53E3\u888B\u8B49\u5238", "\u53E3\u888B\u8B49\u5377": "\u53E3\u888B\u8B49\u5238", "\u53E3\u888B\u5B78\u5802": "\u53E3\u888B\u8B49\u5238", "pocketsecurities": "\u53E3\u888B\u8B49\u5238" }[key] || null;
 }
 function sourceDomain(value) {
   try {
     const h = new URL(value).hostname.toLowerCase();
-    return { ...US_NEWS_DOMAINS, "www.cna.com.tw": "\u4E2D\u592E\u793E", "cna.com.tw": "\u4E2D\u592E\u793E", "www.moneydj.com": "MoneyDJ", "moneydj.com": "MoneyDJ", "news.cnyes.com": "\u9245\u4EA8\u7DB2" }[h] || null;
+    return { ...US_NEWS_DOMAINS, "www.cna.com.tw": "\u4E2D\u592E\u793E", "cna.com.tw": "\u4E2D\u592E\u793E", "www.moneydj.com": "MoneyDJ", "moneydj.com": "MoneyDJ", "news.cnyes.com": "\u9245\u4EA8\u7DB2", "www.pocket.tw": "\u53E3\u888B\u8B49\u5238", "pocket.tw": "\u53E3\u888B\u8B49\u5238" }[h] || null;
   } catch {
     return null;
   }
 }
-var normalizedTitle = (n) => String(n.title || "").replace(/\s*[-–—|]\s*(中央社(?: CNA)?|MoneyDJ(?:理財網)?|(?:Anue)?鉅亨(?:網)?)\s*$/i, "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+var normalizedTitle = (n) => String(n.title || "").replace(/\s*[-–—|]\s*(中央社(?: CNA)?|MoneyDJ(?:理財網)?|(?:Anue)?鉅亨(?:網)?|口袋(?:證券|證卷|學堂))\s*$/i, "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 function duplicateNews(a, b) {
   if (a.company_code !== b.company_code) return false;
   if (a.url === b.url) return true;
@@ -631,11 +711,34 @@ function isGeneratedAnswer(value) {
   }
 }
 function curateNews(rows) {
-  const rank = { "\u4E2D\u592E\u793E": 0, "MoneyDJ": 1, "\u9245\u4EA8\u7DB2": 2, "Reuters": 3, "CNBC": 4, "Yahoo Finance": 5, "MarketWatch": 6 };
-  const candidates = rows.filter((n) => trustedSource(n.source) && (isUS(n.company_code) || ["\u4E2D\u592E\u793E", "MoneyDJ", "\u9245\u4EA8\u7DB2"].includes(trustedSource(n.source))) && !isGeneratedAnswer(n.article_url || n.url)).map((n) => ({ ...n, source: trustedSource(n.source) })).sort((a, b) => Number(!!b.article_summary) - Number(!!a.article_summary) || rank[a.source] - rank[b.source] || String(b.published_at).localeCompare(String(a.published_at)));
+  const rank = { "\u4E2D\u592E\u793E": 0, "MoneyDJ": 1, "\u9245\u4EA8\u7DB2": 2, "Reuters": 3, "CNBC": 4, "Yahoo Finance": 5, "MarketWatch": 6, "\u53E3\u888B\u8B49\u5238": 7 };
+  const candidates = rows.filter((n) => trustedSource(n.source) && (isUS(n.company_code) || ["\u4E2D\u592E\u793E", "MoneyDJ", "\u9245\u4EA8\u7DB2", "\u53E3\u888B\u8B49\u5238"].includes(trustedSource(n.source))) && !isGeneratedAnswer(n.article_url || n.url) && pocketNewsAllowed(n)).map((n) => ({ ...n, source: trustedSource(n.source) })).sort((a, b) => Number(!!b.article_summary) - Number(!!a.article_summary) || rank[a.source] - rank[b.source] || String(b.published_at).localeCompare(String(a.published_at)));
   const kept = [];
-  for (const n of candidates) if (!kept.some((k) => duplicateNews(k, n))) kept.push(n);
+  for (const n of candidates) {
+    const prior = kept.find((k) => duplicateNews(k, n));
+    if (!prior) kept.push(n);
+    else if (prior.source === "\u53E3\u888B\u8B49\u5238" && n.source === "\u53E3\u888B\u8B49\u5238") {
+      if (!prior.article_url && isPocketURL(n.article_url || n.url)) prior.article_url = n.article_url || n.url;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(prior.published_at) && !/^\d{4}-\d{2}-\d{2}$/.test(n.published_at)) {
+        prior.published_at = n.published_at;
+        prior.news_date = n.news_date;
+      }
+    }
+  }
   return kept.sort((a, b) => String(b.published_at).localeCompare(String(a.published_at)));
+}
+function pocketNewsAllowed(row) {
+  if (trustedSource(row.source) !== "\u53E3\u888B\u8B49\u5238") return true;
+  const url = row.article_url || row.url;
+  if (isPocketURL(url)) {
+    try {
+      pocketArticleURL(url);
+    } catch {
+      return false;
+    }
+  }
+  if (/^(?:【|\[)?(?:公告|重要公告|活動)/.test(row.title || "")) return false;
+  return pocketMarketMatches(row.title, row.company_code);
 }
 
 // worker/news-diagnostics.js
@@ -810,11 +913,15 @@ async function usMarketRoute(req, env, { sql, reply, user, parsePreview: parsePr
     if (url.searchParams.get("stored") === "1") return reply({ company: company2, news: (await sql("SELECT * FROM news WHERE company_code=? AND published_at>=? ORDER BY published_at DESC,id DESC", code, new Date(Date.now() - 32 * 864e5).toISOString()).all()).results });
     const feed = new URL("https://news.google.com/rss/search");
     feed.search = new URLSearchParams({ q: newsQuery(company2), hl: "en-US", gl: "US", ceid: "US:en" }).toString();
+    const pocketPromise = fetchPocketNews(company2, { from: new Date(Date.now() - 32 * 864e5), mention: companyMention, fetcher });
     try {
       const response = await fetcher(feed, { signal: AbortSignal.timeout(2e4) });
       if (!response.ok) throw Error("Google News RSS HTTP " + response.status);
-      return reply({ company: company2, news: parsePreview2(await response.text(), company2), timezone: "America/New_York" });
+      const rss = parsePreview2(await response.text(), company2), pocket = await pocketPromise;
+      return reply({ company: company2, news: curateNews([...rss, ...pocket.news]), timezone: "America/New_York", ...pocket.warnings.length ? { warnings: pocket.warnings } : {} });
     } catch (e) {
+      const pocket = await pocketPromise;
+      if (pocket.news.length) return reply({ company: company2, news: curateNews(pocket.news), timezone: "America/New_York", warnings: ["Google News \u66AB\u6642\u7121\u6CD5\u8B80\u53D6\uFF0C\u5DF2\u63D0\u4F9B\u53E3\u888B\u8B49\u5238\u4F86\u6E90", ...pocket.warnings] });
       await recordNewsAttempt(sql, { code, stage: "preview", status: "failed", details: { error: e.message } });
       return reply({ error: "\u7F8E\u80A1\u65B0\u805E\u4F86\u6E90\u66AB\u6642\u7121\u6CD5\u8B80\u53D6\uFF1A" + e.message, code: "NEWS_SOURCE_UNAVAILABLE" }, 502);
     }
@@ -1007,6 +1114,9 @@ async function stockEventsRoute(req, { sql, reply, user, parsePreview: parsePrev
       failures.push(`${chunk.from}\uFF5E${chunk.to}\uFF1A${e.message}`);
     }
   }));
+  const pocket = await fetchPocketNews(company2, { from: /* @__PURE__ */ new Date(range.from + "T00:00:00+08:00"), now: /* @__PURE__ */ new Date(range.to + "T23:59:59+08:00"), mention: (title, c) => companyMention2(title, c, conflicts), fetcher, maxPages: 8, timeout: 12e3 });
+  rows.push(...pocket.news);
+  failures.push(...pocket.warnings);
   let filings = [];
   if (market === "US") try {
     filings = (await fetchUSFilings(company2, env, fetcher)).filter((r) => r.news_date >= range.from && r.news_date <= range.to);
@@ -1953,7 +2063,7 @@ function parsePreview(xml, company2, now = /* @__PURE__ */ new Date(), conflicts
     const sourceURL = xmlText(match[1].match(/<source\b[^>]*\burl=["']([^"']+)["']/)?.[1]);
     const source = sourceDomain(sourceURL);
     if (!source) continue;
-    if (!companyMention(title, company2, conflicts)) continue;
+    if (!companyMention(title, company2, conflicts) || source === "\u53E3\u888B\u8B49\u5238" && !pocketMarketMatches(title, company2.code)) continue;
     if (!Number.isFinite(published.getTime()) || published < start || published > now) continue;
     try {
       if (new URL(link).protocol !== "https:") continue;
@@ -1964,7 +2074,7 @@ function parsePreview(xml, company2, now = /* @__PURE__ */ new Date(), conflicts
   }
   return curateNews([...rows.values()]);
 }
-var ARTICLE_HOSTS = /* @__PURE__ */ new Set(["www.cna.com.tw", "cna.com.tw", "www.moneydj.com", "moneydj.com", "m.moneydj.com", "news.cnyes.com", "gfe-desktop.cnyes.com", "www.reuters.com", "reuters.com", "www.cnbc.com", "cnbc.com", "finance.yahoo.com", "www.marketwatch.com", "marketwatch.com"]);
+var ARTICLE_HOSTS = /* @__PURE__ */ new Set(["www.cna.com.tw", "cna.com.tw", "www.moneydj.com", "moneydj.com", "m.moneydj.com", "news.cnyes.com", "gfe-desktop.cnyes.com", "www.reuters.com", "reuters.com", "www.cnbc.com", "cnbc.com", "finance.yahoo.com", "www.marketwatch.com", "marketwatch.com", "www.pocket.tw", "pocket.tw"]);
 function normalizeArticleURL(value) {
   let u = new URL(value);
   if (["www.google.com", "google.com"].includes(u.hostname) && u.pathname === "/url") {
@@ -1982,10 +2092,13 @@ function normalizeArticleURL(value) {
 function checkedArticleURL(value) {
   const u = new URL(value);
   if (u.protocol !== "https:" || u.username || u.password || u.port && u.port !== "443" || !ARTICLE_HOSTS.has(u.hostname) && u.hostname !== "news.google.com") throw Error("\u4F86\u6E90\u7DB2\u5740\u672A\u652F\u63F4\uFF08" + u.hostname + "\uFF09\uFF1B\u53EA\u63A5\u53D7\u652F\u63F4\u7684\u53F0\u7F8E\u80A1\u65B0\u805E\u4F86\u6E90\u53CA Google News \u539F\u6587\u9023\u7D50");
+  if (isPocketURL(u.href)) pocketArticleURL(u.href);
   return u.href;
 }
 function extractArticleBody(html) {
   if (/"isAccessibleForFree"\s*:\s*(false|"false")/i.test(html)) throw Error("\u4ED8\u8CBB\u6587\u7AE0\u7121\u6CD5\u53D6\u5F97\u5B8C\u6574\u5167\u6587");
+  const pocket = pocketArticleFields(html);
+  if (pocket) return extractArticleBody("<article>" + pocket.html + "</article>");
   const bodies = [];
   const walk = (value) => {
     if (Array.isArray(value)) value.forEach(walk);
@@ -2404,7 +2517,12 @@ var index_default = { async fetch(req, env) {
         for (const n of candidates) if (!stored.some((k) => trustedSource(k.source) && k.url !== n.url && duplicateNews(k, n))) accepted.push(n);
         if (accepted.length) await env.DB.batch(accepted.map((n) => {
           if (!validStockCode(n.company_code) || !/^https:\/\//.test(n.url) || !/^\d{4}-\d{2}-\d{2}$/.test(n.news_date)) throw Error("Invalid news");
-          return sql("INSERT INTO news(company_code,title,url,source,published_at,news_date) VALUES(?,?,?,?,?,?) ON CONFLICT(company_code,url) DO UPDATE SET title=excluded.title,source=excluded.source,published_at=excluded.published_at,news_date=excluded.news_date WHERE news.title IS NOT excluded.title OR news.source IS NOT excluded.source OR news.published_at IS NOT excluded.published_at OR news.news_date IS NOT excluded.news_date", n.company_code, n.title, n.url, n.source, n.published_at, n.news_date);
+          let article = null;
+          if (n.source === "\u53E3\u888B\u8B49\u5238" && n.article_url) {
+            article = normalizeArticleURL(n.article_url);
+            if (sourceDomain(article) !== "\u53E3\u888B\u8B49\u5238") throw Error("\u539F\u6587\u4F86\u6E90\u4E0D\u7B26");
+          }
+          return sql("INSERT INTO news(company_code,title,url,source,published_at,news_date,article_url) VALUES(?,?,?,?,?,?,?) ON CONFLICT(company_code,url) DO UPDATE SET title=excluded.title,source=excluded.source,published_at=excluded.published_at,news_date=excluded.news_date,article_url=COALESCE(excluded.article_url,news.article_url) WHERE news.title IS NOT excluded.title OR news.source IS NOT excluded.source OR news.published_at IS NOT excluded.published_at OR news.news_date IS NOT excluded.news_date OR (excluded.article_url IS NOT NULL AND news.article_url IS NOT excluded.article_url)", n.company_code, n.title, n.url, n.source, n.published_at, n.news_date, article);
         }));
         return reply({ ok: true });
       }
@@ -2427,8 +2545,8 @@ var index_default = { async fetch(req, env) {
           return reply({ ok: true });
         }
         const code = url.searchParams.get("code");
-        if (code && !/^\d{4,6}$/.test(code)) return reply({ error: "Invalid code" }, 400);
-        const query = "SELECT id,title,url,article_url FROM news WHERE source IN ('MoneyDJ','MoneyDJ\u7406\u8CA1\u7DB2','\u4E2D\u592E\u793E','\u4E2D\u592E\u793E CNA','\u9245\u4EA8\u7DB2','\u9245\u4EA8','Anue\u9245\u4EA8','news.cnyes.com') AND (article_url IS NULL OR article_url LIKE 'https://news.google.com/%')";
+        if (code && !validStockCode(code)) return reply({ error: "Invalid code" }, 400);
+        const query = "SELECT id,title,url,article_url FROM news WHERE source IN ('MoneyDJ','MoneyDJ\u7406\u8CA1\u7DB2','\u4E2D\u592E\u793E','\u4E2D\u592E\u793E CNA','\u9245\u4EA8\u7DB2','\u9245\u4EA8','Anue\u9245\u4EA8','news.cnyes.com','\u53E3\u888B\u8B49\u5238','\u53E3\u888B\u5B78\u5802') AND (article_url IS NULL OR article_url LIKE 'https://news.google.com/%')";
         return reply({ news: (await sql(query + (code ? " AND company_code=?" : "") + " ORDER BY news_date DESC,id DESC LIMIT 100", ...code ? [code] : []).all()).results });
       }
       if (path === "/admin/article-probe") {
@@ -2443,7 +2561,7 @@ var index_default = { async fetch(req, env) {
         }
         const code = url.searchParams.get("code"), date = url.searchParams.get("date");
         if (!/^\d{4,6}$/.test(code || "") || !/^\d{4}-\d{2}-\d{2}$/.test(date || "")) return reply({ error: "Invalid probe range" }, 400);
-        return reply({ news: (await sql("SELECT id,title,url,article_url FROM news WHERE company_code=? AND news_date=? AND source IN ('MoneyDJ','MoneyDJ\u7406\u8CA1\u7DB2','\u9245\u4EA8\u7DB2','news.cnyes.com','\u4E2D\u592E\u793E') ORDER BY id LIMIT 10", code, date).all()).results });
+        return reply({ news: (await sql("SELECT id,title,url,article_url FROM news WHERE company_code=? AND news_date=? AND source IN ('MoneyDJ','MoneyDJ\u7406\u8CA1\u7DB2','\u9245\u4EA8\u7DB2','news.cnyes.com','\u4E2D\u592E\u793E','\u53E3\u888B\u8B49\u5238','\u53E3\u888B\u5B78\u5802') ORDER BY id LIMIT 10", code, date).all()).results });
       }
       if (path === "/admin/summary-cache") return summaryCacheRoute(req, { sql, reply, user: { id: "collector" }, randomToken, db: env.DB });
       if (path === "/admin/article") return reply({ news: await sql("SELECT * FROM news WHERE id=?", url.searchParams.get("id")).first() });
@@ -2692,17 +2810,21 @@ var index_default = { async fetch(req, env) {
         return reply({ company: company2, news: (await sql("SELECT * FROM news WHERE company_code=? AND published_at>=? ORDER BY published_at DESC,id DESC", code, from).all()).results });
       }
       const feed = new URL("https://news.google.com/rss/search");
-      feed.search = new URLSearchParams({ q: `("${company2.name}" OR "${company2.full_name}" OR "${code}") (site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com) when:1m`, hl: "zh-TW", gl: "TW", ceid: "TW:zh-Hant" }).toString();
+      feed.search = new URLSearchParams({ q: newsQuery(company2), hl: "zh-TW", gl: "TW", ceid: "TW:zh-Hant" }).toString();
+      const conflicts = (await sql("SELECT name FROM companies WHERE code<>? AND name<>? AND instr(name,?)>0", company2.code, company2.name, company2.name).all()).results.map((x) => x.name);
+      const pocketPromise = fetchPocketNews(company2, { from: new Date(Date.now() - 32 * 864e5), mention: (title, c) => companyMention(title, c, conflicts) });
       let httpStatus = 0;
       try {
         const response = await fetch(feed, { headers: { "User-Agent": "StockNewsCalendar/2.0" }, signal: AbortSignal.timeout(2e4) });
         httpStatus = response.status;
         if (!response.ok) throw Error("Google News RSS HTTP " + httpStatus);
-        const conflicts = (await sql("SELECT name FROM companies WHERE code<>? AND name<>? AND instr(name,?)>0", company2.code, company2.name, company2.name).all()).results.map((x) => x.name);
-        return reply({ company: company2, news: parsePreview(await response.text(), company2, /* @__PURE__ */ new Date(), conflicts) });
+        const rss = parsePreview(await response.text(), company2, /* @__PURE__ */ new Date(), conflicts), pocket = await pocketPromise;
+        return reply({ company: company2, news: curateNews([...rss, ...pocket.news]), ...pocket.warnings.length ? { warnings: pocket.warnings } : {} });
       } catch (e) {
         const quota = d1QuotaError(e);
         if (quota) throw e;
+        const pocket = await pocketPromise;
+        if (pocket.news.length) return reply({ company: company2, news: curateNews(pocket.news), warnings: ["Google News \u66AB\u6642\u7121\u6CD5\u8B80\u53D6\uFF0C\u5DF2\u63D0\u4F9B\u53E3\u888B\u8B49\u5238\u4F86\u6E90", ...pocket.warnings] });
         const error = httpStatus && httpStatus !== 200 ? "Google News RSS HTTP " + httpStatus : e.name === "TimeoutError" || e.name === "AbortError" ? "Google News RSS \u8B80\u53D6\u903E\u6642" : httpStatus === 200 ? "Google News RSS \u683C\u5F0F\u7570\u5E38" : "Google News RSS \u9023\u7DDA\u5931\u6557";
         await recordNewsAttempt(sql, { code, stage: "preview", status: "failed", details: { http_status: httpStatus, error } });
         return reply({ error, code: "NEWS_SOURCE_UNAVAILABLE" }, 502);

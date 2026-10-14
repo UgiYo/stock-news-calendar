@@ -5,6 +5,19 @@ import {readFileSync} from 'node:fs';
 import worker,{hash,verifyGoogle,extractArticleBody,checkedArticleURL,normalizeArticleURL,readArticleURL,parseCompanyProfile} from '../worker/index.js';
 function setup(){const db=new DatabaseSync(':memory:');db.exec(readFileSync(new URL('../worker/migrations/0001_init.sql',import.meta.url),'utf8'));const adapter={prepare(q){return {bind(...args){const s=db.prepare(q);return {async first(){return s.get(...args)||null},async all(){return {results:s.all(...args)}},async run(){return s.run(...args)}}}}},async batch(list){return Promise.all(list.map(x=>x.run()))}};return {db,env:{DB:adapter,APP_URL:'https://example.com/',GOOGLE_CLIENT_ID:'client',COLLECTOR_SECRET:'secret',GITHUB_REPO:'owner/repo'}};}
 async function call(env,path,token,body,method){return worker.fetch(new Request('https://worker.example'+path,{method:method||(body?'POST':'GET'),headers:token?{Authorization:'Bearer '+token}:{},body:body?JSON.stringify(body):undefined}),env);}
+test('Pocket Taiwan preview falls back to official metadata and preserves an authenticated company boundary',async()=>{
+ const {db,env}=setup(),original=globalThis.fetch;db.prepare('INSERT INTO users VALUES(?,?)').run('alice','alice@example.test');db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(await hash('alice'),'alice',Date.now()+60000);db.prepare('INSERT INTO companies(code,name,full_name,market) VALUES(?,?,?,?)').run('2330','台積電','台灣積體電路','上市');
+ const date=new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Taipei'});
+ globalThis.fetch=async(value,options)=>{const u=new URL(value);if(u.hostname==='news.google.com')throw Error('RSS unavailable');assert.equal(options.headers.Authorization,undefined);return Response.json({code:'0',pages:1,data:[{Title:'台積電（2330）法說重點',date,slug:'/school/report/newflash/9002/'},{Title:'台積電 ADR（TSM）財報重點',date,slug:'/school/report/SB/9003/'}]});};
+ try{const response=await call(env,'/preview?code=2330','alice');assert.equal(response.status,200);const body=await response.json();assert.equal(body.news.length,1);assert.equal(body.news[0].company_code,'2330');assert.equal(body.news[0].title,'台積電（2330）法說重點');assert.match(body.warnings[0],/口袋證券/);}finally{globalThis.fetch=original;db.close();}
+});
+test('Pocket ingestion saves verified original links and keeps them during subsequent RSS-only updates',async()=>{
+ const {db,env}=setup();db.prepare('INSERT INTO companies(code,name,full_name,market) VALUES(?,?,?,?)').run('US:MSFT','微軟','Microsoft','美股');
+ const row={company_code:'US:MSFT',title:'微軟財報',source:'口袋證券',url:'https://news.google.com/rss/articles/a',article_url:'https://www.pocket.tw/school/report/SB/9001/',published_at:'2026-10-14',news_date:'2026-10-14'};
+ try{assert.equal((await call(env,'/admin/news','secret',{news:[row]})).status,200);let saved=db.prepare('SELECT * FROM news').get();assert.equal(saved.article_url,row.article_url);
+  const {article_url,...rss}=row;assert.equal((await call(env,'/admin/news','secret',{news:[{...rss,published_at:'2026-10-14T01:00:00Z',news_date:'2026-10-13'}]})).status,200);saved=db.prepare('SELECT * FROM news').get();assert.equal(saved.article_url,row.article_url);assert.equal(saved.news_date,'2026-10-13');assert.equal(db.prepare('SELECT COUNT(*) AS n FROM news').get().n,1);
+ }finally{db.close();}
+});
 test('feature endpoint applies global flags for guests and personal overrides after authentication',async()=>{
  const {db,env}=setup();
  db.prepare('INSERT INTO users VALUES(?,?)').run('alice','alice@example.com');

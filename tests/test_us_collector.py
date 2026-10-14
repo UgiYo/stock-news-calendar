@@ -31,4 +31,4 @@ class USCollectorTests(unittest.TestCase):
   row=next(body['news'][0] for path,body in calls if path=='/admin/news')
   self.assertEqual(row['news_date'],published.astimezone(self.collector.US).date().isoformat())
   self.assertEqual(row['source'],'Reuters');self.assertEqual(row['company_code'],'US:NVDA')
-  self.assertTrue(all(call.kwargs['params']['hl']=='en-US' for call in get.call_args_list))
+  self.assertTrue(all(call.kwargs['params']['hl']=='en-US' for call in get.call_args_list if 'news.google.com' in call.args[0]))

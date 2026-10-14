@@ -1,3 +1,5 @@
+import {fetchPocketNews} from '../shared/pocket-news.js';
+import {companyMention,curateNews} from '../src/news-policy.js';
 import {isUS,symbolOf,usCompanies,enrichCompany,completedMarketDay,marketDay,newsQuery} from '../shared/markets.js';
 import {recordNewsAttempt} from './news-diagnostics.js';
 let catalogCache=null;
@@ -108,8 +110,9 @@ export async function usMarketRoute(req,env,{sql,reply,user,parsePreview,fetcher
   if(req.method!=='GET')return reply({error:'Method not allowed'},405);
   if(url.searchParams.get('stored')==='1')return reply({company,news:(await sql("SELECT * FROM news WHERE company_code=? AND published_at>=? ORDER BY published_at DESC,id DESC",code,new Date(Date.now()-32*86400000).toISOString()).all()).results});
   const feed=new URL('https://news.google.com/rss/search');feed.search=new URLSearchParams({q:newsQuery(company),hl:'en-US',gl:'US',ceid:'US:en'}).toString();
-  try{const response=await fetcher(feed,{signal:AbortSignal.timeout(20000)});if(!response.ok)throw Error('Google News RSS HTTP '+response.status);return reply({company,news:parsePreview(await response.text(),company),timezone:'America/New_York'});}
-  catch(e){await recordNewsAttempt(sql,{code,stage:'preview',status:'failed',details:{error:e.message}});return reply({error:'美股新聞來源暫時無法讀取：'+e.message,code:'NEWS_SOURCE_UNAVAILABLE'},502);}
+  const pocketPromise=fetchPocketNews(company,{from:new Date(Date.now()-32*86400000),mention:companyMention,fetcher});
+  try{const response=await fetcher(feed,{signal:AbortSignal.timeout(20000)});if(!response.ok)throw Error('Google News RSS HTTP '+response.status);const rss=parsePreview(await response.text(),company),pocket=await pocketPromise;return reply({company,news:curateNews([...rss,...pocket.news]),timezone:'America/New_York',...(pocket.warnings.length?{warnings:pocket.warnings}:{})});}
+  catch(e){const pocket=await pocketPromise;if(pocket.news.length)return reply({company,news:curateNews(pocket.news),timezone:'America/New_York',warnings:['Google News 暫時無法讀取，已提供口袋證券來源',...pocket.warnings]});await recordNewsAttempt(sql,{code,stage:'preview',status:'failed',details:{error:e.message}});return reply({error:'美股新聞來源暫時無法讀取：'+e.message,code:'NEWS_SOURCE_UNAVAILABLE'},502);}
  }
  return null;
 }

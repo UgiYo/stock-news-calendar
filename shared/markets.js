@@ -35,5 +35,5 @@ export function usMention(title,c){
 export const US_NEWS_DOMAINS={'www.reuters.com':'Reuters','reuters.com':'Reuters','www.cnbc.com':'CNBC','cnbc.com':'CNBC','finance.yahoo.com':'Yahoo Finance','www.marketwatch.com':'MarketWatch','marketwatch.com':'MarketWatch'};
 export function newsQuery(c,range='when:1m'){
  const names=companyAliases(enrichCompany(c)).filter(n=>n.length>=2).map(n=>'"'+n.replaceAll('"','')+'"');
- const us=isUS(c.code);return '('+[...names,'"'+symbolOf(c.code)+'"'].join(' OR ')+') '+(us?'(site:reuters.com OR site:cnbc.com OR site:finance.yahoo.com OR site:marketwatch.com OR site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com)':'(site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com)')+' '+range;
+ const us=isUS(c.code);return '('+[...names,'"'+symbolOf(c.code)+'"'].join(' OR ')+') '+(us?'(site:reuters.com OR site:cnbc.com OR site:finance.yahoo.com OR site:marketwatch.com OR site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com OR site:pocket.tw/school/report)':'(site:cna.com.tw OR site:moneydj.com OR site:news.cnyes.com OR site:pocket.tw/school/report)')+' '+range;
 }

@@ -65,6 +65,13 @@ test('US search stores canonical records, preview works, saved prices survive pr
   const failed=await usMarketRoute(new Request('https://api.test/chart-prices?code=US:NVDA',{method:'POST'}),f.env,{...f,fetcher:async()=>new Response('',{status:503})});assert.equal(failed.status,200);const data=await failed.json();assert.equal(data.prices.length,1);assert.match(data.warning,/暫時無法取得/);assert.equal(data.currency,'USD');
  }finally{f.db.close();}
 });
+test('US news preview can use the official Pocket index when Google News fails',async()=>{
+ const f=fixture();try{
+  f.db.prepare('INSERT INTO companies(code,name,full_name,market) VALUES(?,?,?,?)').run('US:NVDA','輝達','NVIDIA','美股');
+  const date=marketDay(new Date(),'TW');const fetcher=async value=>{const u=new URL(value);if(u.hostname==='news.google.com')throw Error('RSS unavailable');return Response.json({code:'0',pages:1,data:[{Title:'輝達（NVDA）財報重點',date,slug:'/school/report/SB/9001/'}]});};
+  const response=await usMarketRoute(new Request('https://api.test/preview?code=US:NVDA'),f.env,{...f,fetcher});assert.equal(response.status,200);const data=await response.json();assert.equal(data.news.length,1);assert.equal(data.news[0].company_code,'US:NVDA');assert.equal(data.news[0].source,'口袋證券');assert.match(data.warnings[0],/Google News/);assert.equal(data.news[0].published_at,date);
+ }finally{f.db.close();}
+});
 test('SEC filings verify CIK, retain exact document URLs and distinguish metadata',async()=>{
  const fetcher=async()=>Response.json({cik:'1045810',filings:{recent:{accessionNumber:['0001045810-26-000001'],form:['10-Q'],filingDate:['2026-10-08'],acceptanceDateTime:['2026-10-08T20:00:00Z'],primaryDocument:['nvda-20261008.htm']}}});
  const rows=await fetchUSFilings({...nvda,cik:'0001045810'},{},fetcher);assert.equal(rows.length,1);assert.match(rows[0].url,/1045810\/000104581026000001\/nvda-20261008.htm/);assert.equal(rows[0].evidence_kind,'filing_metadata');
