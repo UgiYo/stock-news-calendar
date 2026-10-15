@@ -49,6 +49,54 @@ def read_json(url, data=None, token=None):
         if len(raw) > limit: raise ValueError('Source response too large')
         return json.loads(raw)
 
+
+def source_transport(author, api, direct=read_json):
+    """Use trusted Worker egress only when GitHub Actions source access is blocked."""
+    origin = author['url'].rstrip('/')
+    def fetch(url):
+        parsed = urllib.parse.urlsplit(url)
+        base = urllib.parse.urlsplit(origin)
+        if parsed.scheme != 'https' or parsed.netloc != base.netloc or base.path or parsed.fragment:
+            raise ValueError('Unexpected Substack source URL')
+        if parsed.path == '/api/v1/archive':
+            args = urllib.parse.parse_qs(parsed.query)
+            if args.get('sort') != ['new'] or args.get('limit') != ['20']:
+                raise ValueError('Unexpected archive query')
+            offset = int(args.get('offset', ['0'])[0])
+            if offset < 0: raise ValueError('Invalid offset')
+            payload = {'author_id':author['id'], 'kind':'archive', 'offset':offset}
+        elif parsed.path.startswith('/api/v1/posts/') and not parsed.query:
+            slug = urllib.parse.unquote(parsed.path[len('/api/v1/posts/'):])
+            if not slug or '/' in slug or '?' in slug or '#' in slug:
+                raise ValueError('Invalid post slug')
+            payload = {'author_id':author['id'], 'kind':'post', 'slug':slug}
+        else:
+            raise ValueError('Unexpected source endpoint')
+        try:
+            return direct(url)
+        except urllib.error.HTTPError as error:
+            if error.code not in (403, 429, 500, 502, 503, 504):
+                raise
+            print('Substack direct source failed:', error.code, 'using Worker fallback', flush=True)
+        except (urllib.error.URLError, TimeoutError):
+            print('Substack direct source unreachable; using Worker fallback', flush=True)
+        try:
+            result = api('/admin/substack/source', payload)
+            return result['data']
+        except urllib.error.HTTPError as error:
+            # Detail 403 can be an individual paid/locked post; the caller
+            # preserves the public preview without blocking archive progress.
+            if error.code == 502:
+                try:
+                    info = json.loads(error.read(10000))
+                except (ValueError, AttributeError):
+                    info = {}
+                status = info.get('source_status')
+                if status in (401, 403, 404):
+                    raise urllib.error.HTTPError(url,status,info.get('error','Source unavailable'),{},None) from error
+            raise
+    return fetch
+
 def upload_update(api, data):
     # Bound UTF-8 upload size, not character count. Advance the archive cursor
     # only on the last successfully saved chunk; retries upsert earlier chunks.
@@ -128,7 +176,7 @@ def main():
     for author in authors:
         if continuation and author.get('last_error'): continue
         try:
-            sync_author(author, api, max_pages=None, deadline=deadline)
+            sync_author(author, api, fetch=source_transport(author, api), max_pages=None, deadline=deadline)
         except ImportBudgetExpired:
             print('Import time budget reached; saved pages will continue in the next workflow.'); break
         except Exception as error:
