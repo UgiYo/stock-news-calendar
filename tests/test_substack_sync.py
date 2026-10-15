@@ -11,6 +11,32 @@ def post(n, **extra):
     return dict(slug=f'post-{n}', title=f'Article {n}', post_date=f'2026-10-{min(28,n+1):02d}T12:00:00Z', audience='everyone', body_html='<p>NVIDIA 原文</p><script>bad()</script>', **extra)
 
 class SubstackSyncTest(unittest.TestCase):
+    def test_blocked_direct_archive_uses_worker_and_validates_request(self):
+        calls = []
+        def direct(url):
+            raise urllib.error.HTTPError(url, 403, 'Forbidden', {}, None)
+        def api(path, data):
+            calls.append((path, data))
+            return {'data':[post(0)]}
+        author={'id':'example','url':'https://example.substack.com'}
+        fetch=sync.source_transport(author,api,direct)
+        self.assertEqual(fetch(author['url']+'/api/v1/archive?sort=new&offset=0&limit=20')[0]['slug'],'post-0')
+        self.assertEqual(calls[0][1],{'author_id':'example','kind':'archive','offset':0})
+        with self.assertRaises(ValueError):fetch('https://attacker.test/api/v1/archive?sort=new&offset=0&limit=20')
+
+    def test_blocked_single_paid_post_preserves_preview_when_worker_rejects(self):
+        def direct(url):raise urllib.error.HTTPError(url,403,'Forbidden',{},None)
+        def api(path, data):
+            if path == '/admin/substack/source':
+                body=b'{"source_status":403,"error":"locked"}'
+                from io import BytesIO
+                raise urllib.error.HTTPError('https://api.test',502,'Bad gateway',{},BytesIO(body))
+            return None
+        author={'id':'example','url':'https://example.substack.com','archive_offset':0,'archive_complete':0}
+        fetch=sync.source_transport(author,api,direct)
+        with self.assertRaises(urllib.error.HTTPError) as ctx:fetch(author['url']+'/api/v1/posts/post-0')
+        self.assertEqual(ctx.exception.code,403)
+
     def test_plain_text_and_paid_preview(self):
         a = sync.article_row({**post(0), 'audience': 'only_paid'}, {'url': 'https://example.substack.com'})
         self.assertEqual(a['access'], 'preview'); self.assertNotIn('bad', a['text']); self.assertIn('NVIDIA', a['text'])
