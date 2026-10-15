@@ -81,7 +81,8 @@ export async function substackRoute(req,{sql,reply,user,admin=false,dispatch,env
  await sql('CREATE TABLE IF NOT EXISTS substack_articles(id TEXT PRIMARY KEY,author_id TEXT NOT NULL,date TEXT NOT NULL,published_at TEXT NOT NULL,payload TEXT NOT NULL)').run();
  await sql('CREATE INDEX IF NOT EXISTS substack_articles_date ON substack_articles(date DESC,published_at DESC,id)').run();
  await sql('CREATE INDEX IF NOT EXISTS substack_articles_author ON substack_articles(author_id,published_at)').run();
- await sql('INSERT INTO substack_authors(id,url,title) VALUES(?,?,?) ON CONFLICT(id) DO NOTHING',DEFAULT_SUBSTACK.id,DEFAULT_SUBSTACK.url,DEFAULT_SUBSTACK.title).run();
+ await sql('CREATE TABLE IF NOT EXISTS substack_removed_authors(id TEXT PRIMARY KEY)').run();
+ await sql('INSERT INTO substack_authors(id,url,title) SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM substack_removed_authors WHERE id=?) ON CONFLICT(id) DO NOTHING',DEFAULT_SUBSTACK.id,DEFAULT_SUBSTACK.url,DEFAULT_SUBSTACK.title,DEFAULT_SUBSTACK.id).run();
  if(path.endsWith('/authors')&&req.method==='GET')return reply({authors:(await sql("SELECT a.*,COUNT(b.id) AS article_count,COALESCE(SUM(CASE WHEN json_extract(b.payload,'$.access')='public' THEN 1 ELSE 0 END),0) AS public_count,MAX(b.published_at) AS latest_published_at FROM substack_authors a LEFT JOIN substack_articles b ON b.author_id=a.id GROUP BY a.id ORDER BY a.title").all()).results});
  if(path==='/admin/substack/source'&&req.method==='POST'){
   const input=await req.json();
@@ -94,11 +95,25 @@ export async function substackRoute(req,{sql,reply,user,admin=false,dispatch,env
   const pending=await sql('SELECT id FROM substack_authors WHERE archive_complete=0 AND last_error IS NULL LIMIT 1').first();if(!pending)return reply({continued:false});
   try{await dispatch(env,'substack.yml',{author_id:'',continuation:'true'});return reply({continued:true});}catch(e){await sql('UPDATE substack_authors SET last_error=? WHERE archive_complete=0 AND last_error IS NULL','後續匯入未啟動：'+e.message).run();return reply({error:'後續匯入無法排入：'+e.message},502);}
  }
+ if(path==='/substack/authors'&&req.method==='DELETE'){
+  if(flags['news_calendar.substack_import']===false)return reply({error:'作者管理目前未開放'},403);
+  try{
+   const data=await req.json(),id=String(data.author_id||'');
+   if(!/^[a-z0-9][a-z0-9-]{0,62}$/.test(id))return reply({error:'作者識別碼不正確'},400);
+   const author=await sql('SELECT id,title FROM substack_authors WHERE id=?',id).first();
+   if(!author)return reply({error:'找不到作者，可能已被移除'},404);
+   await sql('INSERT INTO substack_removed_authors(id) VALUES(?) ON CONFLICT(id) DO NOTHING',id).run();
+   await sql('DELETE FROM substack_authors WHERE id=?',id).run();
+   await sql('DELETE FROM substack_articles WHERE author_id=?',id).run();
+   return reply({ok:true,message:'已移除 '+author.title+' 的來源與已匯入文章；背景匯入將不再更新此作者'});
+  }catch(e){return reply({error:e.message},400);}
+ }
  if(path==='/substack/authors'&&req.method==='POST'){
   if(flags['news_calendar.substack_import']===false)return reply({error:'作者匯入目前未開放'},403);
   try{const data=await req.json(),input=substackAuthorInput(data.url);let url,title=data.title;
    if(input.kind==='profile'){const resolved=await resolveSubstackAuthor(input.url,fetcher);if(resolved.candidates.length!==1)throw Error('此作者頁列出多個刊物，請先解析作者，再選擇要匯入的刊物');url=resolved.candidates[0].url;title=title||resolved.candidates[0].title;}else url=input.url;
    const id=new URL(url).hostname.split('.')[0];const count=await sql('SELECT COUNT(*) AS total FROM substack_authors').first();if(count.total>=50&&!await sql('SELECT id FROM substack_authors WHERE id=?',id).first())throw Error('作者已達 50 位上限');
+   await sql('DELETE FROM substack_removed_authors WHERE id=?',id).run();
    await sql('INSERT INTO substack_authors(id,url,title) VALUES(?,?,?) ON CONFLICT(id) DO NOTHING',id,url,String(title||id).slice(0,500)).run();
    await sql('UPDATE substack_authors SET last_error=NULL WHERE id=?',id).run();
    let warning='';try{await dispatch(env,'substack.yml',{author_id:id,continuation:'false'});}catch(e){warning=e.message;await sql('UPDATE substack_authors SET last_error=? WHERE id=?','背景匯入未啟動：'+warning,id).run();}return reply({ok:true,author:{id,url,title:String(title||id).slice(0,500)},warning,message:warning?'作者已保存，排程尚未啟動':'已開始匯入此刊物的全部歷史文章，背景會自動續抓至最後一頁'});
