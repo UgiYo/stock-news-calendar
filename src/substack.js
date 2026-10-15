@@ -7,7 +7,7 @@ import {companyMode} from './ai-privacy.js';
 import {runResultJob,resultRecords,openResultsCenter} from './ai-results.js';
 
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let importOpen=false,draftURL='',draftTitle='',importCandidates=[],importWarning='',importBusy=false,progressTimer=null,progressLoading=false;
+let removingAuthor='',importOpen=false,draftURL='',draftTitle='',importCandidates=[],importWarning='',importBusy=false,progressTimer=null,progressLoading=false;
 let owner=null,authors=[],articles=[],loading=false,error='',message='',authorFilter='',stockFilter='',dateOnly=false,query='',limit=30,context={},onChange=()=>{},loaded=false,generation=0;
 export function substackDateArticles(date,companies=[],selected=''){
  if(context.market!=='US'||context.flags?.['news_calendar.substack']===false)return [];
@@ -22,7 +22,7 @@ export function substackDayPanel(date,companies,selected){
  const rows=substackDateArticles(date,companies,selected);
  return rows.length?`<section class="substack-day"><h3>★ Substack 提及追蹤股（${rows.length} 篇）</h3>${rows.map(a=>card(a,companies)).join('')}</section>`:'';
 }
-function reset(next){clearTimeout(progressTimer);progressTimer=null;progressLoading=false;importOpen=false;draftURL='';draftTitle='';importCandidates=[];importWarning='';importBusy=false;owner=next;generation++;authors=[];articles=[];loaded=false;loading=false;error='';message='';authorFilter='';stockFilter='';query='';limit=30;document.querySelector('#substack-article-dialog')?.closest('.modal-backdrop')?.remove();}
+function reset(next){clearTimeout(progressTimer);progressTimer=null;progressLoading=false;removingAuthor='';importOpen=false;draftURL='';draftTitle='';importCandidates=[];importWarning='';importBusy=false;owner=next;generation++;authors=[];articles=[];loaded=false;loading=false;error='';message='';authorFilter='';stockFilter='';query='';limit=30;document.querySelector('#substack-article-dialog')?.closest('.modal-backdrop')?.remove();}
 async function load(){
  if(loading||!owner)return;loading=true;error='';const who=owner,version=generation;onChange();
  try{const data=await api('/substack/authors');let rows=[],offset=0;
@@ -37,7 +37,22 @@ function importControls(){
 function authorProgress(a){
  const count=a.article_count??articles.filter(row=>row.author_id===a.id).length,full=a.public_count??articles.filter(row=>row.author_id===a.id&&row.access==='public').length;
  const status=a.last_error?'匯入失敗／待重試':a.archive_complete?'全部歷史文章匯入完成':count?'正在分批匯入，背景會自動續抓':'等待背景匯入';
- return `<article class="substack-author-progress"><strong>${esc(a.title)}</strong><p role="status">${status} · 已匯入 ${count} 篇${a.archive_complete?'':'（總篇數待匯入完成後確認）'}</p><small>公開內文 ${full} 篇 · 預覽／部分內容 ${Math.max(0,count-full)} 篇${a.updated_at?' · 最後更新 '+esc(a.updated_at):''}</small>${a.last_error?`<p class="notice">${esc(a.last_error)}</p>`:''}<button data-substack-author-refresh="${esc(a.id)}" ${!owner?'disabled':''}>${a.last_error?'重試匯入':a.archive_complete?'更新此作者的新文章':'繼續匯入全部文章'}</button></article>`;
+ return `<article class="substack-author-progress"><strong>${esc(a.title)}</strong><p role="status">${status} · 已匯入 ${count} 篇${a.archive_complete?'':'（總篇數待匯入完成後確認）'}</p><small>公開內文 ${full} 篇 · 預覽／部分內容 ${Math.max(0,count-full)} 篇${a.updated_at?' · 最後更新 '+esc(a.updated_at):''}</small>${a.last_error?`<p class="notice">${esc(a.last_error)}</p>`:''}<div class="stock-actions"><button data-substack-author-refresh="${esc(a.id)}" ${!owner||removingAuthor===a.id?'disabled':''}>${a.last_error?'重試匯入':a.archive_complete?'更新此作者的新文章':'繼續匯入全部文章'}</button><button type="button" data-substack-author-remove="${esc(a.id)}" ${!owner||removingAuthor?'disabled':''}>${removingAuthor===a.id?'移除中…':'移除來源'}</button></div></article>`;
+}
+async function removeAuthor(id){
+ const author=authors.find(a=>a.id===id);if(!author||removingAuthor)return;
+ const count=Number(author.article_count||0);
+ if(!globalThis.confirm(`確定移除「${author.title}」？\\n這是共用作者來源，所有使用者都會看不到此作者與已匯入的 ${count} 篇文章，且無法復原。之後可重新加入作者再匯入。`))return;
+ const who=owner,version=generation;removingAuthor=id;onChange();
+ try{
+  const result=await api('/substack/authors',{method:'DELETE',body:{author_id:id}});
+  if(who!==owner||version!==generation)return;
+  if(authorFilter===id)authorFilter='';
+  articles=articles.filter(a=>a.author_id!==id);
+  authors=authors.filter(a=>a.id!==id);
+  message=result.message;error='';loaded=false;
+ }catch(e){if(who===owner&&version===generation)error=e.message;}
+ finally{if(who===owner&&version===generation){removingAuthor='';onChange();}}
 }
 async function refreshAuthor(id=''){
  const who=owner,version=generation;try{const r=await api('/substack/refresh',{body:{author_id:id}});if(who!==owner||version!==generation)return;message=r.message;error='';await load();}catch(e){if(who===owner&&version===generation){error=e.message;onChange();}}
@@ -69,6 +84,7 @@ export function mountSubstack(host,options,changed){
  host.querySelector('[data-substack-reload]').onclick=()=>void load();
  host.querySelector('[data-substack-refresh]').onclick=e=>{e.target.disabled=true;void refreshAuthor(authorFilter);};
  host.querySelectorAll('[data-substack-author-refresh]').forEach(b=>b.onclick=()=>{b.disabled=true;void refreshAuthor(b.dataset.substackAuthorRefresh);});
+ host.querySelectorAll('[data-substack-author-remove]').forEach(b=>b.onclick=()=>void removeAuthor(b.dataset.substackAuthorRemove));
  host.querySelector('[data-substack-import-open]')?.addEventListener('click',()=>{importOpen=true;onChange();host.querySelector('[name=url]')?.focus();});
  const importDetails=host.querySelector('details.substack-import');if(importDetails)importDetails.ontoggle=()=>{importOpen=importDetails.open;};
  const form=host.querySelector('[data-substack-import]');

@@ -1,0 +1,25 @@
+name: Verify Substack source removal
+on:
+  pull_request:
+    paths:
+      - 'src/substack.js'
+      - 'worker/substack.js'
+      - 'tests/substack.test.js'
+      - '.github/workflows/verify-substack-removal.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: node --test tests/substack.test.js
+      - run: node --check src/substack.js
+      - run: node --check worker/substack.js
+      - run: npm run build
