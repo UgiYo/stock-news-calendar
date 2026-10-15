@@ -4,6 +4,7 @@ on:
     paths:
       - 'scripts/sync_substack.py'
       - 'worker/substack.js'
+      - 'src/substack.js'
       - 'tests/test_substack_sync.py'
       - 'tests/substack.test.js'
       - '.github/workflows/verify-substack-import.yml'
@@ -26,4 +27,5 @@ jobs:
       - run: python -m unittest discover -s tests -p 'test_substack_sync.py'
       - run: node --test tests/substack.test.js
       - run: node --check worker/substack.js
+      - run: node --check src/substack.js
       - run: python -m py_compile scripts/sync_substack.py
