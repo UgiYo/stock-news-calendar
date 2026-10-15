@@ -476,19 +476,54 @@ async function readSubstackSource(url, fetcher) {
   const expected = new URL(url);
   let endpoint = url;
   for (let i = 0; i < 3; i++) {
-    const r = await fetcher(endpoint, { redirect: "manual", headers: { "User-Agent": "Mozilla/5.0 (compatible; StockNewsCalendar/1.0)", "Accept": "text/html,application/rss+xml" }, signal: AbortSignal.timeout(12e3) });
+    let r;
+    try {
+      r = await fetcher(endpoint, { redirect: "manual", headers: { "User-Agent": "Mozilla/5.0 (compatible; StockNewsCalendar/1.0)", "Accept": "text/html,application/rss+xml" }, signal: AbortSignal.timeout(12e3) });
+    } catch {
+      return readSubstackBackup(url, fetcher);
+    }
     if (r.status >= 300 && r.status < 400) {
       const next = new URL(r.headers.get("Location") || "", endpoint);
       if (next.protocol !== "https:" || next.hostname !== expected.hostname || next.username || next.password || next.port) throw Error("\u4F86\u6E90\u8F49\u5740\u7121\u6CD5\u78BA\u8A8D\uFF0C\u8ACB\u76F4\u63A5\u8CBC\u4E0A\u520A\u7269\u7DB2\u5740");
       endpoint = next.href;
       continue;
     }
-    if (!r.ok) throw Error("Substack HTTP " + r.status);
-    const text = await r.text();
-    if (text.length > 2e6) throw Error("\u4F5C\u8005\u9801\u56DE\u61C9\u904E\u5927");
-    return text;
+    if (!r.ok) {
+      if (![403, 429, 500, 502, 503, 504].includes(r.status)) throw Error("Substack HTTP " + r.status);
+      return readSubstackBackup(url, fetcher);
+    }
+    return boundedSourceText(r, 2e6);
   }
   throw Error("\u4F86\u6E90\u8F49\u5740\u6B21\u6578\u904E\u591A");
+}
+async function readSubstackBackup(url, fetcher) {
+  const backup = await fetcher("https://r.jina.ai/" + url, { redirect: "error", headers: { Accept: "application/json", "X-Return-Format": "html", "X-Cache-Tolerance": "60" }, signal: AbortSignal.timeout(6e4) });
+  if (!backup.ok) throw Error("\u4F5C\u8005\u516C\u958B\u4F86\u6E90\u66AB\u6642\u53D7\u9650\uFF0C\u8ACB\u7A0D\u5F8C\u91CD\u8A66\u6216\u76F4\u63A5\u8CBC\u520A\u7269\u7DB2\u5740");
+  const payload2 = JSON.parse(await boundedSourceText(backup, 6e6)), data = payload2.data;
+  if (payload2.code !== 200 || data?.url !== url || typeof data.html !== "string" || data.html.length > 2e6) throw Error("\u4F5C\u8005\u5099\u63F4\u4F86\u6E90\u7121\u6CD5\u78BA\u8A8D");
+  return data.html;
+}
+async function boundedSourceText(response, limit) {
+  const reader = response.body.getReader(), chunks = [];
+  let length = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > limit) throw Error("\u4F86\u6E90\u56DE\u61C9\u904E\u5927");
+      chunks.push(value);
+    }
+  } finally {
+    await reader.cancel();
+  }
+  const bytes = new Uint8Array(length);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 }
 async function resolveSubstackAuthor(value, fetcher = globalThis.fetch) {
   const input = substackAuthorInput(value);
@@ -517,9 +552,38 @@ function normalizeSubstackArticle(data, author) {
   if (text.length > 1e5) throw Error("\u6587\u7AE0\u5167\u6587\u8D85\u904E\u4E0A\u9650");
   return { id: author.id + ":" + u.pathname.slice(3), author_id: author.id, author_title: author.title, url: u.origin + u.pathname, title: String(data.title), published_at: new Date(data.published_at).toISOString(), date: marketDay(new Date(data.published_at), "US"), access: data.access === "public" ? "public" : "preview", text, mentions: substackMentions(text) };
 }
+async function fetchSubstackPublic(author, input, fetcher = globalThis.fetch, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+  let endpoint;
+  try {
+    const origin = substackPublication(author.url);
+    if (origin !== author.url) throw Error("\u520A\u7269\u7DB2\u5740\u932F\u8AA4");
+    if (input.kind === "archive" && Number.isSafeInteger(input.offset) && input.offset >= 0) endpoint = origin + "/api/v1/archive?sort=new&offset=" + input.offset + "&limit=20";
+    else if (input.kind === "post" && typeof input.slug === "string" && /^[\p{L}\p{N}_-]{1,500}$/u.test(input.slug)) endpoint = origin + "/api/v1/posts/" + encodeURIComponent(input.slug);
+    else throw Error("\u6587\u7AE0\u4F86\u6E90\u53C3\u6578\u932F\u8AA4");
+  } catch (e) {
+    throw Object.assign(e, { invalid: true });
+  }
+  let response;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    response = await fetcher(endpoint, { redirect: "manual", headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json", "Accept-Language": "en-US,en;q=0.9", "Referer": author.url + "/" }, signal: AbortSignal.timeout(25e3) });
+    if (![429, 500, 502, 503, 504].includes(response.status) || attempt === 2) break;
+    const header = response.headers.get("Retry-After"), seconds = /^\d+$/.test(header || "") ? Number(header) : Date.parse(header || "") > Date.now() ? (Date.parse(header) - Date.now()) / 1e3 : 5 * 2 ** attempt;
+    await response.body?.cancel();
+    await wait(Math.min(3e4, Math.max(1e3, seconds * 1e3)));
+  }
+  if (!response.ok) throw Object.assign(Error(response.headers.get("cf-mitigated") === "challenge" ? "Substack \u8981\u6C42\u700F\u89BD\u5668\u9A57\u8B49\uFF0C\u80CC\u666F\u532F\u5165\u66AB\u6642\u53D7\u963B\uFF1B\u5DF2\u4FDD\u7559\u9032\u5EA6" : "Substack \u516C\u958B\u4F86\u6E90 HTTP " + response.status), { source_status: response.status, blocked: response.headers.get("cf-mitigated") === "challenge" });
+  let data;
+  try {
+    data = JSON.parse(await boundedSourceText(response, 12e6));
+  } catch {
+    throw Error("\u516C\u958B\u4F86\u6E90\u672A\u56DE\u50B3\u6709\u6548 JSON");
+  }
+  if (input.kind === "archive" ? !Array.isArray(data) || data.length > 20 : !data || data.slug !== input.slug) throw Error("\u4F86\u6E90\u6587\u7AE0\u683C\u5F0F\u932F\u8AA4");
+  return data;
+}
 async function substackRoute(req, { sql, reply, user, admin = false, dispatch: dispatch2, env, flags = {}, fetcher = globalThis.fetch }) {
   const u = new URL(req.url), path = u.pathname;
-  if (!["/substack/authors", "/substack/articles", "/substack/article", "/substack/refresh", "/substack/resolve", "/admin/substack/authors", "/admin/substack/update", "/admin/substack/continue"].includes(path)) return null;
+  if (!["/substack/authors", "/substack/articles", "/substack/article", "/substack/refresh", "/substack/resolve", "/admin/substack/authors", "/admin/substack/update", "/admin/substack/continue", "/admin/substack/source", "/admin/substack/imported"].includes(path)) return null;
   if (!admin && !user) return reply({ error: "\u8ACB\u5148\u767B\u5165" }, 401);
   if (path.startsWith("/admin/") && !admin) return reply({ error: "Forbidden" }, 403);
   if (!admin && (flags["markets.us"] === false || flags["news_calendar.substack"] === false)) return reply({ error: "Substack \u529F\u80FD\u76EE\u524D\u672A\u958B\u653E" }, 403);
@@ -538,6 +602,22 @@ async function substackRoute(req, { sql, reply, user, admin = false, dispatch: d
   await sql("CREATE INDEX IF NOT EXISTS substack_articles_author ON substack_articles(author_id,published_at)").run();
   await sql("INSERT INTO substack_authors(id,url,title) VALUES(?,?,?) ON CONFLICT(id) DO NOTHING", DEFAULT_SUBSTACK.id, DEFAULT_SUBSTACK.url, DEFAULT_SUBSTACK.title).run();
   if (path.endsWith("/authors") && req.method === "GET") return reply({ authors: (await sql("SELECT a.*,COUNT(b.id) AS article_count,COALESCE(SUM(CASE WHEN json_extract(b.payload,'$.access')='public' THEN 1 ELSE 0 END),0) AS public_count,MAX(b.published_at) AS latest_published_at FROM substack_authors a LEFT JOIN substack_articles b ON b.author_id=a.id GROUP BY a.id ORDER BY a.title").all()).results });
+  if (path === "/admin/substack/imported" && req.method === "GET") {
+    const id = u.searchParams.get("author_id"), offset = Number(u.searchParams.get("offset") || 0);
+    if (!Number.isSafeInteger(offset) || offset < 0) return reply({ error: "Invalid offset" }, 400);
+    if (!await sql("SELECT id FROM substack_authors WHERE id=?", id).first()) return reply({ error: "\u627E\u4E0D\u5230\u4F5C\u8005" }, 404);
+    const rows = (await sql("SELECT id FROM substack_articles WHERE author_id=? ORDER BY id LIMIT 1000 OFFSET ?", id, offset).all()).results;
+    return reply({ slugs: rows.map((row) => row.id.slice(id.length + 1)), has_more: rows.length === 1e3, next_offset: offset + rows.length });
+  }
+  if (path === "/admin/substack/source" && req.method === "POST") {
+    const input = await req.json(), author = await sql("SELECT * FROM substack_authors WHERE id=?", input.author_id).first();
+    if (!author) return reply({ error: "\u627E\u4E0D\u5230\u4F5C\u8005" }, 404);
+    try {
+      return reply({ data: await fetchSubstackPublic(author, input, fetcher) });
+    } catch (e) {
+      return reply({ error: e.message, ...e.source_status ? { source_status: e.source_status } : {}, blocked: !!e.blocked }, e.invalid ? 400 : 502);
+    }
+  }
   if (path === "/admin/substack/continue" && req.method === "POST") {
     const pending = await sql("SELECT id FROM substack_authors WHERE archive_complete=0 AND last_error IS NULL LIMIT 1").first();
     if (!pending) return reply({ continued: false });

@@ -1,5 +1,8 @@
 name: Update Substack articles
 on:
+  push:
+    branches: [main]
+    paths: [scripts/sync_substack.py, worker/substack.js, .github/workflows/substack.yml]
   schedule:
     # 06:20 and 18:20 Asia/Taipei; actual start depends on GitHub scheduling.
     - cron: '20 22,10 * * *'
@@ -15,6 +18,7 @@ on:
         default: false
 permissions:
   contents: read
+  actions: write
 concurrency:
   group: substack-import
   cancel-in-progress: false
@@ -27,6 +31,8 @@ jobs:
       COLLECTOR_SECRET: ${{ secrets.COLLECTOR_SECRET }}
       SUBSTACK_AUTHOR_ID: ${{ inputs.author_id }}
       SUBSTACK_CONTINUATION: ${{ inputs.continuation }}
+      SUBSTACK_WORKFLOW_REF: ${{ github.ref_name }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

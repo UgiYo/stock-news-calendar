@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {parseHTML} from 'linkedom';
 import {DEFAULT_SUBSTACK,substackPublication,substackAuthorInput,substackMentions,substackChunks,substackPrompt} from '../shared/substack.js';
-import {normalizeSubstackArticle,substackRoute,resolveSubstackAuthor,substackProfileCandidates} from '../worker/substack.js';
+import {normalizeSubstackArticle,substackRoute,resolveSubstackAuthor,substackProfileCandidates,fetchSubstackPublic} from '../worker/substack.js';
 import {validAccountResult} from '../worker/account-results.js';
 import {decorateSubstackSummary} from '../src/substack-mentions.js';
 
@@ -55,6 +55,9 @@ test('shared archive upserts, exposes metadata separately, preserves failure sta
  const authors=(await call('/substack/authors')).data.authors;assert.equal(authors.length,1);
  const data={author_id:DEFAULT_SUBSTACK.id,articles:[{url:DEFAULT_SUBSTACK.url+'/p/abc',title:'文章',text:'NVIDIA 原文',access:'public',published_at:'2026-10-14T01:00:00Z'}],archive_offset:1,archive_complete:true};
  await call('/admin/substack/update','POST',data,{admin:true});await call('/admin/substack/update','POST',data,{admin:true});
+ assert.deepEqual((await call('/admin/substack/imported?author_id='+DEFAULT_SUBSTACK.id,'GET',null,{admin:true})).data.slugs,['abc']);
+ assert.equal((await call('/admin/substack/imported?author_id='+DEFAULT_SUBSTACK.id)).status,403);
+ assert.equal((await call('/admin/substack/imported?author_id='+DEFAULT_SUBSTACK.id+'&offset=-1','GET',null,{admin:true})).status,400);
  const listing=(await call('/substack/articles')).data;assert.equal(listing.articles.length,1);assert.equal(listing.articles[0].text,undefined);assert.equal(listing.articles[0].mentions[0].code,'US:NVDA');
  const detail=(await call('/substack/article?id='+encodeURIComponent(listing.articles[0].id))).data.article;assert.equal(detail.text,'NVIDIA 原文');
  assert.equal((await call('/substack/articles','GET',null,{flags:{'news_calendar.substack':false}})).status,403);
@@ -81,4 +84,55 @@ test('Substack results use the same private account schema and source paragraph 
  assert.ok(validAccountResult(row));assert.ok(!validAccountResult({...row,owner:'bob'}));
  const {document}=parseHTML('<html><body><article>作者觀點</article></body></html>');const previous=globalThis.document;globalThis.document=document;
  try{const body=document.querySelector('article');decorateSubstackSummary(body,row,'US:NVDA');assert.ok(body.querySelector('[data-substack-evidence="US:NVDA"]').open);assert.match(body.textContent,/公開預覽/);assert.match(body.textContent,/觀察標的/);}finally{globalThis.document=previous;}
+});
+test('collector source uses only registered publication endpoints without forwarding credentials',async()=>{
+ const db=new DatabaseSync(':memory:');const sql=(q,...args)=>({first:async()=>db.prepare(q).get(...args)||null,all:async()=>({results:db.prepare(q).all(...args)}),run:async()=>db.prepare(q).run(...args)}),calls=[];
+ const call=(body,extra={})=>substackRoute(new Request('https://api.test/admin/substack/source',{method:'POST',headers:{Authorization:'Bearer private'},body:JSON.stringify(body)}),{sql,reply:(data,status=200)=>({data,status}),admin:true,dispatch:async()=>true,env:{},fetcher:async(url,options)=>{calls.push({url,options});return Response.json([]);},...extra});
+ const data={author_id:DEFAULT_SUBSTACK.id,kind:'archive',offset:20};
+ assert.equal((await call(data,{admin:false,user:{id:'alice'}})).status,403);
+ assert.deepEqual((await call(data)).data.data,[]);
+ assert.equal(calls[0].url,DEFAULT_SUBSTACK.url+'/api/v1/archive?sort=new&offset=20&limit=20');
+ assert.equal(calls[0].options.redirect,'manual');assert.equal(calls[0].options.headers.Authorization,undefined);assert.equal(calls[0].options.headers.Cookie,undefined);
+ for(const body of [{...data,offset:-1},{...data,kind:'post',slug:'../admin'},{...data,kind:'post',slug:'a?x'},{...data,kind:'post',slug:'https://evil.test'}])assert.equal((await call(body)).status,400);
+ assert.equal(calls.length,1);
+ assert.equal((await call({...data,author_id:'missing'})).status,404);
+ const challenge=await call(data,{fetcher:async()=>new Response('challenge',{status:403,headers:{'cf-mitigated':'challenge'}})});
+ assert.equal(challenge.status,502);assert.equal(challenge.data.blocked,true);assert.equal(challenge.data.source_status,403);
+ const redirect=await call(data,{fetcher:async()=>new Response(null,{status:302,headers:{Location:'https://evil.test'}})});assert.equal(redirect.status,502);
+ const invalid=await call(data,{fetcher:async()=>new Response('<html>challenge</html>')});assert.equal(invalid.status,502);
+ const mismatch=await call({...data,kind:'post',slug:'abc'},{fetcher:async()=>Response.json({slug:'other'})});assert.equal(mismatch.status,502);
+ const detail=await call({...data,kind:'post',slug:'abc'},{fetcher:async()=>Response.json({slug:'abc',body_html:'公開內文'})});assert.equal(detail.data.data.body_html,'公開內文');
+ db.close();
+});
+test('source rate limits back off, retry the same page and retain terminal failure',async()=>{
+ const waits=[],urls=[];let attempt=0;
+ const fetcher=async url=>{urls.push(url);return ++attempt<3?new Response('limited',{status:429,headers:{'Retry-After':'60'}}):Response.json([{slug:'abc'}]);};
+ const data=await fetchSubstackPublic(DEFAULT_SUBSTACK,{kind:'archive',offset:40},fetcher,async ms=>waits.push(ms));
+ assert.equal(data[0].slug,'abc');assert.deepEqual(waits,[30000,30000]);assert.equal(new Set(urls).size,1);
+ let failures=0;await assert.rejects(fetchSubstackPublic(DEFAULT_SUBSTACK,{kind:'archive',offset:40},async()=>{failures++;return new Response('limited',{status:429});},async()=>{}),e=>e.source_status===429);assert.equal(failures,3);
+});
+test('arbitrary author profile resolution falls back to verified public HTML without credentials',async()=>{
+ const url='https://substack.com/@anotherwriter',calls=[];
+ const result=await resolveSubstackAuthor(url,async(endpoint,options)=>{
+  calls.push({endpoint,options});
+  return endpoint===url?new Response('limited',{status:429}):Response.json({code:200,data:{url,html:'<a href="https://actualletters.substack.com/">Actual Letters</a>'}});
+ });
+ assert.deepEqual(result.candidates,[{url:'https://actualletters.substack.com',title:'Actual Letters'}]);
+ assert.equal(calls[1].endpoint,'https://r.jina.ai/'+url);assert.equal(calls[1].options.redirect,'error');
+ assert.equal(calls[1].options.headers.Authorization,undefined);assert.equal(calls[1].options.headers.Cookie,undefined);
+ const timeout=await resolveSubstackAuthor(url,async endpoint=>{if(endpoint===url)throw new DOMException('Timeout','TimeoutError');return Response.json({code:200,data:{url,html:'<a href="https://actualletters.substack.com/">Actual Letters</a>'}});});
+ assert.equal(timeout.candidates[0].url,'https://actualletters.substack.com');
+ await assert.rejects(resolveSubstackAuthor(url,async endpoint=>endpoint===url?new Response('blocked',{status:403}):Response.json({code:200,data:{url:'https://substack.com/@other',html:'<a href="https://other.substack.com/">Other</a>'}})),/來源無法確認/);
+});
+test('collector inventory paginates beyond 1000 saved articles without mixing publications',async()=>{
+ const db=new DatabaseSync(':memory:');const sql=(q,...args)=>({first:async()=>db.prepare(q).get(...args)||null,all:async()=>({results:db.prepare(q).all(...args)}),run:async()=>db.prepare(q).run(...args)});
+ const call=path=>substackRoute(new Request('https://api.test'+path),{sql,reply:(data,status=200)=>({data,status}),admin:true,dispatch:async()=>true,env:{}});
+ await call('/admin/substack/authors');
+ const insert=db.prepare('INSERT INTO substack_articles(id,author_id,date,published_at,payload) VALUES(?,?,?,?,?)');
+ for(let n=0;n<1001;n++)insert.run(DEFAULT_SUBSTACK.id+':post-'+String(n).padStart(4,'0'),DEFAULT_SUBSTACK.id,'2026-10-14','2026-10-14T00:00:00Z','{}');
+ insert.run('other:post','other','2026-10-14','2026-10-14T00:00:00Z','{}');
+ const first=(await call('/admin/substack/imported?author_id='+DEFAULT_SUBSTACK.id)).data;
+ const last=(await call('/admin/substack/imported?author_id='+DEFAULT_SUBSTACK.id+'&offset='+first.next_offset)).data;
+ assert.equal(first.slugs.length,1000);assert.equal(first.has_more,true);assert.equal(last.slugs.length,1);assert.equal(last.has_more,false);
+ assert.equal(new Set([...first.slugs,...last.slugs]).size,1001);assert.equal(last.slugs[0],'post-1000');db.close();
 });
