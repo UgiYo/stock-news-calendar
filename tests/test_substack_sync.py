@@ -126,7 +126,7 @@ class SubstackSyncTest(unittest.TestCase):
         self.assertEqual(len(saved),1);self.assertEqual(saved[0]['archive_offset'],20)
 
     def test_workflow_pause_automatically_queues_remaining_archives(self):
-        calls=[];authors=[{'id':'first','archive_complete':0},{'id':'priority','archive_complete':0}]
+        calls=[];authors=[{'id':'first','url':'https://first.substack.com','archive_complete':0},{'id':'priority','url':'https://priority.substack.com','archive_complete':0}]
         def api(url,data=None,token=None):
             calls.append((url,data))
             return {'authors':authors} if url.endswith('/authors') else {'continued':True}
