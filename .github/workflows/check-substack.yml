@@ -1,0 +1,36 @@
+name: Check Substack public source
+on:
+  workflow_dispatch:
+    inputs:
+      full_history:
+        description: Verify all archive pages against the official sitemap
+        type: boolean
+        default: false
+  push:
+    paths:
+      - scripts/sync_substack.py
+      - scripts/check_substack_source.py
+      - scripts/check_substack_author.mjs
+      - worker/substack.js
+      - tests/test_substack_sync.py
+      - .github/workflows/check-substack.yml
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tests -p 'test_substack_sync.py'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node scripts/check_substack_author.mjs
+      - name: Read public archive pages and one public article without credentials
+        run: python scripts/check_substack_source.py
+        env:
+          SUBSTACK_FULL_HISTORY: ${{ inputs.full_history }}

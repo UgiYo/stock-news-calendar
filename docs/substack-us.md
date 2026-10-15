@@ -17,11 +17,14 @@
 
 - 使用匿名可取得的 Substack 刊物 archive 與文章內容；不使用訂閱帳號、cookie 或付費牆繞過方法。付費文章或無完整內文的文章標記為「公開預覽／部分內容」，AI 不推測未取得的部分。本文超過 100,000 字元時只保留前段，亦標記部分內容。
 - 目前收錄刊物文章；不含作者的 Notes、留言、Chat 或其他作者的轉貼全文。
-- 新文分頁讀取至已保存的最新日期，先保存較舊的新文批次，避免中途失敗漏抓。正式工作歷史不再限制 10 頁／200 篇：每頁 20 篇持續抓至最後一頁。單次工作有 20 分鐘預算，接近上限時保存已完成頁面並自動排入後續 workflow，下次重疊一頁後續抓，直到完成。
+- 新文分頁讀取至已保存的最新日期，先保存較舊的新文批次，避免中途失敗漏抓。正式工作歷史不再限制 10 頁／200 篇：每頁 20 篇持續抓至最後一頁；使用備援時採半頁重疊。到最後一頁仍不立即標記完成，必須再比對 sitemap 與資料庫已存文章，補齊未列於 archive 的匿名可讀文章。單次工作有 20 分鐘預算，接近上限時保存已完成頁面並自動排入後續 workflow，下次重疊一頁後續抓，直到完成。
 - 無法讀取內文的 401／403／404 文章保留 archive 提供的公開標題、日期與描述，標記公開預覽，不阻擋後續歷史文章。來源限流／伺服器錯誤仍顯示失敗並保留游標，不將失敗誤判為全部匯入完成。
-- `.github/workflows/substack.yml` 每日台灣時間 06:20、18:20 執行。GitHub 實際啟動時間可能延遲。使用現有 `WORKER_API_URL` 與 `COLLECTOR_SECRET`，不新增 AI 金鑰或套件。
+- `.github/workflows/substack.yml` 每日台灣時間 06:20、18:20 執行。GitHub 實際啟動時間可能延遲。收集程式／Substack 後端合併更新時也會自動執行，接續已保存的匯入。使用現有 `WORKER_API_URL` 與 `COLLECTOR_SECRET`，不新增 AI 金鑰或套件。
 - 「更新全部／選定作者的文章」啟動背景工作；「重新載入文章」讀取已保存資料。新作者優先處理，但工作仍檢查所有待匯入來源，避免多位使用者同時匯入時遺漏來源。只有已完成歷史匯入且 15 分鐘內成功更新的單一作者才限流；未完成或失敗作者可續抓／重試。
-- 來源是 Substack 公開介面，可能限流、變更或拒絕匿名請求；會顯示來源錯誤並保留既有內容。本次執行環境無法直接存取作者文章端點，實際文章數及內容可取得程度須於正式工作執行後確認，測試使用 fixtures。
+- 來源可能限流、變更或拒絕匿名請求；失敗保留既有內容與歷史游標。背景依序嘗試直接連線、既有 Pages 的 collector 專用公開來源讀取介面，以及 Jina Reader 匿名備援。備援只傳送已驗證的公開刊物 API 網址，要求原始 JSON 文字，不使用 ReaderLM／AI 摘要、不傳送 Substack cookie、collector secret 或使用者 AI 金鑰。回應網址、文章 slug、分頁格式均須吻合；錯誤頁不視為空清單或匯入完成。無需註冊 Jina、付費 API key 或新增套件；第三方免費服務仍可能暫時不可用。
+- Reader 請求至少間隔 4.1 秒，429 與暫時錯誤最多重試兩次，遵循 Retry-After（單次最長 120 秒）。快取分頁採半頁重疊並快取已取得正文，同篇文章以固定 ID upsert，避免分頁邊界變動造成漏抓或重複保存。正式工作仍保留 20 分鐘預算，完成頁面會持續保存，自動續抓不需保持網站開啟。
+- `/admin/substack/source` 僅接受 collector、已登錄作者的清單 offset 或文章 slug；不接受任意 URL、不跟隨轉址。API 尚未部署時，收集器會跳過該方式而使用匿名備援繼續保存文章；最終逐篇核對須等新版後端部署，不會先宣稱全部完成。瀏覽器驗證受阻不誤當付費預覽。驗證分支續抓使用同一分支程式；正式站沿用 main 的既有續抓路由。
+- `Check Substack public source` 驗證實際分頁、舊公開文、付費預覽，完整驗證模式會列舉到最後一頁並與官方 sitemap 交叉比對。`Check Substack saved import` 唯讀檢查資料庫已儲存篇數、游標與狀態。詳見 [來源驗證紀錄](substack-source-verification.md)。
 
 ## 管理、API 與部署
 
@@ -31,6 +34,6 @@
 
 沿用現有 GitHub Pages 前端與 Cloudflare Pages API Git 整合；合併後需兩者完成部署。Cloudflare build command 保持 `npm ci && node scripts/build_cloudflare_pages.mjs`，輸出目錄保持 `cloudflare-api`。後端更新成功後，首次點更新作者文章或執行 `Update Substack articles` 工作開始導入預設作者。首次歷史匯入可能需多次背景工作，工作會自動安排續抓，不需使用者每日重按。
 
-API：`POST /substack/resolve`、`GET/POST /substack/authors`、`GET /substack/articles?offset=0`、`GET /substack/article?id=...`、`POST /substack/refresh`（可傳 `author_id`）。收集端使用 `GET /admin/substack/authors`、`POST /admin/substack/update` 與 `POST /admin/substack/continue`；僅既有 collector secret 可用。續抓僅針對未完成且無來源錯誤的來源；發送續抓失敗會寫入錯誤供使用者重試。workflow 沿用全域 concurrency，續抓包含所有健康待處理作者，不為同一來源並行寫入。AI 成果種類新增 `substack`，沿用 `/account-results` 的登入帳號隔離及來源資訊欄位。
+API：`POST /substack/resolve`、`GET/POST /substack/authors`、`GET /substack/articles?offset=0`、`GET /substack/article?id=...`、`POST /substack/refresh`（可傳 `author_id`）。收集端使用 `GET /admin/substack/authors`、`POST /admin/substack/update` 、`POST /admin/substack/source`、`GET /admin/substack/imported` 與 `POST /admin/substack/continue`；僅既有 collector secret 可用。續抓僅針對未完成且無來源錯誤的來源；發送續抓失敗會寫入錯誤供使用者重試。workflow 沿用全域 concurrency，續抓包含所有健康待處理作者，不為同一來源並行寫入。AI 成果種類新增 `substack`，沿用 `/account-results` 的登入帳號隔離及來源資訊欄位。
 
 驗證：`npm test`（包含美股 DOM 整合）、`python -m unittest discover -s tests -p 'test_substack_sync.py'`、`npm run build`、`node scripts/build_cloudflare_pages.mjs`。
