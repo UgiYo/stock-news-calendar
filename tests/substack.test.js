@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {parseHTML} from 'linkedom';
 import {DEFAULT_SUBSTACK,substackPublication,substackAuthorInput,substackMentions,substackChunks,substackPrompt} from '../shared/substack.js';
-import {normalizeSubstackArticle,substackRoute,resolveSubstackAuthor,substackProfileCandidates} from '../worker/substack.js';
+import {normalizeSubstackArticle,substackRoute,resolveSubstackAuthor,substackProfileCandidates,fetchSubstackArchiveSource} from '../worker/substack.js';
 import {validAccountResult} from '../worker/account-results.js';
 import {decorateSubstackSummary} from '../src/substack-mentions.js';
 
@@ -81,4 +81,18 @@ test('Substack results use the same private account schema and source paragraph 
  assert.ok(validAccountResult(row));assert.ok(!validAccountResult({...row,owner:'bob'}));
  const {document}=parseHTML('<html><body><article>作者觀點</article></body></html>');const previous=globalThis.document;globalThis.document=document;
  try{const body=document.querySelector('article');decorateSubstackSummary(body,row,'US:NVDA');assert.ok(body.querySelector('[data-substack-evidence="US:NVDA"]').open);assert.match(body.textContent,/公開預覽/);assert.match(body.textContent,/觀察標的/);}finally{globalThis.document=previous;}
+});
+
+test('worker fallback only fetches matching Substack public archive and post endpoints',async()=>{
+ const author={id:'letters',url:'https://letters.substack.com'};
+ const urls=[];
+ const fetcher=async url=>{urls.push(url);return new Response(JSON.stringify(url.includes('/archive?')?[{slug:'post-1'}]:{slug:'post-1'}),{status:200,headers:{'content-type':'application/json'}})};
+ const archive=await fetchSubstackArchiveSource(author,{kind:'archive',offset:20},fetcher);
+ assert.equal(archive[0].slug,'post-1');
+ const detail=await fetchSubstackArchiveSource(author,{kind:'post',slug:'post-1'},fetcher);
+ assert.equal(detail.slug,'post-1');
+ assert.equal(urls[0],'https://letters.substack.com/api/v1/archive?sort=new&offset=20&limit=20');
+ await assert.rejects(()=>fetchSubstackArchiveSource(author,{kind:'post',slug:'../private'},fetcher),/Invalid/);
+ await assert.rejects(()=>fetchSubstackArchiveSource(author,{kind:'archive',offset:-1},fetcher),/Invalid/);
+ await assert.rejects(()=>fetchSubstackArchiveSource(author,{kind:'archive',offset:0},async()=>new Response('Forbidden',{status:403})),/403/);
 });
