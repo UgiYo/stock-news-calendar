@@ -44,7 +44,7 @@ export async function fetchSubstackArchiveSource(author,input,fetcher=globalThis
  let endpoint;
  if(input.kind==='archive'&&Number.isSafeInteger(input.offset)&&input.offset>=0)
   endpoint=origin+'/api/v1/archive?sort=new&offset='+input.offset+'&limit=20';
- else if(input.kind==='post'&&typeof input.slug==='string'&&/^[\\p{L}\\p{N}_-]{1,500}$/u.test(input.slug))
+ else if(input.kind==='post'&&typeof input.slug==='string'&&/^[\p{L}\p{N}_-]{1,500}$/u.test(input.slug))
   endpoint=origin+'/api/v1/posts/'+encodeURIComponent(input.slug);
  else throw Object.assign(Error('Invalid source request'),{invalid:true});
  let response;
