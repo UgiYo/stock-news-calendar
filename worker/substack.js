@@ -37,9 +37,38 @@ export function normalizeSubstackArticle(data,author){
  const text=String(data.text||'');if(text.length>100000)throw Error('文章內文超過上限');
  return {id:author.id+':'+u.pathname.slice(3),author_id:author.id,author_title:author.title,url:u.origin+u.pathname,title:String(data.title),published_at:new Date(data.published_at).toISOString(),date:marketDay(new Date(data.published_at),'US'),access:data.access==='public'?'public':'preview',text,mentions:substackMentions(text)};
 }
+
+export async function fetchSubstackArchiveSource(author,input,fetcher=globalThis.fetch){
+ const origin=substackPublication(author.url);
+ if(origin!==author.url)throw Object.assign(Error('Invalid publication'),{invalid:true});
+ let endpoint;
+ if(input.kind==='archive'&&Number.isSafeInteger(input.offset)&&input.offset>=0)
+  endpoint=origin+'/api/v1/archive?sort=new&offset='+input.offset+'&limit=20';
+ else if(input.kind==='post'&&typeof input.slug==='string'&&/^[\\p{L}\\p{N}_-]{1,500}$/u.test(input.slug))
+  endpoint=origin+'/api/v1/posts/'+encodeURIComponent(input.slug);
+ else throw Object.assign(Error('Invalid source request'),{invalid:true});
+ let response;
+ try{response=await fetcher(endpoint,{redirect:'manual',headers:{'Accept':'application/json','User-Agent':'Mozilla/5.0','Referer':origin+'/'},signal:AbortSignal.timeout(25000)});}
+ catch{throw Object.assign(Error('公開來源連線逾時或無法連線'),{source_status:503});}
+ if(!response.ok){
+  throw Object.assign(Error('Substack 公開來源 HTTP '+response.status),{source_status:response.status});
+ }
+ if(response.redirected||response.status>=300&&response.status<400)throw Error('Unexpected source redirect');
+ let payload;
+ try{
+  const raw=await response.text();
+  if(raw.length>12000000)throw Error('Source response too large');
+  payload=JSON.parse(raw);
+ }catch{throw Error('公開來源未回傳有效 JSON');}
+ if(input.kind==='archive'){
+  if(!Array.isArray(payload)||payload.length>20||payload.some(p=>!p||typeof p.slug!=='string'))throw Error('Invalid archive data');
+ }else if(!payload||payload.slug!==input.slug)throw Error('Invalid post data');
+ return payload;
+}
+
 export async function substackRoute(req,{sql,reply,user,admin=false,dispatch,env,flags={},fetcher=globalThis.fetch}){
  const u=new URL(req.url),path=u.pathname;
- if(!['/substack/authors','/substack/articles','/substack/article','/substack/refresh','/substack/resolve','/admin/substack/authors','/admin/substack/update','/admin/substack/continue'].includes(path))return null;
+ if(!['/substack/authors','/substack/articles','/substack/article','/substack/refresh','/substack/resolve','/admin/substack/authors','/admin/substack/update','/admin/substack/continue','/admin/substack/source'].includes(path))return null;
  if(!admin&&!user)return reply({error:'請先登入'},401);
  if(path.startsWith('/admin/')&&!admin)return reply({error:'Forbidden'},403);
  if(!admin&&(flags['markets.us']===false||flags['news_calendar.substack']===false))return reply({error:'Substack 功能目前未開放'},403);
@@ -54,6 +83,13 @@ export async function substackRoute(req,{sql,reply,user,admin=false,dispatch,env
  await sql('CREATE INDEX IF NOT EXISTS substack_articles_author ON substack_articles(author_id,published_at)').run();
  await sql('INSERT INTO substack_authors(id,url,title) VALUES(?,?,?) ON CONFLICT(id) DO NOTHING',DEFAULT_SUBSTACK.id,DEFAULT_SUBSTACK.url,DEFAULT_SUBSTACK.title).run();
  if(path.endsWith('/authors')&&req.method==='GET')return reply({authors:(await sql("SELECT a.*,COUNT(b.id) AS article_count,COALESCE(SUM(CASE WHEN json_extract(b.payload,'$.access')='public' THEN 1 ELSE 0 END),0) AS public_count,MAX(b.published_at) AS latest_published_at FROM substack_authors a LEFT JOIN substack_articles b ON b.author_id=a.id GROUP BY a.id ORDER BY a.title").all()).results});
+ if(path==='/admin/substack/source'&&req.method==='POST'){
+  const input=await req.json();
+  const author=await sql('SELECT * FROM substack_authors WHERE id=?',String(input.author_id||'')).first();
+  if(!author)return reply({error:'找不到作者'},404);
+  try{return reply({data:await fetchSubstackArchiveSource(author,input,fetcher)});}
+  catch(e){return reply({error:e.message,...(e.source_status?{source_status:e.source_status}:{})},e.invalid?400:502);}
+ }
  if(path==='/admin/substack/continue'&&req.method==='POST'){
   const pending=await sql('SELECT id FROM substack_authors WHERE archive_complete=0 AND last_error IS NULL LIMIT 1').first();if(!pending)return reply({continued:false});
   try{await dispatch(env,'substack.yml',{author_id:'',continuation:'true'});return reply({continued:true});}catch(e){await sql('UPDATE substack_authors SET last_error=? WHERE archive_complete=0 AND last_error IS NULL','後續匯入未啟動：'+e.message).run();return reply({error:'後續匯入無法排入：'+e.message},502);}
