@@ -96,3 +96,26 @@ test('worker fallback only fetches matching Substack public archive and post end
  await assert.rejects(()=>fetchSubstackArchiveSource(author,{kind:'archive',offset:-1},fetcher),/Invalid/);
  await assert.rejects(()=>fetchSubstackArchiveSource(author,{kind:'archive',offset:0},async()=>new Response('Forbidden',{status:403})),/403/);
 });
+
+test('failed author sources can be removed, without automatic resurrection and with explicit re-import',async()=>{
+ const db=new DatabaseSync(':memory:');
+ const sql=(q,...args)=>({first:async()=>db.prepare(q).get(...args)||null,all:async()=>({results:db.prepare(q).all(...args)}),run:async()=>db.prepare(q).run(...args)});
+ const call=async(path,method='GET',body,extra={})=>substackRoute(new Request('https://api.test'+path,{method,...(body?{body:JSON.stringify(body)}:{})}),{sql,reply:(data,status=200)=>({data,status}),user:{id:'alice'},dispatch:async()=>true,env:{},...extra});
+ await call('/substack/authors');
+ const id=DEFAULT_SUBSTACK.id;
+ const row={author_id:id,articles:[{url:DEFAULT_SUBSTACK.url+'/p/old',title:'old',published_at:'2026-10-14T00:00:00Z',text:'NVDA',access:'public'}],error:null};
+ await call('/admin/substack/update','POST',row,{admin:true});
+ await call('/admin/substack/update','POST',{author_id:id,error:'HTTP 403'},{admin:true});
+ assert.equal((await call('/substack/authors')).data.authors[0].article_count,1);
+ assert.equal((await call('/substack/authors','DELETE',{author_id:id},{user:null})).status,401);
+ assert.equal((await call('/substack/authors','DELETE',{author_id:id},{flags:{'news_calendar.substack_import':false}})).status,403);
+ assert.equal((await call('/substack/authors','DELETE',{author_id:id})).status,200);
+ assert.equal((await call('/substack/authors')).data.authors.length,0);
+ assert.equal((await call('/substack/articles')).data.articles.length,0);
+ assert.equal((await call('/substack/authors','DELETE',{author_id:id})).status,404);
+ assert.equal((await call('/admin/substack/update','POST',row,{admin:true})).status,400);
+ const added=await call('/substack/authors','POST',{url:DEFAULT_SUBSTACK.url,title:'再次加入'});
+ assert.equal(added.status,200);
+ assert.equal((await call('/substack/authors')).data.authors.length,1);
+ db.close();
+});
