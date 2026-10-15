@@ -3,15 +3,26 @@
   "title": "兆華與股惑仔",
   "spotify": "https://open.spotify.com/show/6cMUsVRnTCrCqo4rs8LBjQ",
   "feed": "https://feeds.soundon.fm/podcasts/91be014b-9f55-4bf3-a910-b232eda82d11.xml",
-  "updated_at": "2026-10-14T14:48:29.619696+00:00",
+  "updated_at": "2026-10-15T14:34:46.158410+00:00",
   "episodes": [
+    {
+      "id": "fc126990-b1d9-41b5-8f0e-34002f76f8ee",
+      "title": "EP1203｜外資史上最大賣超、期貨空單近10萬口，CPI超出預期、CoreWeave債券風暴、台積電法說會評估！風險和機會？ft.PCB女王 廖婉婷",
+      "published_at": "2026-10-15T08:10:04+00:00",
+      "date": "2026-10-15",
+      "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/fc126990-b1d9-41b5-8f0e-34002f76f8ee",
+      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/fc126990-b1d9-41b5-8f0e-34002f76f8ee/rssFileVip.mp3?timestamp=1792053144443",
+      "description": "外資史上最大賣超、期貨空單近10萬口，CPI超出預期、CoreWeave債券風暴、台積電法說會評估！風險和機會？ \n \n \n \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
+      "duration": "2626",
+      "transcript_url": ""
+    },
     {
       "id": "2cea7ca6-efaf-4dda-9904-3a9f05fe3ba2",
       "title": "EP1202｜塑化驚奇，傳產也有做夢行情？航運.紡織.汽零件有機會嗎？黃金右下角和資金效率的抉擇，如何判斷起風了？ft.選股教練 陳唯泰",
       "published_at": "2026-10-14T08:25:01+00:00",
       "date": "2026-10-14",
       "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/2cea7ca6-efaf-4dda-9904-3a9f05fe3ba2",
-      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/2cea7ca6-efaf-4dda-9904-3a9f05fe3ba2/rssFileVip.mp3?timestamp=1791969532621",
+      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/2cea7ca6-efaf-4dda-9904-3a9f05fe3ba2/rssFileVip.mp3?timestamp=1792041193336",
       "description": "塑化驚奇，傳產也有做夢行情？航運.紡織.汽零件有機會嗎？黃金右下角和資金效率的抉擇，如何判斷起風了？ \n \n \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
       "duration": "2654",
       "transcript_url": ""
@@ -751,17 +762,6 @@
       "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/3344438a-2ca8-464c-b5bc-7c0af7a9b7d0/rssFileVip.mp3?timestamp=1783553350986",
       "description": "低量磨人盤，錢快加完了？拉高耐性，熱門股來到關鍵支撐，風險報酬比好抓？要等AI復甦，還是找生技和軍工避險？ \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
       "duration": "2792",
-      "transcript_url": ""
-    },
-    {
-      "id": "4702b99f-420e-4629-aa94-137fe3bf638f",
-      "title": "EP1134｜鬼故事繼續，哪一條該怕？三星Q2獲利成長19倍，卻引發韓股大跌？熱門股全軍覆沒，6月營收出爐，檢驗該買該賣！ft.AI達人 蔡明翰",
-      "published_at": "2026-07-07T08:39:40+00:00",
-      "date": "2026-07-07",
-      "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/4702b99f-420e-4629-aa94-137fe3bf638f",
-      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/4702b99f-420e-4629-aa94-137fe3bf638f/rssFileVip.mp3?timestamp=1783468878042",
-      "description": "鬼故事繼續，哪一條該怕？三星Q2獲利成長19倍，卻引發韓股大跌？熱門股全軍覆沒，6月營收出爐，檢驗該買該賣！ \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
-      "duration": "3436",
       "transcript_url": ""
     }
   ]
