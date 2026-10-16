@@ -3,15 +3,26 @@
   "title": "兆華與股惑仔",
   "spotify": "https://open.spotify.com/show/6cMUsVRnTCrCqo4rs8LBjQ",
   "feed": "https://feeds.soundon.fm/podcasts/91be014b-9f55-4bf3-a910-b232eda82d11.xml",
-  "updated_at": "2026-10-15T14:34:46.158410+00:00",
+  "updated_at": "2026-10-16T14:25:52.153677+00:00",
   "episodes": [
+    {
+      "id": "87af8121-1bc8-4d29-8300-33820168dc10",
+      "title": "EP1204｜輝達、華許幫忙滅火，市場回穩，台積電這次先跌好了？PCB展將至，新技術重新點火！擴產、升級會遇到的挑戰？ft.操盤手 黃豐凱",
+      "published_at": "2026-10-16T08:16:22+00:00",
+      "date": "2026-10-16",
+      "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/87af8121-1bc8-4d29-8300-33820168dc10",
+      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/87af8121-1bc8-4d29-8300-33820168dc10/rssFileVip.mp3?timestamp=1792142332825",
+      "description": "輝達、華許幫忙滅火，市場回穩，台積電這次先跌好了？PCB展將至，新技術重新點火！擴產、升級會遇到的挑戰？ \n \n \n \n \n \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
+      "duration": "2299",
+      "transcript_url": ""
+    },
     {
       "id": "fc126990-b1d9-41b5-8f0e-34002f76f8ee",
       "title": "EP1203｜外資史上最大賣超、期貨空單近10萬口，CPI超出預期、CoreWeave債券風暴、台積電法說會評估！風險和機會？ft.PCB女王 廖婉婷",
       "published_at": "2026-10-15T08:10:04+00:00",
       "date": "2026-10-15",
       "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/fc126990-b1d9-41b5-8f0e-34002f76f8ee",
-      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/fc126990-b1d9-41b5-8f0e-34002f76f8ee/rssFileVip.mp3?timestamp=1792053144443",
+      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/fc126990-b1d9-41b5-8f0e-34002f76f8ee/rssFileVip.mp3?timestamp=1792127769874",
       "description": "外資史上最大賣超、期貨空單近10萬口，CPI超出預期、CoreWeave債券風暴、台積電法說會評估！風險和機會？ \n \n \n \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
       "duration": "2626",
       "transcript_url": ""
@@ -751,17 +762,6 @@
       "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/1dd1eded-0d4e-4af8-b245-3624b2149e7f/rssFileVip.mp3?timestamp=1783643663859",
       "description": "美伊不停火、楊總裁喊話，AI評價未失控，槓桿已過熱？漲價、訂單滿載不變，但慣性改變，台積電法說會後再表態？ \n \n \n \n*提醒：央行總裁楊金龍口誤說成彭金隆，特此更正。 \n\n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
       "duration": "2827",
-      "transcript_url": ""
-    },
-    {
-      "id": "3344438a-2ca8-464c-b5bc-7c0af7a9b7d0",
-      "title": "EP1135｜低量磨人盤，錢快加完了？拉高耐性，熱門股來到關鍵支撐，風險報酬比好抓？要等AI復甦，還是找生技和軍工避險？ft.冠軍操盤手 楊雲翔",
-      "published_at": "2026-07-08T08:31:52+00:00",
-      "date": "2026-07-08",
-      "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/3344438a-2ca8-464c-b5bc-7c0af7a9b7d0",
-      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/3344438a-2ca8-464c-b5bc-7c0af7a9b7d0/rssFileVip.mp3?timestamp=1783553350986",
-      "description": "低量磨人盤，錢快加完了？拉高耐性，熱門股來到關鍵支撐，風險報酬比好抓？要等AI復甦，還是找生技和軍工避險？ \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
-      "duration": "2792",
       "transcript_url": ""
     }
   ]
