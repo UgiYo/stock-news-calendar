@@ -3,15 +3,26 @@
   "title": "兆華與股惑仔",
   "spotify": "https://open.spotify.com/show/6cMUsVRnTCrCqo4rs8LBjQ",
   "feed": "https://feeds.soundon.fm/podcasts/91be014b-9f55-4bf3-a910-b232eda82d11.xml",
-  "updated_at": "2026-10-29T16:31:56.846759+00:00",
+  "updated_at": "2026-10-30T16:23:49.479900+00:00",
   "episodes": [
+    {
+      "id": "59350531-696e-4a6c-b8b4-556a3c9ccd68",
+      "title": "EP1212｜亞馬遜、英特爾都爆雷，台股殺破半年線，明知自由現金流會更糟，為何市場突然怕？再一次機會還是真正的危機？ft.操盤手 黃豐凱",
+      "published_at": "2026-10-30T07:50:18+00:00",
+      "date": "2026-10-30",
+      "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/59350531-696e-4a6c-b8b4-556a3c9ccd68",
+      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/59350531-696e-4a6c-b8b4-556a3c9ccd68/rssFileVip.mp3?timestamp=1793346652205",
+      "description": "亞馬遜、英特爾都爆雷，台股殺破半年線，明知自由現金流會更糟，為何市場突然怕？再一次機會還是真正的危機？ \n \n \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
+      "duration": "2125",
+      "transcript_url": ""
+    },
     {
       "id": "4126e07f-6f32-42bb-8963-887681d2c149",
       "title": "EP1211｜昨天漲點今天吐！法說後聯電跌停、台達電重挫看法？微軟少花錢大漲、Google現金流轉負大跌，為何台股都怕？ft.選股教練 陳唯泰",
       "published_at": "2026-10-29T08:02:03+00:00",
       "date": "2026-10-29",
       "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/4126e07f-6f32-42bb-8963-887681d2c149",
-      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/4126e07f-6f32-42bb-8963-887681d2c149/rssFileVip.mp3?timestamp=1793261665091",
+      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/4126e07f-6f32-42bb-8963-887681d2c149/rssFileVip.mp3?timestamp=1793334114808",
       "description": "昨天漲點今天吐！法說後聯電跌停、台達電重挫看法？微軟少花錢大漲、Google現金流轉負大跌，為何台股都怕？ \n \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
       "duration": "2407",
       "transcript_url": ""
@@ -740,17 +751,6 @@
       "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/97a797b8-2184-4875-97e4-42f3c0d603bc/rssFileVip.mp3?timestamp=1784832734231",
       "description": "受傷沉澱中，google自由現金流轉負，AI賺多花更多、零組件漲價受壓？資本支出慢發酵，靜待股價和基本面平衡點！ \n  \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
       "duration": "2499",
-      "transcript_url": ""
-    },
-    {
-      "id": "5c726c99-4318-4ac9-80af-cca659cf426a",
-      "title": "EP1144｜大跌、大漲之後，外資對被動元件、ABF、CCL、成熟製程產業看法有任何改變嗎？目標價空間更大，買賣的抉擇？ft.外資捕手 不魯",
-      "published_at": "2026-07-22T08:12:14+00:00",
-      "date": "2026-07-22",
-      "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/5c726c99-4318-4ac9-80af-cca659cf426a",
-      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/5c726c99-4318-4ac9-80af-cca659cf426a/rssFileVip.mp3?timestamp=1784793715415",
-      "description": "大跌、大漲之後，外資對被動元件、ABF、CCL、成熟製程產業看法有任何改變嗎？目標價空間更大，買賣的抉擇？ \n  \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
-      "duration": "3144",
       "transcript_url": ""
     }
   ]
