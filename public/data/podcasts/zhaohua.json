@@ -3,15 +3,26 @@
   "title": "兆華與股惑仔",
   "spotify": "https://open.spotify.com/show/6cMUsVRnTCrCqo4rs8LBjQ",
   "feed": "https://feeds.soundon.fm/podcasts/91be014b-9f55-4bf3-a910-b232eda82d11.xml",
-  "updated_at": "2026-11-04T17:40:32.067315+00:00",
+  "updated_at": "2026-11-05T17:46:28.184297+00:00",
   "episodes": [
+    {
+      "id": "bef4279a-f11b-4a8b-a7e6-6e29dc4de7c5",
+      "title": "EP1216｜費半止不住、台股再殺盤，兩院翻盤真會限制AI發展？當情緒超越基本面，盤點部位莫心慌，什麼是回得來的資產？ft.型男股神 陳威良",
+      "published_at": "2026-11-05T08:13:27+00:00",
+      "date": "2026-11-05",
+      "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/bef4279a-f11b-4a8b-a7e6-6e29dc4de7c5",
+      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/bef4279a-f11b-4a8b-a7e6-6e29dc4de7c5/rssFileVip.mp3?timestamp=1793867517846",
+      "description": "費半止不住、台股再殺盤，兩院翻盤真會限制AI發展？當情緒超越基本面，盤點部位莫心慌，什麼是回得來的資產？ \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
+      "duration": "1991",
+      "transcript_url": ""
+    },
     {
       "id": "0999aa6e-6642-4f61-ab9b-09bb09cdf702",
       "title": "EP1215｜放量拉出下影線，能否止跌的評估方式？美期中選舉，參眾兩院都丟了，會影響AI政策嗎？跌到7月低點的指標股！ft.選股教練 陳唯泰",
       "published_at": "2026-11-04T08:34:07+00:00",
       "date": "2026-11-04",
       "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/0999aa6e-6642-4f61-ab9b-09bb09cdf702",
-      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/0999aa6e-6642-4f61-ab9b-09bb09cdf702/rssFileVip.mp3?timestamp=1793782184155",
+      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/0999aa6e-6642-4f61-ab9b-09bb09cdf702/rssFileVip.mp3?timestamp=1793863342680",
       "description": "放量拉出下影線，能否止跌的評估方式？美期中選舉，參眾兩院都丟了，會影響AI政策嗎？跌到7月低點的指標股！ \n \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
       "duration": "2863",
       "transcript_url": ""
@@ -740,17 +751,6 @@
       "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/addeb950-30b8-47c6-839c-e9087445fc3d/rssFileVip.mp3?timestamp=1785350320745",
       "description": "測試4萬大關，獲利都吐光的一天？大盤融資維持率再降，整理股票，更整理心情！財報都超好，為何只反應利空？ \n \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
       "duration": "2804",
-      "transcript_url": ""
-    },
-    {
-      "id": "59a51cb4-a8ad-4a59-9da2-9c960096f7c5",
-      "title": "EP1148｜恐懼又來，升息、輝達幫忙舉債、中國生產DUV，形成股市向下螺旋的原因？怕就等等，不想賣，先確定自己凹單的條件？ft.題材獵人 林漢偉",
-      "published_at": "2026-07-28T08:27:12+00:00",
-      "date": "2026-07-28",
-      "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/59a51cb4-a8ad-4a59-9da2-9c960096f7c5",
-      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/59a51cb4-a8ad-4a59-9da2-9c960096f7c5/rssFileVip.mp3?timestamp=1785264877027",
-      "description": "恐懼又來，升息、輝達幫忙舉債、中國生產DUV，形成股市向下螺旋的原因？怕就等等，不想賣，先確定自己凹單的條件？ \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
-      "duration": "2764",
       "transcript_url": ""
     }
   ]
