@@ -14,12 +14,13 @@ permissions:
   pages: write
   id-token: write
 concurrency:
-  group: pages-${{ github.ref }}
-  cancel-in-progress: true
+  group: github-pages-production
+  cancel-in-progress: false
 jobs:
   deploy:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -36,6 +37,13 @@ jobs:
       - run: npm run build
         env:
           VITE_WORKER_API_URL: ${{ vars.WORKER_API_URL }}
+      - name: Validate production artifact
+        shell: bash
+        run: |
+          test -s dist/index.html
+          test -s dist/admin.html
+          test -d dist/assets
+          test -n "$(find dist/assets -type f -name '*.js' -print -quit)"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -43,3 +51,21 @@ jobs:
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Verify published site
+        shell: bash
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          set -euo pipefail
+          url="${PAGE_URL%/}/"
+          for attempt in {1..12}; do
+            if curl --fail --location --silent --show-error --max-time 15 --output /tmp/pages-home.html "$url" &&
+               grep -q '股聞日曆' /tmp/pages-home.html; then
+              echo "Production homepage is reachable: $url"
+              exit 0
+            fi
+            echo "Homepage not ready (attempt $attempt/12)"
+            sleep 10
+          done
+          echo "::error::Published GitHub Pages homepage did not pass the smoke check: $url"
+          exit 1
