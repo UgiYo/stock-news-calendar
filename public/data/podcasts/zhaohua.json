@@ -3,15 +3,26 @@
   "title": "兆華與股惑仔",
   "spotify": "https://open.spotify.com/show/6cMUsVRnTCrCqo4rs8LBjQ",
   "feed": "https://feeds.soundon.fm/podcasts/91be014b-9f55-4bf3-a910-b232eda82d11.xml",
-  "updated_at": "2026-11-12T17:49:13.438890+00:00",
+  "updated_at": "2026-11-13T17:26:20.718605+00:00",
   "episodes": [
+    {
+      "id": "696f866b-297e-46a3-84ab-8aec551c300e",
+      "title": "EP1222｜黃仁勳請辭、財務長暫代，ASIC自研晶片先歡慶，輝達供應鏈擔心利潤，卻也可能迎轉單？台廠受傷、受惠全解析！ft.操盤手 黃豐凱",
+      "published_at": "2026-11-13T08:09:14+00:00",
+      "date": "2026-11-13",
+      "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/696f866b-297e-46a3-84ab-8aec551c300e",
+      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/696f866b-297e-46a3-84ab-8aec551c300e/rssFileVip.mp3?timestamp=1794558087361",
+      "description": "黃仁勳請辭、財務長暫代，ASIC自研晶片先歡慶，輝達供應鏈擔心利潤，卻也可能迎轉單？台廠受傷、受惠全解析！ \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
+      "duration": "2242",
+      "transcript_url": ""
+    },
     {
       "id": "c7f020f5-b0d0-4759-aefb-b7ad85fde9b6",
       "title": "EP1221｜怕輝達董事會「殺仁誅勳」，台廠供應鏈恐生變？短線仍在遞延、庫存、毛利率、負債的考驗，回檔擠水分是好事？ft.題材獵人 林漢偉",
       "published_at": "2026-11-12T08:14:10+00:00",
       "date": "2026-11-12",
       "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/c7f020f5-b0d0-4759-aefb-b7ad85fde9b6",
-      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/c7f020f5-b0d0-4759-aefb-b7ad85fde9b6/rssFileVip.mp3?timestamp=1794472346517",
+      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/c7f020f5-b0d0-4759-aefb-b7ad85fde9b6/rssFileVip.mp3?timestamp=1794554824352",
       "description": "怕輝達董事會「殺仁誅勳」，台廠供應鏈恐生變？短線仍在遞延、庫存、毛利率、負債的考驗，回檔擠水分是好事？ \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
       "duration": "2588",
       "transcript_url": ""
@@ -740,17 +751,6 @@
       "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/ee8f3c47-dac1-49e2-a678-c4be380bf69f/rssFileVip.mp3?timestamp=1786042462184",
       "description": "看似不漲，其實輪到補漲？散熱、BBU、記憶體模組、鋼鐵、汽零件，誰能迎來認真的波段？先選龍頭+型態好的意義？ \n \n \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
       "duration": "2782",
-      "transcript_url": ""
-    },
-    {
-      "id": "d217eac7-8d04-4cac-9de2-99aa3f9316c9",
-      "title": "EP1154｜連續反彈上月線了，判斷彈幅滿足，還是續抱？琉明光學的背書價值，AMD和環球晶財報後跌，市場期待仍是高標！ft.型男股神 陳威良",
-      "published_at": "2026-08-05T08:08:35+00:00",
-      "date": "2026-08-05",
-      "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/d217eac7-8d04-4cac-9de2-99aa3f9316c9",
-      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/d217eac7-8d04-4cac-9de2-99aa3f9316c9/rssFileVip.mp3?timestamp=1785955839877",
-      "description": "連續反彈上月線了，判斷彈幅滿足，還是續抱？琉明光學的背書價值，AMD和環球晶財報後跌，市場期待仍是高標！ \n \n \n \n \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
-      "duration": "2451",
       "transcript_url": ""
     }
   ]
