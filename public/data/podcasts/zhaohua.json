@@ -3,15 +3,26 @@
   "title": "兆華與股惑仔",
   "spotify": "https://open.spotify.com/show/6cMUsVRnTCrCqo4rs8LBjQ",
   "feed": "https://feeds.soundon.fm/podcasts/91be014b-9f55-4bf3-a910-b232eda82d11.xml",
-  "updated_at": "2026-11-24T20:26:37.474184+00:00",
+  "updated_at": "2026-11-25T19:40:48.473148+00:00",
   "episodes": [
+    {
+      "id": "cd10d5bb-a47b-4fea-bb18-3d16ce68e0ca",
+      "title": "EP1230｜台美股長紅後，為何川普提關稅、晶片稅潑冷水，終究是想要漲的？心態穩下來，現在估值已合理、但情緒很脆弱！ft.型男股神 陳威良",
+      "published_at": "2026-11-25T08:05:40+00:00",
+      "date": "2026-11-25",
+      "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/cd10d5bb-a47b-4fea-bb18-3d16ce68e0ca",
+      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/cd10d5bb-a47b-4fea-bb18-3d16ce68e0ca/rssFileVip.mp3?timestamp=1795594756268",
+      "description": "台美股長紅後，為何川普提關稅、晶片稅潑冷水，終究是想要漲的？心態穩下來，現在估值已合理、但情緒很脆弱！ \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
+      "duration": "2305",
+      "transcript_url": ""
+    },
     {
       "id": "b17c088a-9c2e-4d42-b42b-1beced083d39",
       "title": "EP1229｜AI都不敢這樣寫，黃爸爸回家了！史上最大漲點3386點，融資、業績疑慮能完全消除嗎？買股還是買ETF？ft.AI達人 蔡明翰",
       "published_at": "2026-11-24T08:16:12+00:00",
       "date": "2026-11-24",
       "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/b17c088a-9c2e-4d42-b42b-1beced083d39",
-      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/b17c088a-9c2e-4d42-b42b-1beced083d39/rssFileVip.mp3?timestamp=1795508951560",
+      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/b17c088a-9c2e-4d42-b42b-1beced083d39/rssFileVip.mp3?timestamp=1795589532156",
       "description": "AI都不敢這樣寫，黃爸爸回家了！史上最大漲點3386點，融資、業績疑慮能完全消除嗎？買股還是買ETF？ \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
       "duration": "3192",
       "transcript_url": ""
@@ -729,17 +740,6 @@
       "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/a1b9b244-1484-477a-afe2-ec247ad8ce89/rssFileVip.mp3?timestamp=1787079297727",
       "description": "非要養大不可！輝達繼續注資OPEN AI，基本面明朗，勇敢者追強，謹慎者回檔記得補貨？Q2季報體檢和展望！ \n \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
       "duration": "3116",
-      "transcript_url": ""
-    },
-    {
-      "id": "ef5035ca-3653-4851-9aed-6e7f2f16b4b4",
-      "title": "EP1163｜指數不動，但AI領頭羊表態有意義！台光電、創意、川湖奔新高，機器人不只看展覽，記憶體等美、韓跟上？ft.題材獵人 林漢偉",
-      "published_at": "2026-08-17T09:02:41+00:00",
-      "date": "2026-08-17",
-      "url": "https://player.soundon.fm/p/91be014b-9f55-4bf3-a910-b232eda82d11/episodes/ef5035ca-3653-4851-9aed-6e7f2f16b4b4",
-      "audio_url": "https://rss.soundon.fm/rssf/91be014b-9f55-4bf3-a910-b232eda82d11/feedurl/ef5035ca-3653-4851-9aed-6e7f2f16b4b4/rssFileVip.mp3?timestamp=1786992802274",
-      "description": "指數不動，但AI領頭羊表態有意義！台光電、創意、川湖奔新高，機器人不只看展覽，記憶體等美、韓跟上？ \n \n \n \n \n節目內容純屬主持人與來賓個人經驗分享，非個股推薦。投資人須自行謹慎判斷，評估擔負風險 \n--\nHosting provided by  SoundOn",
-      "duration": "3133",
       "transcript_url": ""
     }
   ]
